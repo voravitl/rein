@@ -27,7 +27,7 @@ import (
 	"github.com/voravitl/rein/internal/hooks"
 	"github.com/voravitl/rein/internal/ledger"
 	"github.com/voravitl/rein/internal/providers"
-	"github.com/voravitl/rein/internal/run"
+	runpkg "github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/sandbox"
 )
 
@@ -207,6 +207,12 @@ func cmdContract(args []string) int {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "[contract]", err)
 			return 2
+		}
+		// Wire RunDir into the marker (ADR 0002 B4)
+		if loc, ok := runpkg.Find(c.Worktree); ok {
+			if err := runpkg.SetRunDir(loc.Marker, *run); err != nil {
+				fmt.Fprintf(os.Stderr, "[contract] warning: cannot set run dir in marker: %v\n", err)
+			}
 		}
 		fmt.Printf("[contract] written: %s (+ run copy)\n\n%s\n", contract.PathOf(c.Name), c.Snippet())
 	case "show", "path":
@@ -577,16 +583,16 @@ func cmdBudgetCheck(args []string) int {
 	}
 
 	// Locate run marker
-	loc, err := run.Locate(repo)
+	loc, err := runpkg.Locate(repo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[budget check]", err)
 		return 2
 	}
 
-	markerPath := run.MarkerPath(loc.Common)
+	markerPath := runpkg.MarkerPath(loc.Common)
 
 	// Load marker to get profile
-	_, err = run.Load(markerPath)
+	_, err = runpkg.Load(markerPath)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[budget check]", err)
 		return 2
@@ -604,8 +610,8 @@ func cmdBudgetCheck(args []string) int {
 		prof = &c.Profile
 	} else {
 		// Load from active run marker or default profile
-		if loc, ok := run.Find("."); ok {
-			if m, err := run.Load(loc.Marker); err == nil && m.StartedAt != "" {
+		if loc, ok := runpkg.Find("."); ok {
+			if m, err := runpkg.Load(loc.Marker); err == nil && m.StartedAt != "" {
 				markerPath = loc.Marker
 			}
 		}
@@ -649,7 +655,7 @@ func cmdBudgetCheck(args []string) int {
 
 func cmdBudgetRaise(args []string) int {
 	// User-only command: refuse inside Claude Code
-	if run.UnderClaude() {
+	if runpkg.UnderClaude() {
 		fmt.Fprintln(os.Stderr, "[budget raise] this command must be run by the user in their own terminal, not by Claude Code")
 		return 2
 	}
@@ -673,13 +679,13 @@ func cmdBudgetRaise(args []string) int {
 	}
 
 	// Locate run marker
-	loc, err := run.Locate(repo)
+	loc, err := runpkg.Locate(repo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[budget raise]", err)
 		return 2
 	}
 
-	markerPath := run.MarkerPath(loc.Common)
+	markerPath := runpkg.MarkerPath(loc.Common)
 
 	// Raise budget
 	if err := budget.Raise(markerPath, *pool, *amount, *reason); err != nil {
@@ -722,14 +728,14 @@ func cmdTaskStatus(args []string) int {
 	}
 
 	// Locate repo
-	loc, err := run.Locate(repo)
+	loc, err := runpkg.Locate(repo)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[task status]", err)
 		return 2
 	}
 
 	// Get task status
-	result, err := run.GetTaskStatus(loc.Common, taskName)
+	result, err := runpkg.GetTaskStatus(loc.Common, taskName)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[task status]", err)
 		return 2

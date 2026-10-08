@@ -517,3 +517,61 @@ func TestPendingExpires(t *testing.T) {
 		t.Fatalf("stale pending still blocks: %v", err)
 	}
 }
+
+// TestRunDirHelper verifies RunDir fallback from PIPELINE_RUNS to ~/.cache (ADR 0002 B4).
+func TestRunDirHelper(t *testing.T) {
+	// Test with PIPELINE_RUNS set
+	t.Setenv("PIPELINE_RUNS", "/custom/runs")
+	got := RunDir("test-run")
+	want := "/custom/runs/test-run"
+	if got != want {
+		t.Errorf("RunDir with PIPELINE_RUNS = %q, want %q", got, want)
+	}
+
+	// Test fallback to ~/.cache
+	t.Setenv("PIPELINE_RUNS", "")
+	got = RunDir("test-run")
+	home, _ := os.UserHomeDir()
+	want = filepath.Join(home, ".cache", "worktree-pipeline", "runs", "test-run")
+	if got != want {
+		t.Errorf("RunDir fallback = %q, want %q", got, want)
+	}
+}
+
+// TestSetRunDir verifies SetRunDir updates marker (ADR 0002 B4).
+func TestSetRunDir(t *testing.T) {
+	root := newRepo(t)
+	_, err := Start(root, "r1", &contract.Profile{}, me())
+	if err != nil {
+		t.Fatal(err)
+	}
+	loc, _ := Locate(root)
+	m, _ := Load(loc.Marker)
+	if m.RunDir != "" {
+		t.Errorf("fresh marker has RunDir = %q, want empty", m.RunDir)
+	}
+
+	// Set RunDir
+	runDir := filepath.Join(t.TempDir(), "test-run")
+	if err := SetRunDir(loc.Marker, runDir); err != nil {
+		t.Fatalf("SetRunDir: %v", err)
+	}
+
+	// Verify it was set
+	m, err = Load(loc.Marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.RunDir != runDir {
+		t.Errorf("after SetRunDir: marker.RunDir = %q, want %q", m.RunDir, runDir)
+	}
+
+	// Verify idempotency
+	if err := SetRunDir(loc.Marker, "/different/path"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = Load(loc.Marker)
+	if m.RunDir != runDir {
+		t.Errorf("SetRunDir changed existing RunDir: got %q, want %q", m.RunDir, runDir)
+	}
+}

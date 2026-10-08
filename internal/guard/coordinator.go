@@ -282,8 +282,8 @@ func (p *coordPolicy) judgePath(abs, shown string) string {
 	// B4.2: standing.md is user-only (ADR 0002 B4.2)
 	if filepath.Base(abs) == "standing.md" {
 		// Check if it's in the run directory
-		runDir := p.m.RunDir
-		if runDir != "" && (abs == filepath.Join(runDir, "standing.md") || inside(abs, runDir)) {
+		runDir := runDirFromMarker(p.m)
+		if runDir != "" && inside(abs, runDir) {
 			return "user-only: standing.md cannot be written by coordinator (propose text for user to write)"
 		}
 	}
@@ -386,12 +386,21 @@ func coordRecordDecision(a Action, m *run.Marker) {
 	}
 
 	// Append to decisions.tsv
-	_ = decision.Append(runDir, question, chosenOption, freeText)
+	if err := decision.Append(runDir, question, chosenOption, freeText); err != nil {
+		fmt.Fprintf(os.Stderr, "[rein] warning: cannot record decision: %v\n", err)
+	}
 }
 
 // runDirFromMarker returns the run directory from the marker (ADR 0002 B4).
+// If marker has RunDir set, use it; otherwise compute from Run name.
 func runDirFromMarker(m *run.Marker) string {
-	return m.RunDir
+	if m.RunDir != "" {
+		return m.RunDir
+	}
+	if m.Run != "" {
+		return run.RunDir(m.Run)
+	}
+	return ""
 }
 
 // sameProcess reports whether the hook runs on behalf of the marker's Claude process (CLAUDE_PID, or the hook's

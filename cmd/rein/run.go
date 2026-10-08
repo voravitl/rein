@@ -91,6 +91,13 @@ func cmdRun(args []string) int {
 		if err != nil {
 			return fail(err)
 		}
+		// Set RunDir in the marker (ADR 0002 B4)
+		if loc, ok := run.Find(repo); ok {
+			runDir := run.RunDir(*name)
+			if err := run.SetRunDir(loc.Marker, runDir); err != nil {
+				fmt.Fprintf(os.Stderr, "[run] warning: cannot set run dir in marker: %v\n", err)
+			}
+		}
 		fmt.Printf("[run] %s started in %s at %.12s; owner session %s, pid %d\n[run] the coordinator guard is active from the next tool call: writes only to %s\n",
 			m.Run, m.Root, m.StartSHA, m.SessionID, m.PID, strings.Join(m.CoordinatorWritable, ", "))
 	case "tick":

@@ -14,6 +14,10 @@ import (
 var secretPatterns = []*regexp.Regexp{
 	// AWS keys
 	regexp.MustCompile(`(?i)AKIA[0-9A-Z]{16}`),
+	// AWS secret access keys
+	regexp.MustCompile(`(?i)(aws_secret_access_key|aws_secret_key)\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?`),
+	// Private keys (PEM format)
+	regexp.MustCompile(`-----BEGIN[ A-Z0-9_-]*PRIVATE KEY-----`),
 	// GitHub tokens (more specific patterns)
 	regexp.MustCompile(`ghp_[A-Za-z0-9]{36,}`),
 	regexp.MustCompile(`gho_[A-Za-z0-9]{36,}`),

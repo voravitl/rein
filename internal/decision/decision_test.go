@@ -19,6 +19,26 @@ func TestScanSecrets(t *testing.T) {
 			want:  "My AWS key is [REDACTED]",
 		},
 		{
+			name:  "AWS secret access key",
+			input: "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			want:  "[REDACTED]",
+		},
+		{
+			name:  "AWS secret key with quotes",
+			input: "AWS_SECRET_KEY: \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"",
+			want:  "[REDACTED]",
+		},
+		{
+			name:  "Private key PEM",
+			input: "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA...",
+			want:  "[REDACTED]\nMIIEpAIBAAKCAQEA...",
+		},
+		{
+			name:  "Private key EC",
+			input: "-----BEGIN EC PRIVATE KEY-----",
+			want:  "[REDACTED]",
+		},
+		{
 			name:  "GitHub token ghp",
 			input: "Token: ghp_" + strings.Repeat("a", 36),
 			want:  "Token: [REDACTED]",

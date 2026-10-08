@@ -440,6 +440,16 @@ func Start(repo, name string, prof *contract.Profile, who Owner) (*Marker, error
 	return m, nil
 }
 
+// RunDir returns the absolute run directory path for a run name.
+// Checks PIPELINE_RUNS first, then falls back to ~/.cache/worktree-pipeline/runs/<name>.
+func RunDir(name string) string {
+	if d := os.Getenv("PIPELINE_RUNS"); d != "" {
+		return filepath.Join(d, name)
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".cache", "worktree-pipeline", "runs", name)
+}
+
 // SetRunDir updates the marker's RunDir field if not already set (ADR 0002 B4).
 // This is called by contract.New when the first contract for a run is created.
 func SetRunDir(markerPath, runDir string) error {
