@@ -117,7 +117,7 @@ func TestKiro(t *testing.T) {
 		"replace":   f2(kiroPre, `"fs_write"`, `{"command":"str_replace","path":"@WT@/VERSION","old_str":"a","new_str":"b"}`),
 		"insert":    f2(kiroPre, `"fs_write"`, `{"command":"insert","path":"/etc/hosts","new_str":"x","insert_line":1}`),
 		"no path":   f2(kiroPre, `"fs_write"`, `{"command":"append"}`),
-		"report r1": f2(kiroPre, `"fs_write"`, `{"command":"create","path":"`+strings.ReplaceAll(c.ReportPath, "good.md", "other.md")+`","file_text":"x"}`),
+		"report r1": f2(kiroPre, `"fs_write"`, `{"command":"create","path":`+jstr(strings.ReplaceAll(c.ReportPath, "good.md", "other.md"))+`,"file_text":"x"}`),
 	} {
 		out, errb, code := call(t, "kiro", ev, wt)
 		if code != 2 || !strings.HasPrefix(errb, "[rein] ") || out != "" {
