@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -507,10 +508,33 @@ func (x *ctx) abs(p string) string {
 			p = filepath.Join(h, p[2:])
 		}
 	}
+	if runtime.GOOS == "windows" {
+		p = gitBashToNative(p, filepath.VolumeName(x.top), os.TempDir())
+	}
 	if !filepath.IsAbs(p) {
 		p = filepath.Join(x.cwd, p)
 	}
 	return contract.Real(p)
+}
+
+var driveRx = regexp.MustCompile(`^/([a-zA-Z])(/|$)`)
+
+// gitBashToNative maps the POSIX paths Git Bash uses on Windows to native ones, so an absolute POSIX path is
+// never mistaken for a relative one: /c/x -> C:\x, /tmp/x -> <temp>\x, /x -> <volume of the worktree>\x.
+func gitBashToNative(p, volume, temp string) string {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return p
+	}
+	if m := driveRx.FindStringSubmatch(p); m != nil {
+		return strings.ToUpper(m[1]) + `:\` + strings.ReplaceAll(strings.TrimPrefix(p[len(m[0]):], "/"), "/", `\`)
+	}
+	if p == "/tmp" || strings.HasPrefix(p, "/tmp/") {
+		return strings.TrimRight(temp, `\`) + strings.ReplaceAll(strings.TrimPrefix(p, "/tmp"), "/", `\`)
+	}
+	if volume == "" {
+		volume = "C:"
+	}
+	return volume + strings.ReplaceAll(p, "/", `\`)
 }
 
 func inside(p, dir string) bool {

@@ -262,3 +262,19 @@ func TestHookNeverPanicsOnHostileInput(t *testing.T) {
 		_ = bashCase(t, wt, cmd) // must return, not panic or hang
 	}
 }
+
+func TestGitBashToNative(t *testing.T) {
+	cases := map[string]string{
+		"/c/Users/a/x.txt":  `C:\Users\a\x.txt`,
+		"/d":                `D:\`,
+		"/tmp/run.log":      `C:\Temp\run.log`,
+		"/some/other/repo":  `E:\some\other\repo`,
+		"relative/path":     "relative/path",
+		`C:\already\native`: `C:\already\native`,
+	}
+	for in, want := range cases {
+		if got := gitBashToNative(in, "E:", `C:\Temp\`); got != want {
+			t.Errorf("gitBashToNative(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
