@@ -43,7 +43,7 @@
     "codex": {
       "agent": "codex",
       "model": "gpt-6.1-sol",
-      "launch": "orca",
+      "launch": "shell",
       "cost": "codex quota",
       "probe": [
         "codex",
@@ -153,6 +153,21 @@
         "opencode/muse-spark-1.3-contributor-free",
         "Reply with exactly: OK"
       ]
+    },
+    "kiro-gpt-terra": {
+      "agent": "kiro",
+      "model": "gpt-5.6-terra",
+      "launch": "shell",
+      "cost": "Kiro credits 2.2x (OpenAI: non-Anthropic reviewer)",
+      "probe": [
+        "kiro-cli",
+        "chat",
+        "--no-interactive",
+        "--model",
+        "gpt-5.6-terra",
+        "--trust-tools=",
+        "Reply with exactly: OK"
+      ]
     }
   },
   "worker_chains": {
@@ -206,6 +221,7 @@
   "review_chains": {
     "for-claude-or-agy-or-opencode-work": [
       "codex",
+      "kiro-gpt-terra",
       "kiro-opus",
       "claude-opus"
     ],
@@ -215,6 +231,7 @@
     ],
     "for-kiro-work": [
       "codex",
+      "kiro-gpt-terra",
       "claude-opus"
     ]
   },
@@ -230,7 +247,8 @@
       "usage limit",
       "rate limit",
       "429",
-      "quota"
+      "quota",
+      "out of credits"
     ],
     "antigravity": [
       "exit 3",
