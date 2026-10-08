@@ -9,6 +9,9 @@ safety property lives in code that decides (hook, drift, script exit code), not 
 |---|---|
 | 0.1.0 | Contract, Claude guard hook (mvdan/sh parser), OS sandbox writer, drift check, model ledger, provider fallback probes; plugin with self-installing binary; worktree-pipeline skill and orca-swarm / orca-steward agents; project packs |
 | 0.2.0 | One contract guards codex, agy, kiro and opencode workers too (`rein hook --vendor`, `rein hooks install`); per-task seen log and `drift --expect-guard` (`GUARD_INACTIVE`); drift pins the HEAD sha it judged |
+| 0.3.0 | B0: Coordinator guard (`rein run start/end/resume/allow/audit`, run marker under git common dir, process liveness, tool/write/agent allowlists, subagent binding, `COORDINATOR_DRIFT` audit) |
+| 0.4.0 | B1: Budget and tick waiter (per-pool cost caps, timebox, `max_review_rounds`, single-flight tick under flock, tick staleness guard, model ledger effective costs) |
+| 0.5.0 | B2, B3, B4: Revision-bound verdicts and approvals (`git patch-id --verbatim`, multi-model review, AskUserQuestion approval prompt & PostToolUse recording), B3 spec lint (`rein spec check`, pre-start tier, coordinator spawn enforcement), B4 standing orders & decision trail (`<run>/decisions.tsv` with secret scan, user-only `standing.md` write denial, SessionStart injection, scope ruling approval) |
 
 ## Next, in order
 
