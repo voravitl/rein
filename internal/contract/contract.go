@@ -26,6 +26,11 @@ type Profile struct {
 	DenyCommands             []string `json:"deny_commands,omitempty"`              // "psql", "docker compose", "playwright test"
 	DenyPaths                []string `json:"deny_paths,omitempty"`                 // never-edit globs added to every contract
 	LocalArtifacts           []string `json:"local_artifacts,omitempty"`            // untracked paths the drift check ignores
+	// OS sandbox for Claude workers (rein sandbox): commands that must run outside it (e.g. the orchestrator CLI,
+	// gate scripts that drive docker) and the network domains sandboxed commands may reach.
+	SandboxExcludedCommands  []string `json:"sandbox_excluded_commands,omitempty"`
+	SandboxAllowedDomains    []string `json:"sandbox_allowed_domains,omitempty"`
+	SandboxFailIfUnavailable bool     `json:"sandbox_fail_if_unavailable,omitempty"`
 }
 
 // LoadProfile reads a profile file; "" means $REIN_PROFILE, then no profile (generic rules only).

@@ -6,5 +6,7 @@
   "owner_scripts": ["scripts/release.sh"],
   "deny_commands": ["docker compose", "docker-compose", "psql", "playwright test"],
   "deny_paths": ["VERSION", "scripts/release.sh", "**/dist/**"],
-  "local_artifacts": ["node_modules", "tsconfig.tsbuildinfo"]
+  "local_artifacts": ["node_modules", "tsconfig.tsbuildinfo"],
+  "sandbox_excluded_commands": ["my-orchestrator *", "/abs/path/to/scripts/run-tests-in-docker.sh *"],
+  "sandbox_allowed_domains": []
 }

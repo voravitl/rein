@@ -77,6 +77,19 @@ rein contract new --name fix-login --issue 42 --run-dir ~/runs/sprint-7 \
 It prints the ownership block to paste into the worker's spec. The worker's worktree is
 `<worktree_root>/<name>`; its report goes to `<run-dir>/reports/<name>.md`.
 
+**2b. Put the worktree in the OS sandbox** (Claude workers; macOS, Linux, WSL2):
+
+```sh
+git worktree add ~/worktrees/myapp/fix-login origin/main     # or your orchestrator's "create worktree" step
+rein sandbox fix-login                                         # before the worker starts
+```
+
+This writes `.claude/settings.local.json` in the worktree: sandbox on, no unsandboxed retries, writes limited to the
+worktree, the temp dir and the report file, plus the profile's `sandbox_excluded_commands` (for example your
+orchestrator CLI, or a test script that drives docker) and `sandbox_allowed_domains`. Verified on macOS: a
+`python -c` write outside the worktree, which the guard cannot see, fails with `Operation not permitted`.
+Native Windows has no Claude Code sandbox (use WSL2).
+
 **3. Judge the result** when the worker reports done (any vendor):
 
 ```sh

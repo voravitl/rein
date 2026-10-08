@@ -23,6 +23,7 @@ import (
 	"github.com/voravitl/rein/internal/guard"
 	"github.com/voravitl/rein/internal/ledger"
 	"github.com/voravitl/rein/internal/providers"
+	"github.com/voravitl/rein/internal/sandbox"
 )
 
 var version = "dev" // set with -ldflags "-X main.version=..."
@@ -44,6 +45,8 @@ func main() {
 		os.Exit(cmdLedger(os.Args[2:]))
 	case "providers":
 		os.Exit(cmdProviders(os.Args[2:]))
+	case "sandbox":
+		os.Exit(cmdSandbox(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("rein", version)
 	default:
@@ -53,13 +56,14 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|contract|drift|ledger|providers|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|contract|sandbox|drift|ledger|providers|version> [args]
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
   rein contract show|path <name>
   rein drift <name> [--worktree P] [--base origin/main] [--claimed-files a,b] [--json]
   rein ledger add --task T --type backend --worker codex:gpt-6.1-sol --rounds 3 [--approved] ...
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
   rein ledger report [--type T] [--since ISO] | suggest [--min-n 3]
+  rein sandbox <name>     write the OS sandbox settings into the worker's worktree (before the worker starts)
   rein providers [--chain worker:backend] [--only a,b] [--skip-claude] [--timeout 90s] [--config F] [--json]`)
 }
 
@@ -410,6 +414,28 @@ func cmdProviders(args []string) int {
 		if v == "" {
 			return 1 // at least one chain has nothing available
 		}
+	}
+	return 0
+}
+
+func cmdSandbox(args []string) int {
+	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
+		usage()
+		return 2
+	}
+	c, err := contract.Load(args[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[sandbox]", err)
+		return 2
+	}
+	path, note, err := sandbox.Apply(c)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[sandbox]", err)
+		return 2
+	}
+	fmt.Printf("[sandbox] written: %s (kept out of git status via info/exclude)\n", path)
+	if note != "" {
+		fmt.Println("[sandbox] " + note)
 	}
 	return 0
 }
