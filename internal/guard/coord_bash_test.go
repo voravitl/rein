@@ -14,7 +14,7 @@ import (
 // TestCoordWorkerStart_SpecLintValid verifies that worker start with a valid spec is allowed.
 func TestCoordWorkerStart_SpecLintValid(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create a valid spec file
 	specContent := `# Task: Test Task
 
@@ -45,14 +45,13 @@ Timebox: 2h
 		t.Fatalf("failed to create contracts dir: %v", err)
 	}
 
-	// Temporarily override the contracts dir
-	oldContracts := os.Getenv("PIPELINE_CONTRACTS")
-	os.Setenv("PIPELINE_CONTRACTS", contractsDir)
-	defer os.Setenv("PIPELINE_CONTRACTS", oldContracts)
+	// Temporarily override the contracts dir before Save
+	t.Setenv("PIPELINE_CONTRACTS", contractsDir)
 
+	worktreePath := filepath.Join(tmpDir, "worktrees/test-task")
 	c := &contract.Contract{
 		Name:       "test-task",
-		Worktree:   filepath.Join(tmpDir, "worktrees/test-task"),
+		Worktree:   worktreePath,
 		Allow:      []string{"src/**"},
 		Scope:      []string{"S1"},
 		ReportPath: filepath.Join(tmpDir, "reports/test-task.md"),
@@ -61,6 +60,12 @@ Timebox: 2h
 	if _, err := c.Save(); err != nil {
 		t.Fatalf("failed to save contract: %v", err)
 	}
+
+	// Create worktree directory and link it
+	if err := os.MkdirAll(worktreePath, 0755); err != nil {
+		t.Fatalf("failed to create worktree dir: %v", err)
+	}
+	linkWorktree(t, tmpDir, worktreePath, "test-task")
 
 	// Create git common dir and write a recent tick file
 	commonDir := filepath.Join(tmpDir, ".git")
@@ -88,7 +93,7 @@ Timebox: 2h
 		"orchestration", "worker-start",
 		"--spec", specPath,
 		"--task", "test-task",
-		"--worktree", "path:" + filepath.Join(tmpDir, "worktrees/test-task"),
+		"--worktree", "path:" + worktreePath,
 	}
 
 	x := &ctx{c: &contract.Contract{}, top: tmpDir, cwd: tmpDir, vars: map[string]string{}, coord: p}
