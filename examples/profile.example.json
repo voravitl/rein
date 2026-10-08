@@ -1,12 +1,13 @@
 {
   "name": "myapp",
   "worktree_root": "~/worktrees/myapp",
+  "pack": "~/.config/rein/packs/myapp",
   "protect_container_prefixes": ["myapp-"],
   "protect_ports": [8080, 5432],
   "owner_scripts": ["scripts/release.sh"],
   "deny_commands": ["docker compose", "docker-compose", "psql", "playwright test"],
   "deny_paths": ["VERSION", "scripts/release.sh", "**/dist/**"],
   "local_artifacts": ["node_modules", "tsconfig.tsbuildinfo"],
-  "sandbox_excluded_commands": ["my-orchestrator *", "/abs/path/to/scripts/run-tests-in-docker.sh *"],
+  "sandbox_excluded_commands": ["my-orchestrator *", "/abs/path/to/.config/rein/packs/myapp/gates/backend-test.sh *"],
   "sandbox_allowed_domains": []
 }
