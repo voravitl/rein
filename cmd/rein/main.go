@@ -59,6 +59,10 @@ func main() {
 		os.Exit(cmdProviders(os.Args[2:]))
 	case "sandbox":
 		os.Exit(cmdSandbox(os.Args[2:]))
+	case "verdict":
+		os.Exit(cmdVerdict(os.Args[2:]))
+	case "approve":
+		os.Exit(cmdApprove(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("rein", version)
 	default:
@@ -68,7 +72,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|run|budget|task|ledger|providers|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|version> [args]
   rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
   rein hooks install <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
@@ -86,7 +90,11 @@ func usage() {
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
   rein ledger report [--type T] [--since ISO] | suggest [--min-n 3]
   rein sandbox <name>     write the OS sandbox settings into the worker's worktree (before the worker starts)
-  rein providers [--chain worker:backend] [--only a,b] [--skip-claude] [--timeout 90s] [--config F] [--json]`)
+  rein providers [--chain worker:backend] [--only a,b] [--skip-claude] [--timeout 90s] [--config F] [--json]
+  rein verdict record --mr N --sha SHA --verdict APPROVE|REQUEST_CHANGES --reviewer MODEL --worker MODEL [--run-dir D]
+  rein verdict check --mr N --sha SHA [--tier T1|T2|T3] [--run-dir D] [--repo PATH]    exits 0 (pass), 1 (fail)
+  rein approve prompt --mr N [--sha SHA] [--run-dir D] [--repo PATH]    prints AskUserQuestion JSON
+  rein approve --mr N [--sha SHA] [--reason TEXT] [--run-dir D] [--repo PATH]    user-only: records human approval`)
 }
 
 // cmdHook never crashes the vendor's session: a panic means "no decision" (exit 0). A bad flag exits 1, which

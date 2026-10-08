@@ -67,6 +67,8 @@ type Profile struct {
 	// Project pack: a local directory with the project's gates, safety notes and rule addenda (PACK.md). rein itself
 	// does not read it; the worktree-pipeline skill does.
 	Pack string `json:"pack,omitempty"`
+	// Sensitive paths: globs that force tier T3 when matched by contract allow globs (ADR 0002 B2.1).
+	SensitivePaths []string `json:"sensitive_paths,omitempty"`
 }
 
 // LoadProfile reads a profile file; "" means $REIN_PROFILE, then no profile (generic rules only).
