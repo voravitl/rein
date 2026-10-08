@@ -4,6 +4,8 @@
 ```sh
 orca status --json                                   # runtime.state must be "ready"
 orca orchestration run-create / run-use / run-show
+# Claude workers and unguarded read-only reviewers. A GUARDED worker of another vendor is NOT started like this:
+# create the worktree, run `rein hooks install <task>`, then start it on `--worktree path:<wt>` (codex: shell terminal, see below).
 orca orchestration worker-start --run R --spec "$(cat s.md)" --task-title T --display-name D \
   --worktree new-top-level --name NAME --repo id:<repo-id> --base-branch origin/main --setup skip \
   --agent codex|claude|antigravity --model <id> [--effort max] --json
@@ -24,6 +26,11 @@ orca worktree rm --worktree path:/abs/path --force --json
 ```
 Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`.
 
+## Guard hooks per vendor (`rein hooks install <task>` prints the exact flags)
+- **codex:** `worker-start --agent codex` cannot pass CLI flags (only `--model`, `--effort`). The guard needs `--dangerously-bypass-hook-trust` plus the two `-c 'hooks.PreToolUse=[...]'` / `-c 'hooks.Stop=[...]'` flags, so start a guarded codex worker in a shell terminal (preamble route: `codex <printed flags> -C <worktree> "$(cat preamble)"`) or with the direct `codex exec <printed flags> -C <worktree> ...` fallback. Without the flags the hook is skipped silently (`rein drift` then says GUARD_INACTIVE).
+- **kiro:** `kiro-cli chat --agent rein --trust-all-tools --model <model> "$(cat preamble)"`; the `--agent rein` is what loads the hook.
+- **agy, opencode2:** no flag; start them inside the worktree.
+
 ## Quirks and the fix for each
 - **The codex update prompt blocks start-up** (`agent-update-prompt`): pick "Skip until next version" (send `3`), then retry the start with `--retry-of`.
 - **antigravity TUI 1.3.1 cannot be injected** (agent_prompt_blocked or readiness timeout):
@@ -40,7 +47,7 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 - **Orca runtime hung** (2026-10-07 23:00–06:20: `state: starting`, `reachable: false`, renderer above 100% CPU):
   - Workers keep running on disk, but their `worker_done` may be lost.
   - **Fallback that worked:** run the CLIs directly in the background and read their result files:
-    `codex exec --dangerously-bypass-approvals-and-sandbox --ephemeral --color never -m gpt-6.1-sol -c model_reasoning_effort=high -C <worktree> -o <final.txt> - < prompt.md > log 2>&1`
+    `codex exec <hook flags from rein hooks install> --dangerously-bypass-approvals-and-sandbox --ephemeral --color never -m gpt-6.1-sol -c model_reasoning_effort=high -C <worktree> -o <final.txt> - < prompt.md > log 2>&1`
     It can run docker, vitest and e2e. Tell it: "Orca is unavailable, do NOT run any orca command; end with a 3-sentence summary, files and commits".
   - agy has a direct form too: `agy --print "$(cat prompt)" --mode accept-edits --dangerously-skip-permissions --model gemini-3.8-flash-high --output-format text`.
   - When Orca comes back, settle the lost dispatches with `orca_cleanup.py --stop`.
@@ -49,8 +56,8 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 
 ## opencode / kiro (verified 2026-10-08)
 - **opencode2 (v2.0.20)** is a native Orca agent: `worker-start ... --agent opencode2` (or `opencode`). `--model` is ignored for it; the model comes from `~/.config/opencode/opencode.jsonc` (`model`). For a different model per task use the shell route: `opencode2 run -m <provider/model> "$(cat preamble)"`. List models: `opencode2 models`. Headless probe answered in seconds.
-- **kiro-cli (2.21.0)** is NOT in Orca's agent list. Run it like agy: a shell terminal + `dispatch --return-preamble`, then
-  `kiro-cli chat --no-interactive --trust-all-tools --model claude-sonnet-5.5 "$(cat preamble)"` (worker; it needs write + shell tools), or headless in the background with the same flags and the output to a log.
+- **kiro-cli (2.21.0)** IS a known Orca TUI agent (Orca 1.4.219 app bundle: `agent-kind.js`, launched with `--trust-all-tools`; the `worker-start --help` agent list is only examples). But `worker-start --agent kiro` cannot pass `--model` (help: --model only for Claude, Codex, Cursor, Antigravity, Muse) nor `--agent rein`, so it runs kiro's configured default model (here `claude-opus-4.8`, effort max, 2.2x credits) WITHOUT the rein hook. Until kiro defaults are verified, run a guarded kiro worker in an Orca shell terminal + `dispatch --return-preamble` (still an Orca worker, visible in the UI):
+  `kiro-cli chat --no-interactive --trust-all-tools --agent rein --model claude-sonnet-5.5 "$(cat preamble)"` (worker; it needs write + shell tools), or headless in the background with the same flags and the output to a log.
   - **Always pass `--model`** (`kiro-cli chat --list-models`); the configured default is `claude-opus-4.8` at effort max.
   - Each answer ends with `▸ Credits: N` — record it in the model ledger (`--credits`).
   - **Read-only mode** = `--trust-tools=read,grep,glob`: reads run, writes and shell are rejected ("non-interactive mode (no user to approve)"). A batch that mixes a rejected call with a read cancels the read too. `scripts/advise.sh` uses this with `ADVISE_PROVIDER=kiro`.
@@ -63,4 +70,4 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 - **A project without MR pipelines:** your gates are the only evidence; put the numbers in the MR.
 
 ## Keep sessions visible in Orca
-The user watches the team in the Orca UI. Every worker and reviewer starts through `worker-start`. On a start failure, retry inside Orca first (`--retry-of`, or a fresh worker on the same worktree). Use a direct CLI (`codex exec`, `claude -p`) only when Orca is down or keeps failing, and tell the user in one line before switching.
+The user watches the team in the Orca UI. Every worker and reviewer starts through `worker-start`, with two carve-outs: a guarded **codex** worker starts in a shell terminal (preamble route) because `worker-start` cannot pass the hook flags, and every non-Claude worker needs its worktree created first and `rein hooks install <task>` run before it starts (`--worktree path:<wt>`; `new-top-level` creates the worktree at start, so no hooks exist). On a start failure, retry inside Orca first (`--retry-of`, or a fresh worker on the same worktree). Use a direct CLI (`codex exec`, `claude -p`) only when Orca is down or keeps failing, and tell the user in one line before switching.

@@ -14,8 +14,9 @@ behaving well.
           while the worker runs │                         │ when the worker says "done"
                                 ▼                         ▼
                   guard hook (rein hook)          drift check (rein drift)
-                  Claude Code workers             every vendor: Claude, codex,
-                  blocks the action now           Gemini/Antigravity, opencode, kiro
+                  Claude, codex, agy, kiro,       every vendor: Claude, codex,
+                  opencode workers                Gemini/Antigravity, opencode, kiro
+                  blocks the action now           judges the result
                                 │                         │
                                 └──── under an OS sandbox (the real wall) ────┘
 ```
@@ -23,8 +24,8 @@ behaving well.
 | Layer | Covers | Catches |
 |---|---|---|
 | **Contract** | everyone | the rules: which files the task may edit, which never, which scope items the report must cover |
-| **Guard hook** | Claude Code workers | `git push` / rebase / `reset --hard`, `gh` / `glab`, docker prune, dependency installs, writes outside the worktree, writes to never-edit or out-of-ownership files, overwriting other tasks' reports or the contract, stopping without a report; plus your project's protected containers, ports, scripts and commands |
-| **Drift check** | every vendor | out-of-scope or never-edit files in the diff (renames included), uncommitted work, scope items without a heading/status/evidence, files claimed but not changed, `TODO`/`.skip`/stubs, secrets, missing issue refs, size budget |
+| **Guard hook** | Claude Code workers (plugin hook), and codex, agy, kiro and opencode workers after `rein hooks install <task>` (one judge, one contract; vendor differences in [`docs/SETUP.md`](docs/SETUP.md) section 8) | `git push` / rebase / `reset --hard`, `gh` / `glab`, docker prune, dependency installs, writes outside the worktree, writes to never-edit or out-of-ownership files, overwriting other tasks' reports or the contract, stopping without a report; plus your project's protected containers, ports, scripts and commands |
+| **Drift check** | every vendor | a guard that never ran (`GUARD_INACTIVE`: hooks installed but no hook call in the seen log), out-of-scope or never-edit files in the diff (renames included), uncommitted work, scope items without a heading/status/evidence, files claimed but not changed, `TODO`/`.skip`/stubs, secrets, missing issue refs, size budget |
 
 The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](https://github.com/mvdan/sh)), so
 `bash -c "git -C . push"`, `env X=1 timeout 30 git push` and `echo $(git push)` are caught, while
@@ -108,10 +109,26 @@ orchestrator CLI, or a test script that drives docker) and `sandbox_allowed_doma
 `python -c` write outside the worktree, which the guard cannot see, fails with `Operation not permitted`.
 Native Windows has no Claude Code sandbox (use WSL2).
 
+**2c. Guard the other vendors** (codex, agy, kiro, opencode; after the worktree exists):
+
+```sh
+rein hooks install fix-login            # --vendors codex,agy,kiro,opencode (default) | claude
+```
+
+This writes each CLI's project hook file inside the worktree (`.codex/hooks.json`, `.agents/hooks.json`,
+`.kiro/agents/rein.json`, `.opencode/plugins/rein/server.js`), every one calling the absolute path of this `rein` with
+`hook --vendor X`, keeps them out of git status, records the vendors in the contract, and prints the launch flags each
+vendor needs (codex: `--dangerously-bypass-hook-trust` plus `-c hooks...`; kiro: `--agent rein`). Every hook call
+inside a worktree appends a line to `<contracts dir>/seen/<task>.log`; `rein drift` reports `GUARD_INACTIVE` when no
+PreToolUse line of the current install (and, with `--expect-guard <vendor>`, of that vendor) exists, which is how a
+missing launch flag shows up. When hooks are installed for more than one vendor, `rein drift` refuses to judge (exit 2)
+unless you pass `--expect-guard <vendor that ran this task>`, so one vendor's calls never vouch for another's launch. The installed hooks are bound to their task (`hook --vendor X --task <name>`): they
+judge that contract even if the CLI reports another directory, and deny when it cannot be loaded.
+
 **3. Judge the result** when the worker reports done (any vendor):
 
 ```sh
-rein drift fix-login --claimed-files src/auth/login.ts,tests/auth/login.test.ts
+rein drift fix-login --claimed-files src/auth/login.ts,tests/auth/login.test.ts   # add --expect-guard <vendor> when hooks were installed for several vendors
 # exit 0 = no drift (warnings may remain), 1 = drift -> send a fix round, 2 = cannot judge
 ```
 
@@ -142,6 +159,7 @@ each chain is printed. Review chains should only list strong models: when none i
 |---|---|
 | Contracts (hook lookup) | `~/.cache/worktree-pipeline/contracts/<name>.json`, override `PIPELINE_CONTRACTS` |
 | Guard denials log | `~/.cache/worktree-pipeline/logs/guard.log`, override `PIPELINE_LOGDIR` |
+| Seen log (proof the guard ran) | `<contracts dir>/seen/<task>.log` (beside the contract index, not `PIPELINE_LOGDIR`): `<ts> <vendor> <event> <tool> gen=<install id>` per hook call in a contracted worktree |
 | Default profile | `REIN_PROFILE` |
 | Project pack | the profile's `pack` field (read by the worktree-pipeline skill; `PIPELINE_PACK` for `advise.sh`) |
 | Plugin binary | `${CLAUDE_PLUGIN_DATA}/bin/rein` (`~/.claude/plugins/data/rein-rein/bin/rein`) |
@@ -156,6 +174,7 @@ each chain is printed. Review chains should only list strong models: when none i
 | Real Claude Code session: guard hook (exec form) | ✅ verified (manual settings and as plugin) | not yet | not yet |
 | Real Claude Code session: plugin SessionStart installer | ✅ verified (`--plugin-dir`) | not yet | not yet |
 | Real Claude Code session: `rein sandbox` | ✅ verified | not yet | n/a (no native sandbox; use WSL2) |
+| Real runs of `rein hooks install` + guard denial: codex 0.161.0, agy 1.3.1, kiro-cli 2.21.0, opencode2 2.0.20 | ✅ verified (push and out-of-ownership writes denied, denial text reached the model) | not yet | not yet |
 
 On Windows the hooks run `${CLAUDE_PLUGIN_DATA}/bin/rein` and rely on Windows finding `rein.exe`; that has not been
 seen in a real Claude Code session yet. Git Bash paths (`/c/...`, `/tmp/...`) are mapped to native paths before they

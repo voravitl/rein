@@ -153,5 +153,97 @@ If you used rein before the plugin (hooks in `~/.claude/settings.json`, the skil
 |---|---|---|---|
 | Guard hook | verified in real sessions (manual settings, and as a plugin with user settings excluded) | CI only | CI only; the hook runs `${CLAUDE_PLUGIN_DATA}/bin/rein` and relies on Windows finding `rein.exe` (not yet seen in a real session) |
 | `rein sandbox` (Claude Code OS sandbox) | verified | supported by Claude Code, not yet verified | not available natively; use WSL2 |
+| Vendor hooks (`rein hooks install`, section 8) | codex, agy, kiro, opencode verified in real runs | not yet | not yet |
 | SessionStart installer | verified (Go build, release download, checksum refusal, 6 parallel starts) | not yet | needs Git Bash `sh` |
 | Pipeline scripts | verified | should work (bash, python3, GNU timeout) | use WSL2 |
+
+## 8. Guarding codex, agy, kiro and opencode workers
+
+`rein hook --vendor <claude|codex|agy|kiro|opencode>` reads that CLI's hook event, maps it to one normalised action
+(bash command, files written, cwd), runs the same judge as for Claude (`CheckBash`, ownership check, the report check on
+stop) and answers in the CLI's own dialect. `rein hooks install <task>` writes the project hook files into the
+contract's worktree (run it after the worktree exists), adds them to `<git-common-dir>/info/exclude`, records the
+vendors in the contract (`hooks_installed`, both copies) and prints the launch flags. A file the repository already
+tracks is refused, not overwritten (it would show up as the worker's uncommitted change).
+
+| Vendor | File written | Launch (required) | Blocked by | Write tools judged | Stop (report check) | Known gaps |
+|---|---|---|---|---|---|---|
+| codex 0.161.0 | `.codex/hooks.json` (PreToolUse + Stop) | `--dangerously-bypass-hook-trust` **and** the two `-c hooks.PreToolUse=...` / `-c hooks.Stop=...` flags that `rein hooks install` prints | Claude-style `permissionDecision: deny` (model sees `Command blocked by PreToolUse hook: [rein] ...`) | `apply_patch` (every `*** Add/Update/Delete File:` and `*** Move to:` path in the patch), `Edit`/`Write`/`MultiEdit` | `decision: block`; the worker is sent back to write the report (verified) | shell-run `apply_patch` heredocs and interpreter writes are not parsed; Orca `worker-start --agent codex` cannot pass the flags |
+| agy 1.3.1 | `.agents/hooks.json` (PreToolUse + flat Stop) | none; start agy inside the worktree | JSON `decision: deny` (model sees `tool call denied by pre-tool hook: [rein] ...`) | `write_to_file`, `replace_file_content`, `multi_replace_file_content`, and any tool whose args carry `TargetFile` | `decision: continue` with the reason; agy re-enters the loop (verified) | a write tool that names its file with another key is allowed and only logged |
+| kiro-cli 2.21.0 | `.kiro/agents/rein.json` | `kiro-cli chat --agent rein ...` on **every** launch (the file defines the agent; without the flag no hook runs) | exit 2 + reason on stderr (model sees `PreToolHook blocked the tool execution: [rein] ...`) | `fs_write` (create, str_replace, insert, append), `write` | exit 2 only **warns**: kiro cannot force a continue, so a missing report is caught by `rein drift` (NO_REPORT) | `--agent rein` replaces the user's default agent (its MCP servers and prompt) for that run |
+| opencode2 2.0.20 | `.opencode/plugins/rein/server.js` (v2 plugin, loads without config) | none; start opencode2 inside the worktree | the plugin pipes `{tool,input,cwd}` to `rein hook --vendor opencode` and throws on exit 2 (model sees the `[rein] ...` text; in a parallel batch it may see the first refusal for every call) | `edit`, `write`, `multiedit`, `patch`, `apply_patch` (`path`/`filePath`/`file_path`, or a patch body) | no stop hook is wired; `rein drift` (NO_REPORT) is the backstop | the `execute` code-mode tool (MCP catalog) is unclassified; a plugin that cannot run the binary denies the call |
+| Claude (opt-in) | `.claude/settings.local.json` `hooks`, merged with the sandbox block | none | as in section 4 | Edit, Write, MultiEdit, NotebookEdit | `decision: block` | only for machines without the plugin: with the plugin installed the guard would run twice |
+
+**Policy for tools the guard cannot classify:** they are allowed (reads must work) but every call is written to the seen
+log with the tool name, and `rein drift` judges the resulting diff. A tool known to write files never bypasses the
+ownership check: if its target cannot be read from the event, the call is denied.
+
+**Binding.** Installed hooks run `rein hook --vendor X --task <name>` (the opencode plugin embeds the task and the
+canonical worktree path). A bound hook judges that task's contract and worktree whatever directory the CLI reports, and
+**denies** when the contract is missing or broken or the event cannot be parsed. The global Claude plugin hook (no
+`--task`) keeps its lookup by directory and stays silent outside workers.
+
+**Bash rules added for the vendors (they also apply to Claude workers through the global plugin hook):**
+- Tool `workdir` arguments (codex, opencode) are the command's cwd. A mutating `git` command whose cwd is outside the
+  worktree is judged as git in another repository, except in a scratch directory under the system temp dir (not the
+  task worktrees' parent, the run dir or the contracts dir).
+- A patch passed through a shell command is judged like an `apply_patch` call only when the command runs `apply_patch`
+  or `applypatch` (a marker with no readable path is denied); `grep -F '*** Begin Patch' file` is judged as a plain
+  command.
+- Shells that read commands from stdin are denied: `bash -s`, `sh -i`, `bash` with no script, `... | bash`,
+  `bash < file`, whatever positional arguments follow. A **literal heredoc** (`bash <<'EOF' ... EOF`) is judged: its
+  body goes through the same checks. `bash script.sh`, `bash -c '...'`, `bash -euo pipefail -c ...`, `sh -e x.sh` stay
+  allowed. (codex `write_stdin` does not reach PreToolUse, so typed input could not be judged.)
+- The installed hook files are never editable by the worker: `.codex/hooks.json`, `.agents/hooks.json`,
+  `.kiro/agents/rein.json`, `.opencode/plugins/rein/**`, `.claude/settings.local.json`, and the directories that hold
+  them, against `rm`, `mv`, `cp` targets, redirects, `sed -i`, `tee`, `truncate`. An operand with glob characters is
+  denied when it could expand to one of those paths or directories (`.codex/*`, `.*`, `.[a-z]*`; a leading dot needs a
+  literal dot, so `*` alone is fine). `find` with `-delete`, `-exec`, `-execdir`, `-ok` or `-okdir` is denied when its
+  search root holds a hook file (`.` included). `git stash --all/-a/--include-untracked/-u` is denied (it moves untracked
+  and ignored files); `git clean -f` was already denied.
+- Remaining known gaps (the guard is a seatbelt; drift and the OS sandbox are the backstops): python/node/other REPLs and
+  `-e`/`-c` interpreter writes, `script`, `tmux`/`screen`, a patch applied after a `cd` in the same command (judged
+  against the starting cwd), commands run by a tool the guard does not see (codex `mcp__*` runtimes, opencode `execute`,
+  kiro `use_subagent`).
+
+`rein hooks install` also refuses to write through a symlink (file or parent), keeps sibling hooks of a shared group,
+calls `${CLAUDE_PLUGIN_DATA}/bin/rein` when it exists (else the running binary, with a warning if that is under a temp
+or version-numbered directory), and quotes it for POSIX `sh` (Git Bash on Windows; PowerShell and cmd.exe quoting are
+not covered).
+
+**Seen log and `GUARD_INACTIVE`.** Every hook call inside a contracted worktree appends
+`<ts> <vendor> <event> <tool> gen=<install id>` to `<contracts dir>/seen/<task>.log` (beside the contract index, so the
+worker's and the coordinator's environments agree even if `PIPELINE_LOGDIR` differs). `rein drift <task>` reports
+`GUARD_INACTIVE` (exit 1, naming the likely missing launch flag) when the worktree has commits and no `pretool` line of
+the current install generation exists for the vendor named by `--expect-guard <vendor>`. When hooks are installed for
+more than one vendor `--expect-guard` is **required** (otherwise exit 2, "cannot judge"), so a kiro fallback launched
+without `--agent rein` is caught even after earlier codex lines; with a single installed vendor it defaults to that one. Each install records `hooks_installed_at` and a new
+`hooks_generation`. The drift result also carries `head`; every revision range uses that sha, and a HEAD that moves
+during the check is "cannot judge" (exit 2).
+
+**Unclassified tools.** Probed with codex 0.161.0: `exec_command` reaches PreToolUse as `Bash` (judged like any
+command); `write_stdin` does **not** reach PreToolUse (see the stdin-shell rule above); the JS runtime arrives as
+`mcp__cua_repl__js` (allowed and logged). Not verified: kiro `use_subagent` (whether subagent tool calls run the agent's
+hooks) and opencode's `execute` code-mode tool. agy treats any tool with a path-like argument (`TargetFile`,
+`AbsolutePath`, `FilePath`, `Path`, `File`) as a write unless it is known to only read (`view_*`, `read_*`, `list_*`,
+`find_*`, `grep_*`, `search_*`).
+
+**Codex trust (verified with codex 0.161.0).**
+- An untrusted project hook is skipped silently. The persisted trust is a hash in `~/.codex/config.toml`
+  (`[hooks.state."<abs>/.codex/hooks.json:pre_tool_use:0:0"]`); rein never writes it.
+- `--dangerously-bypass-hook-trust` (on `codex` and `codex exec`) is the only per-invocation way to run unreviewed hooks.
+  A `-c hooks.state...` trust override does not work: the dotted key splits at the dot in `.codex`, and the inline-table
+  form is accepted but not honoured.
+- Project `.codex/hooks.json` is only read for a trusted project, and for a **linked git worktree** codex reads the main
+  checkout's `.codex`, not the worktree's (verified: the worktree file was ignored even when trusted). Hooks passed with
+  `-c hooks.PreToolUse=[...]` / `-c hooks.Stop=[...]` do not depend on either, so the launch line uses them (plus the
+  bypass flag; without the flag these hooks are skipped too). The `.codex/hooks.json` file is still written for
+  standalone clones.
+- `codex exec` also adds a `[projects."<dir>"] trust_level = "trusted"` entry to `~/.codex/config.toml` for the directory
+  it runs in: that is codex's own behaviour, remove such entries for throwaway directories if you do not want them.
+- `orca orchestration worker-start --agent codex` takes only `--model` and `--effort` (no extra CLI arguments), so a codex
+  worker that must be guarded is started in a shell terminal with the preamble route, or with the direct `codex exec`
+  fallback, using the printed flags.
+
+**Not verified:** Linux and Windows runs of any vendor hook; kiro and agy behaviour on a version other than the ones
+listed; whether codex honours `hooks.state` trust given through `CODEX_HOME` (not tried).

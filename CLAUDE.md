@@ -1,6 +1,6 @@
 # rein
 
-Supervisor for pipeline worker models: `rein hook` (Claude Code hook), `rein contract`, `rein drift`, `rein ledger`, `rein providers`.
+Supervisor for pipeline worker models: `rein hook` (worker hook for Claude Code, codex, agy, kiro, opencode via `--vendor`), `rein hooks install`, `rein contract`, `rein drift`, `rein ledger`, `rein providers`.
 Read `docs/adr/0001-rein-supervisor.md` first.
 
 - Go 1.26+ (`go.mod`; module `github.com/voravitl/rein`); `gofmt -w . && go vet ./... && go test ./...` before every commit.
