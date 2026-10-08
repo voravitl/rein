@@ -4,6 +4,7 @@
 //	rein hooks install <task>       write the codex/agy/kiro/opencode (and claude) hook files into the worktree
 //	rein contract new|show|path     task contract the hook and the drift check enforce
 //	rein drift <task> [...]         judge a worker's result against its contract (exit 0 ok, 1 drift, 2 cannot judge)
+//	rein run start|end|resume|allow|audit   coordinator run guard (allow and end --abandon are user-only)
 //	rein ledger add|call|report|suggest
 //	rein providers [--chain worker:<type>|review:<k>] [--only a,b] [--skip-claude]
 //	rein version
@@ -44,6 +45,8 @@ func main() {
 		os.Exit(cmdContract(os.Args[2:]))
 	case "drift":
 		os.Exit(cmdDrift(os.Args[2:]))
+	case "run":
+		os.Exit(cmdRun(os.Args[2:]))
 	case "ledger":
 		os.Exit(cmdLedger(os.Args[2:]))
 	case "providers":
@@ -59,12 +62,16 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|ledger|providers|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|run|ledger|providers|version> [args]
   rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
   rein hooks install <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
   rein contract show|path <name>
   rein drift <name> [--worktree P] [--base origin/main] [--claimed-files a,b] [--expect-guard codex|agy|kiro|opencode|claude] [--json]
+  rein run start [repo] --run NAME [--profile P] [--session S --pid N]    (coordinator guard on; owner from CLAUDE_CODE_SESSION_ID / CLAUDE_PID)
+  rein run end [repo] [--pinned sha,..] | rein run audit [repo] [--pinned sha,..] [--json]   (exit 1 = COORDINATOR_DRIFT)
+  rein run resume [repo] [--session S --pid N]
+  rein run allow [repo] (--task T | --commit SHA) --reason R | rein run end [repo] --abandon --reason R    (user-only: refused inside Claude Code)
   rein ledger add --task T --type backend --worker codex:gpt-6.1-sol --rounds 3 [--approved] ...
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
   rein ledger report [--type T] [--since ISO] | suggest [--min-n 3]
