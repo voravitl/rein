@@ -31,6 +31,12 @@ type Profile struct {
 	SandboxExcludedCommands  []string `json:"sandbox_excluded_commands,omitempty"`
 	SandboxAllowedDomains    []string `json:"sandbox_allowed_domains,omitempty"`
 	SandboxFailIfUnavailable bool     `json:"sandbox_fail_if_unavailable,omitempty"`
+	// Coordinator guard (rein run): what the coordinator session may do while a run is active. Snapshotted into the
+	// run marker by `rein run start`; empty means the built-in defaults (internal/run). A non-empty list replaces
+	// the default, so a project can narrow it.
+	CoordinatorWritable []string `json:"coordinator_writable,omitempty"` // globs (repo-relative) the coordinator may write
+	CoordinatorTools    []string `json:"coordinator_tools,omitempty"`    // tool names (globs) allowed besides Bash/write tools/Agent; MCP tools are denied unless listed
+	ReadonlyAgents      []string `json:"readonly_agents,omitempty"`      // Agent subagent types the coordinator may start without `rein run allow`
 	// Project pack: a local directory with the project's gates, safety notes and rule addenda (PACK.md). rein itself
 	// does not read it; the worktree-pipeline skill does.
 	Pack string `json:"pack,omitempty"`

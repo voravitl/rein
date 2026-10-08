@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -23,5 +24,20 @@ func TestRelativeRunDirIsStoredAbsolute(t *testing.T) {
 	saved, err := c.Save()
 	if err != nil || len(saved) != 2 || saved[1] != c.RunCopy {
 		t.Errorf("saved %v, %v", saved, err)
+	}
+}
+
+func TestProfileCoordinatorFields(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "p.json")
+	body := `{"name":"x","coordinator_writable":["docs/**"],"coordinator_tools":["Read","mcp__orca__*"],"readonly_agents":["Explore"]}`
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	prof, err := LoadProfile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prof.CoordinatorWritable) != 1 || prof.CoordinatorTools[1] != "mcp__orca__*" || prof.ReadonlyAgents[0] != "Explore" {
+		t.Fatalf("profile = %+v", prof)
 	}
 }
