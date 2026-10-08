@@ -149,6 +149,15 @@ func Check(c *Config, names []string, timeout time.Duration) map[string]Result {
 		go func(n string, p Provider) {
 			defer wg.Done()
 			r := probe(context.Background(), n, p, c.QuotaSignals[p.Agent], timeout)
+			if r.State == "down" && strings.HasPrefix(r.Detail, "timeout") {
+				// one slow answer must not drop a working provider from the chain: retry a timeout once
+				r2 := probe(context.Background(), n, p, c.QuotaSignals[p.Agent], timeout)
+				r2.Seconds += r.Seconds
+				if r2.State == "down" && strings.HasPrefix(r2.Detail, "timeout") {
+					r2.Detail += " (twice)"
+				}
+				r = r2
+			}
 			mu.Lock()
 			out[n] = r
 			mu.Unlock()
