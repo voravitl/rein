@@ -75,6 +75,12 @@ type Contract struct {
 	WorkerWritable  []string `json:"worker_writable,omitempty"` // exact files outside the worktree the worker may write
 	MaxChangedLines int      `json:"max_changed_lines,omitempty"`
 	Profile         Profile  `json:"profile"`
+	// HooksInstalled lists the vendors `rein hooks install` wired into the worktree; drift uses it to expect a seen
+	// log. RunCopy is the durable copy under the run dir, so both copies can be updated together.
+	HooksInstalled   []string `json:"hooks_installed,omitempty"`
+	HooksInstalledAt string   `json:"hooks_installed_at,omitempty"` // RFC 3339, set by every install
+	HooksGeneration  string   `json:"hooks_generation,omitempty"`   // new per install; seen-log lines carry it, so old evidence never counts
+	RunCopy          string   `json:"run_copy,omitempty"`           // absolute path of the durable copy
 }
 
 // IndexDir is where the hook looks contracts up by worktree directory name.
@@ -87,6 +93,60 @@ func IndexDir() string {
 }
 
 func PathOf(name string) string { return filepath.Join(IndexDir(), name+".json") }
+
+// LogDir is where the guard writes guard.log.
+func LogDir() string {
+	if d := os.Getenv("PIPELINE_LOGDIR"); d != "" {
+		return d
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".cache", "worktree-pipeline", "logs")
+}
+
+// SeenPath is the proof-of-life log of one task: one line per hook call that ran inside its worktree. It lives
+// beside the contract index, not under PIPELINE_LOGDIR: the hook (worker environment) and drift (coordinator
+// environment) always agree on the index, but may disagree on the log dir.
+func SeenPath(name string) string { return filepath.Join(IndexDir(), "seen", name+".log") }
+
+// durableCopy is the run-dir copy to update next to the index. Contracts made before run_copy existed derive it
+// from the report path (<run>/reports/x.md -> <run>/contracts/<name>.json), but only when that file exists, so a
+// guess never creates a stray file. "" means unknown.
+func (c *Contract) durableCopy() string {
+	if c.RunCopy != "" {
+		if filepath.IsAbs(c.RunCopy) {
+			return c.RunCopy
+		}
+		return "" // a relative path would resolve against whatever directory this process runs in
+	}
+	rd := filepath.Dir(c.ReportPath)
+	if filepath.Base(rd) != "reports" || !filepath.IsAbs(rd) {
+		return ""
+	}
+	p := filepath.Join(filepath.Dir(rd), "contracts", c.Name+".json")
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
+}
+
+// Save writes the contract to the index and to its durable run-dir copy and returns the paths written. The
+// run copy is skipped (and absent from the result) when it cannot be located.
+func (c *Contract) Save() ([]string, error) {
+	b, _ := json.MarshalIndent(c, "", "  ")
+	paths := []string{PathOf(c.Name)}
+	if d := c.durableCopy(); d != "" {
+		paths = append(paths, d)
+	}
+	for _, p := range paths {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(p, b, 0o644); err != nil {
+			return nil, err
+		}
+	}
+	return paths, nil
+}
 
 // ErrNone means "no contract": the session is not a pipeline worker.
 var ErrNone = errors.New("no contract")
@@ -161,6 +221,11 @@ func New(name string, issue int, runDir, allow, deny, scope, worktreeRoot, repor
 		return nil, errors.New("--worktree-root is required (or set worktree_root in the profile)")
 	}
 	runDir, worktreeRoot = expand(runDir), expand(worktreeRoot)
+	for _, p := range []*string{&runDir, &worktreeRoot} { // the hook and drift run from other directories
+		if a, err := filepath.Abs(*p); err == nil {
+			*p = a
+		}
+	}
 	c := &Contract{Name: name, Issue: issue, Worktree: filepath.Join(worktreeRoot, name),
 		Allow: splitList(allow), Scope: splitList(scope), MaxChangedLines: maxLines, Profile: *prof}
 	seen := map[string]bool{}
@@ -181,14 +246,13 @@ func New(name string, issue int, runDir, allow, deny, scope, worktreeRoot, repor
 	for _, w := range splitList(writable) {
 		c.WorkerWritable = append(c.WorkerWritable, expand(w))
 	}
-	b, _ := json.MarshalIndent(c, "", "  ")
-	for _, p := range []string{filepath.Join(runDir, "contracts", name+".json"), PathOf(name)} {
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			return nil, err
-		}
-		if err := os.WriteFile(p, b, 0o644); err != nil {
-			return nil, err
-		}
+	abs, err := filepath.Abs(filepath.Join(runDir, "contracts", name+".json"))
+	if err != nil {
+		return nil, err
+	}
+	c.RunCopy = abs
+	if _, err := c.Save(); err != nil {
+		return nil, err
 	}
 	return c, nil
 }

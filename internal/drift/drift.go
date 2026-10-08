@@ -23,6 +23,7 @@ type Finding struct {
 
 type Result struct {
 	Name     string    `json:"name"`
+	Head     string    `json:"head"` // the worktree revision this verdict judged
 	Drift    []Finding `json:"drift"`
 	Warnings []Finding `json:"warnings"`
 	Commits  int       `json:"commits"`
@@ -73,8 +74,81 @@ func lines(s string) []string {
 	return out
 }
 
+// midCheck is a test seam: it runs just before the final HEAD re-check, where a test can move HEAD.
+var midCheck func()
+
+// Options are the coordinator's extra expectations for one check.
+type Options struct {
+	ExpectGuard string // vendor whose guard hook was supposed to run for this worker launch ("" = any installed one)
+}
+
 // Check returns the result, or an error when it cannot judge (the caller must not treat that as clean).
 func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, error) {
+	return CheckWith(c, wt, base, claimed, Options{})
+}
+
+// launchHint names, per vendor, the launch mistake that most likely left its hook silent.
+var launchHint = map[string]string{
+	"codex":    "codex needs --dangerously-bypass-hook-trust plus the -c hooks flags printed by rein hooks install (an untrusted project hook is skipped silently, and a linked worktree's .codex is not read)",
+	"kiro":     "kiro needs --agent rein on every launch",
+	"agy":      "agy must be started inside the worktree",
+	"opencode": "opencode2 must be started inside the worktree",
+	"claude":   "no rein plugin hook and no hook in .claude/settings.local.json",
+}
+
+// guardVendors are the vendors whose hook calls count as proof: the one named by --expect-guard, else every
+// installed vendor.
+func guardVendors(c *contract.Contract, opt Options) []string {
+	if opt.ExpectGuard != "" {
+		return []string{opt.ExpectGuard}
+	}
+	return c.HooksInstalled
+}
+
+// guardSeen reports whether the seen log holds a PreToolUse call of one of the vendors from the contract's
+// current install generation. Lines of an earlier install (a reused task name) or of another vendor (an earlier
+// codex attempt before a kiro fallback) do not count.
+func guardSeen(c *contract.Contract, vendors []string) bool {
+	b, err := os.ReadFile(contract.SeenPath(c.Name))
+	if err != nil {
+		return false
+	}
+	want := map[string]bool{}
+	for _, v := range vendors {
+		want[v] = true
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		f := strings.Fields(l)
+		if len(f) < 4 || f[2] != "pretool" || !want[f[1]] {
+			continue
+		}
+		if c.HooksGeneration == "" || (len(f) > 4 && f[4] == "gen="+c.HooksGeneration) {
+			return true
+		}
+	}
+	return false
+}
+
+func inactiveDetail(c *contract.Contract, vendors []string) string {
+	var hints []string
+	for _, v := range vendors {
+		if h, ok := launchHint[v]; ok {
+			hints = append(hints, h)
+		}
+	}
+	if len(c.HooksInstalled) == 0 {
+		return fmt.Sprintf("a guard was expected (%s) but no hooks are installed for this task and no hook call was seen (%s); run rein hooks install %s", strings.Join(vendors, ","), contract.SeenPath(c.Name), c.Name)
+	}
+	return fmt.Sprintf("no PreToolUse call from %s of the current hooks install was seen in %s although the worktree has commits; likely: %s",
+		strings.Join(vendors, ","), contract.SeenPath(c.Name), strings.Join(hints, "; "))
+}
+
+// CheckWith is Check with options.
+func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Options) (*Result, error) {
+	if opt.ExpectGuard == "" && len(c.HooksInstalled) > 1 {
+		// one vendor's hook calls must not vouch for another vendor's launch
+		return nil, fmt.Errorf("hooks are installed for several vendors (%s): pass --expect-guard <vendor that ran this task>", strings.Join(c.HooksInstalled, ","))
+	}
 	r := &Result{Name: c.Name}
 	d := func(k, f string, a ...any) { r.Drift = append(r.Drift, Finding{k, fmt.Sprintf(f, a...)}) }
 	w := func(k, f string, a ...any) { r.Warnings = append(r.Warnings, Finding{k, fmt.Sprintf(f, a...)}) }
@@ -82,7 +156,12 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 	if _, err := git(wt, "rev-parse", "--verify", base); err != nil {
 		return nil, err
 	}
-	log, err := git(wt, "log", "--format=%h %s", base+"..HEAD")
+	head, err := git(wt, "rev-parse", "HEAD")
+	if err != nil {
+		return nil, err
+	}
+	r.Head = strings.TrimSpace(head) // every range below uses this sha, never the moving HEAD
+	log, err := git(wt, "log", "--format=%h %s", base+".."+r.Head)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +169,7 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 	r.Commits = len(commits)
 	// --no-renames: a rename shows as a delete of the source plus an add of the destination, so moving an
 	// out-of-scope file into an allowed directory still shows the out-of-scope path.
-	names, err := git(wt, "diff", "--no-renames", "--name-only", "-z", base+"...HEAD")
+	names, err := git(wt, "diff", "--no-renames", "--name-only", "-z", base+"..."+r.Head)
 	if err != nil {
 		return nil, err
 	}
@@ -100,17 +179,20 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 	if err != nil {
 		return nil, err
 	}
-	patch, err := git(wt, "-c", "core.quotePath=false", "diff", "--no-renames", "-U0", base+"...HEAD")
+	patch, err := git(wt, "-c", "core.quotePath=false", "diff", "--no-renames", "-U0", base+"..."+r.Head)
 	if err != nil {
 		return nil, err
 	}
-	numstat, err := git(wt, "diff", "--no-renames", "--numstat", base+"...HEAD")
+	numstat, err := git(wt, "diff", "--no-renames", "--numstat", base+"..."+r.Head)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(commits) == 0 {
 		d("NO_COMMITS", "no commits on top of %s", base)
+	}
+	if gv := guardVendors(c, opt); (len(c.HooksInstalled) > 0 || opt.ExpectGuard != "") && len(commits) > 0 && !guardSeen(c, gv) {
+		d("GUARD_INACTIVE", "%s", inactiveDetail(c, gv))
 	}
 	if c.Issue > 0 {
 		var miss []string
@@ -212,6 +294,12 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 		if total > c.MaxChangedLines {
 			w("OVER_BUDGET", "%d changed lines > %d", total, c.MaxChangedLines)
 		}
+	}
+	if midCheck != nil {
+		midCheck()
+	}
+	if h2, err := git(wt, "rev-parse", "HEAD"); err != nil || strings.TrimSpace(h2) != r.Head {
+		return nil, fmt.Errorf("HEAD moved during the check (judged %.12s); cannot judge, run it again", r.Head)
 	}
 	return r, nil
 }

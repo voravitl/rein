@@ -1,6 +1,7 @@
 // rein keeps pipeline worker models on task.
 //
-//	rein hook                       Claude Code hook (PreToolUse/Stop); reads the event on stdin
+//	rein hook [--vendor V]          worker hook (claude|codex|agy|kiro|opencode); reads the event on stdin
+//	rein hooks install <task>       write the codex/agy/kiro/opencode (and claude) hook files into the worktree
 //	rein contract new|show|path     task contract the hook and the drift check enforce
 //	rein drift <task> [...]         judge a worker's result against its contract (exit 0 ok, 1 drift, 2 cannot judge)
 //	rein ledger add|call|report|suggest
@@ -21,6 +22,7 @@ import (
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/drift"
 	"github.com/voravitl/rein/internal/guard"
+	"github.com/voravitl/rein/internal/hooks"
 	"github.com/voravitl/rein/internal/ledger"
 	"github.com/voravitl/rein/internal/providers"
 	"github.com/voravitl/rein/internal/sandbox"
@@ -35,8 +37,9 @@ func main() {
 	}
 	switch os.Args[1] {
 	case "hook":
-		defer func() { _ = recover() }() // a hook must never crash a user's session
-		guard.Run(os.Stdin, os.Stdout)
+		os.Exit(cmdHook(os.Args[2:]))
+	case "hooks":
+		os.Exit(cmdHooks(os.Args[2:]))
 	case "contract":
 		os.Exit(cmdContract(os.Args[2:]))
 	case "drift":
@@ -56,15 +59,89 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|contract|sandbox|drift|ledger|providers|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|ledger|providers|version> [args]
+  rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
+  rein hooks install <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
   rein contract show|path <name>
-  rein drift <name> [--worktree P] [--base origin/main] [--claimed-files a,b] [--json]
+  rein drift <name> [--worktree P] [--base origin/main] [--claimed-files a,b] [--expect-guard codex|agy|kiro|opencode|claude] [--json]
   rein ledger add --task T --type backend --worker codex:gpt-6.1-sol --rounds 3 [--approved] ...
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
   rein ledger report [--type T] [--since ISO] | suggest [--min-n 3]
   rein sandbox <name>     write the OS sandbox settings into the worker's worktree (before the worker starts)
   rein providers [--chain worker:backend] [--only a,b] [--skip-claude] [--timeout 90s] [--config F] [--json]`)
+}
+
+// cmdHook never crashes the vendor's session: a panic means "no decision" (exit 0). A bad flag exits 1, which
+// no vendor treats as a block.
+func cmdHook(args []string) (code int) {
+	defer func() {
+		if recover() != nil {
+			code = 0
+		}
+	}()
+	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	vendor := fs.String("vendor", "claude", strings.Join(guard.Vendors, "|"))
+	task := fs.String("task", "", "bind this hook to one task's contract (set by rein hooks install)")
+	if fs.Parse(args) != nil || !oneOf(*vendor, guard.Vendors) {
+		fmt.Fprintf(os.Stderr, "[hook] --vendor must be one of %s\n", strings.Join(guard.Vendors, ", "))
+		return 1
+	}
+	return guard.RunTask(*vendor, *task, os.Stdin, os.Stdout, os.Stderr)
+}
+
+func cmdHooks(args []string) int {
+	if len(args) < 2 || args[0] != "install" || strings.HasPrefix(args[1], "-") {
+		usage()
+		return 2
+	}
+	fs := flag.NewFlagSet("hooks install", flag.ContinueOnError)
+	vendors := fs.String("vendors", strings.Join(hooks.Default, ","), "comma list of "+strings.Join(hooks.All, "|"))
+	if fs.Parse(args[2:]) != nil {
+		return 2
+	}
+	c, err := contract.Load(args[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[hooks]", err)
+		return 2
+	}
+	bin, warn, err := hooks.BinaryPath()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[hooks] cannot resolve the rein binary:", err)
+		return 2
+	}
+	if warn != "" {
+		fmt.Fprintln(os.Stderr, "[hooks] warning:", warn)
+	}
+	var list []string
+	for _, v := range strings.Split(*vendors, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			list = append(list, v)
+		}
+	}
+	res, saved, err := hooks.Install(c, bin, list)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[hooks]", err)
+		return 2
+	}
+	code := 0
+	for _, r := range res {
+		if r.Err != nil {
+			fmt.Fprintf(os.Stderr, "[hooks] %s: FAILED: %v\n", r.Vendor, r.Err)
+			code = 2
+			continue
+		}
+		fmt.Printf("[hooks] %s: wrote %s (kept out of git status via info/exclude)\n        launch: %s\n", r.Vendor, strings.Join(r.Files, ", "), r.Launch)
+	}
+	if code == 0 {
+		fmt.Printf("[hooks] recorded in the contract (%s): %s. `rein drift %s` now reports GUARD_INACTIVE if no hook call of this install shows up in %s\n",
+			strings.Join(saved, " and "), strings.Join(c.HooksInstalled, ","), c.Name, contract.SeenPath(c.Name))
+		if len(saved) < 2 {
+			fmt.Println("[hooks] note: the durable run-dir copy of the contract was NOT updated (this contract has no run_copy and its run dir could not be derived); only the index copy has the hooks")
+		}
+	}
+	return code
 }
 
 func cmdContract(args []string) int {
@@ -137,6 +214,7 @@ func cmdDrift(args []string) int {
 	base := fs.String("base", "origin/main", "base ref")
 	claimed := fs.String("claimed-files", "", "worker_done filesModified, comma separated")
 	asJSON := fs.Bool("json", false, "JSON output")
+	expect := fs.String("expect-guard", "", "vendor whose guard hook was expected for this launch: no matching seen-log line is drift")
 	if fs.Parse(args[1:]) != nil {
 		return 2
 	}
@@ -155,7 +233,7 @@ func cmdDrift(args []string) int {
 			cl = append(cl, f)
 		}
 	}
-	r, err := drift.Check(c, tree, *base, cl)
+	r, err := drift.CheckWith(c, tree, *base, cl, drift.Options{ExpectGuard: *expect})
 	if err != nil {
 		fmt.Printf("[drift] cannot judge: %v\n", err)
 		return 2
@@ -174,7 +252,7 @@ func cmdDrift(args []string) int {
 		if len(r.Drift) == 0 {
 			ok = " -> OK to gate"
 		}
-		fmt.Printf("[drift] %s: %d drift, %d warnings; %d commits, %d files%s\n", r.Name, len(r.Drift), len(r.Warnings), r.Commits, r.Files, ok)
+		fmt.Printf("[drift] %s @ %.12s: %d drift, %d warnings; %d commits, %d files%s\n", r.Name, r.Head, len(r.Drift), len(r.Warnings), r.Commits, r.Files, ok)
 	}
 	if len(r.Drift) > 0 {
 		return 1

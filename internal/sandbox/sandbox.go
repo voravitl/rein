@@ -63,7 +63,7 @@ func Apply(c *contract.Contract) (string, string, error) {
 	if err := os.WriteFile(path, append(b, '\n'), 0o644); err != nil {
 		return "", "", err
 	}
-	if err := exclude(wt, settingsRel); err != nil {
+	if err := Exclude(wt, settingsRel); err != nil {
 		return path, "", fmt.Errorf("settings written, but could not add %s to info/exclude: %w", settingsRel, err)
 	}
 	note := ""
@@ -73,8 +73,8 @@ func Apply(c *contract.Contract) (string, string, error) {
 	return path, note, nil
 }
 
-// exclude adds a line to <git common dir>/info/exclude once (shared by all worktrees of the repository).
-func exclude(wt, line string) error {
+// Exclude adds a line to <git common dir>/info/exclude once (shared by all worktrees of the repository).
+func Exclude(wt, line string) error {
 	out, err := exec.Command("git", "-C", wt, "rev-parse", "--git-common-dir").Output()
 	if err != nil {
 		return err

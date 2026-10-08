@@ -1,4 +1,4 @@
-// Package guard is the Claude Code hook for pipeline workers. It is active only inside a git worktree whose
+// Package guard is the hook for pipeline workers (Claude Code, codex, agy, kiro, opencode). It is active only inside a git worktree whose
 // directory name has a task contract whose worktree path is that same directory; everywhere else it returns
 // without output, so ordinary sessions are unaffected.
 package guard
@@ -17,16 +17,6 @@ import (
 	"github.com/voravitl/rein/internal/glob"
 )
 
-type event struct {
-	HookEventName  string          `json:"hook_event_name"`
-	ToolName       string          `json:"tool_name"`
-	Cwd            string          `json:"cwd"`
-	ToolInput      json.RawMessage `json:"tool_input"`
-	StopHookActive bool            `json:"stop_hook_active"`
-}
-
-var editTools = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
-
 // toplevel walks up from dir to the first directory that holds .git (a dir, or a file for linked worktrees).
 func toplevel(dir string) string {
 	d := contract.Real(dir)
@@ -42,27 +32,56 @@ func toplevel(dir string) string {
 	}
 }
 
-func logDenial(name, reason string) {
-	dir := os.Getenv("PIPELINE_LOGDIR")
-	if dir == "" {
-		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, ".cache", "worktree-pipeline", "logs")
-	}
-	if os.MkdirAll(dir, 0o755) != nil {
+func appendLine(path, line string) {
+	if os.MkdirAll(filepath.Dir(path), 0o755) != nil {
 		return
 	}
-	f, err := os.OpenFile(filepath.Join(dir, "guard.log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s %s DENY %s\n", time.Now().Format("2006-01-02T15:04:05"), name, strings.ReplaceAll(reason, "\n", " "))
+	fmt.Fprintln(f, line)
 }
 
-func emit(w io.Writer, ev, name, reason string) {
+func stamp() string { return time.Now().Format("2006-01-02T15:04:05") }
+
+func logDenial(name, reason string) {
+	appendLine(filepath.Join(contract.LogDir(), "guard.log"),
+		fmt.Sprintf("%s %s DENY %s", stamp(), name, strings.ReplaceAll(reason, "\n", " ")))
+}
+
+// logSeen records that a hook call reached the guard inside a contracted worktree (proof the guard is wired for
+// that vendor); drift's GUARD_INACTIVE reads it. Tool names are squeezed to one token so a line stays parseable.
+func logSeen(vendor string, c *contract.Contract, a Action) {
+	tool := strings.Join(strings.Fields(a.Tool), "_")
+	if tool == "" {
+		tool = "-"
+	}
+	line := fmt.Sprintf("%s %s %s %s", stamp(), vendor, a.Event, tool)
+	if c.HooksGeneration != "" { // ties the line to the install it belongs to (drift ignores older generations)
+		line += " gen=" + c.HooksGeneration
+	}
+	appendLine(contract.SeenPath(c.Name), line)
+}
+
+// emit writes the denial in the way the vendor's hook runner understands and returns the process exit code.
+func emit(vendor string, w, stderr io.Writer, event, name, reason string) int {
 	logDenial(name, reason)
+	switch vendor {
+	case "kiro", "opencode": // exit 2 + reason on stderr is their block signal
+		fmt.Fprintln(stderr, "[rein] "+reason)
+		return 2
+	case "agy": // always exit 0 with JSON; Stop "continue" re-enters the agent loop with the reason
+		out := map[string]string{"decision": "deny", "reason": "[rein] " + reason}
+		if event == "stop" {
+			out = map[string]string{"decision": "continue", "reason": reason}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+		return 0
+	}
 	var out any
-	if ev == "Stop" {
+	if event == "stop" {
 		out = map[string]string{"decision": "block", "reason": reason}
 	} else {
 		out = map[string]any{"hookSpecificOutput": map[string]string{
@@ -70,72 +89,128 @@ func emit(w io.Writer, ev, name, reason string) {
 			"permissionDecisionReason": "[rein] " + reason}}
 	}
 	_ = json.NewEncoder(w).Encode(out)
+	return 0
 }
 
-// Run reads one hook event from r and writes a decision to w (or nothing). It never returns an error to the
+// Run is the Claude Code hook: it reads one event from r and writes a decision to w (or nothing).
+func Run(r io.Reader, w io.Writer) { RunVendor("claude", r, w, io.Discard) }
+
+// RunVendor is RunTask without a bound task: the worker is found from the event's directory.
+func RunVendor(vendor string, r io.Reader, w, stderr io.Writer) int {
+	return RunTask(vendor, "", r, w, stderr)
+}
+
+// RunTask reads one hook event of the given vendor from r, judges it with the task contract, and writes the
+// decision the way that vendor needs. The return value is the process exit code. It never returns an error to the
 // caller: a hook that crashes would be worse than a hook that stays silent outside workers.
-func Run(r io.Reader, w io.Writer) {
-	var ev event
-	if err := json.NewDecoder(r).Decode(&ev); err != nil {
-		return
+//
+// With task == "" (the global Claude plugin hook) the contract is found from the event's directory and anything
+// that is not a worker is ignored. With a task (hooks installed by `rein hooks install` pass --task) the hook IS
+// that worker's guard: it judges against that contract's worktree and denies when the contract is missing or
+// broken or the event cannot be understood, because silence there would be a bypass.
+func RunTask(vendor, task string, r io.Reader, w, stderr io.Writer) int {
+	var raw json.RawMessage
+	derr := json.NewDecoder(r).Decode(&raw) // the first JSON value, like the original Claude hook
+	var a Action
+	ok := false
+	if derr == nil {
+		a, ok = parse(vendor, raw)
 	}
-	cwd := ev.Cwd
+	if task != "" {
+		return runBound(vendor, task, a, ok, w, stderr)
+	}
+	if !ok {
+		return 0
+	}
+	cwd := a.Cwd
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	top := toplevel(cwd)
+	anchor := a.Anchor
+	if anchor == "" {
+		anchor = cwd
+	}
+	top := toplevel(anchor)
 	if top == "" {
-		return
+		return 0
 	}
 	name := filepath.Base(top)
 	c, err := contract.Load(name)
 	if errors.Is(err, contract.ErrNone) {
-		return // not a pipeline worker
+		return 0 // not a pipeline worker
 	}
 	if err != nil { // a worker whose contract is broken: fail closed
-		emit(w, ev.HookEventName, name, fmt.Sprintf("task contract unreadable (%v); ask the coordinator", err))
-		return
+		return emit(vendor, w, stderr, a.Event, name, fmt.Sprintf("task contract unreadable (%v); ask the coordinator", err))
 	}
 	if contract.Real(c.Worktree) != top {
-		return // same directory name, different tree
+		return 0 // same directory name, different tree
 	}
-	if reason := decide(ev, c, top, cwd); reason != "" {
-		emit(w, ev.HookEventName, c.Name, reason)
-	}
+	return judge(vendor, a, c, top, cwd, w, stderr)
 }
 
-func decide(ev event, c *contract.Contract, top, cwd string) string {
-	switch ev.HookEventName {
-	case "Stop":
-		if ev.StopHookActive {
+func runBound(vendor, task string, a Action, ok bool, w, stderr io.Writer) int {
+	c, err := contract.Load(task)
+	if err != nil {
+		return emit(vendor, w, stderr, a.Event, task, fmt.Sprintf("the guard for task %s cannot load its contract (%v); ask the coordinator", task, err))
+	}
+	top := contract.Real(c.Worktree)
+	if fi, err := os.Stat(top); err != nil || !fi.IsDir() {
+		return emit(vendor, w, stderr, a.Event, task, fmt.Sprintf("worktree %s of task %s is missing; ask the coordinator", c.Worktree, task))
+	}
+	if !ok || a.Event == "" {
+		return emit(vendor, w, stderr, a.Event, task, fmt.Sprintf("the guard for task %s cannot read this %s hook event; ask the coordinator", task, vendor))
+	}
+	cwd := a.Cwd
+	if cwd == "" {
+		cwd = top
+	}
+	return judge(vendor, a, c, top, cwd, w, stderr)
+}
+
+func judge(vendor string, a Action, c *contract.Contract, top, cwd string, w, stderr io.Writer) int {
+	if a.Event != "" {
+		logSeen(vendor, c, a)
+	}
+	if reason := decide(a, c, top, cwd); reason != "" {
+		return emit(vendor, w, stderr, a.Event, c.Name, reason)
+	}
+	return 0
+}
+
+func decide(a Action, c *contract.Contract, top, cwd string) string {
+	switch a.Event {
+	case "stop":
+		if a.StopActive {
 			return "" // second stop: let it end; the coordinator's drift check still runs
 		}
 		if fi, err := os.Stat(c.ReportPath); err != nil || fi.Size() == 0 {
 			return fmt.Sprintf("write your report to %s (one heading per scope id %s with status, gate numbers, red checks), then send worker_done",
 				c.ReportPath, strings.Join(c.Scope, ", "))
 		}
-	case "PreToolUse":
-		if ev.ToolName == "Bash" {
-			var in struct {
-				Command string `json:"command"`
+	case "pretool":
+		switch a.Kind {
+		case "bash":
+			if strings.Contains(a.Command, patchMarker) && invokesApplyPatch.MatchString(a.Command) { // apply_patch run through the shell writes files too
+				paths := patchPaths(a.Command)
+				if len(paths) == 0 {
+					return "a patch inside a shell command names no file the guard can read; use the apply_patch tool"
+				}
+				for _, p := range paths {
+					if reason := checkEdit(p, c, top, cwd); reason != "" {
+						return reason
+					}
+				}
 			}
-			_ = json.Unmarshal(ev.ToolInput, &in)
-			return CheckBash(in.Command, c, top, cwd)
-		}
-		if editTools[ev.ToolName] {
-			var in struct {
-				FilePath     string `json:"file_path"`
-				NotebookPath string `json:"notebook_path"`
+			return CheckBash(a.Command, c, top, cwd)
+		case "write":
+			if len(a.Paths) == 0 { // a known write tool whose target we cannot read must not slip through
+				return fmt.Sprintf("cannot tell which file %s writes; use a tool call that names the file", a.Tool)
 			}
-			_ = json.Unmarshal(ev.ToolInput, &in)
-			fp := in.FilePath
-			if fp == "" {
-				fp = in.NotebookPath
+			for _, p := range a.Paths {
+				if reason := checkEdit(p, c, top, cwd); reason != "" {
+					return reason
+				}
 			}
-			if fp == "" {
-				return ""
-			}
-			return checkEdit(fp, c, top, cwd)
 		}
 	}
 	return ""
@@ -150,6 +225,9 @@ func checkEdit(fp string, c *contract.Contract, top, cwd string) string {
 	rel := filepath.ToSlash(mustRel(top, p))
 	if glob.Match(rel, c.Deny) {
 		return fmt.Sprintf("%s is on the never-edit list of task %s", rel, c.Name)
+	}
+	if protectedHook(top, rel) {
+		return fmt.Sprintf("%s belongs to the rein guard installed for task %s; workers never change it", rel, c.Name)
 	}
 	if !glob.Match(rel, c.Allow) {
 		return fmt.Sprintf("%s is outside the ownership of task %s (%s); if the task really needs it, ask the coordinator with the preamble's ask command",

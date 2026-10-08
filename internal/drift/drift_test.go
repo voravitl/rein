@@ -178,3 +178,91 @@ func TestNonASCIIPathsAreJudgedAsWritten(t *testing.T) {
 		t.Errorf("non-ASCII denied path not caught: %+v", r.Drift)
 	}
 }
+
+func TestGuardInactiveAndHead(t *testing.T) {
+	wt, c := repo(t, "g")
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a2\n")
+	sh(t, wt, "git", "add", "-A")
+	sh(t, wt, "git", "commit", "-qm", "feat: x #169")
+	head := strings.TrimSpace(gitOut(t, wt, "rev-parse", "HEAD"))
+	inactive := func(r *Result) string {
+		for _, f := range r.Drift {
+			if f.Kind == "GUARD_INACTIVE" {
+				return f.Detail
+			}
+		}
+		return ""
+	}
+
+	r, err := Check(c, wt, "origin/main", nil) // nothing installed, nothing expected
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Head != head {
+		t.Errorf("Head = %q, want %q", r.Head, head)
+	}
+	if inactive(r) != "" {
+		t.Error("no hooks installed and none expected: no GUARD_INACTIVE")
+	}
+
+	c.HooksInstalled, c.HooksGeneration = []string{"codex", "kiro"}, "g1"
+	if _, err := Check(c, wt, "origin/main", nil); err == nil || !strings.Contains(err.Error(), "--expect-guard") {
+		t.Errorf("several installed vendors without --expect-guard must be unjudgeable, got %v", err)
+	}
+	codex := Options{ExpectGuard: "codex"}
+	r, _ = CheckWith(c, wt, "origin/main", nil, codex)
+	if msg := inactive(r); !strings.Contains(msg, "--dangerously-bypass-hook-trust") {
+		t.Errorf("GUARD_INACTIVE must name the codex launch flag, got %q", msg)
+	}
+	if rk, _ := CheckWith(c, wt, "origin/main", nil, Options{ExpectGuard: "kiro"}); !strings.Contains(inactive(rk), "--agent rein") {
+		t.Errorf("GUARD_INACTIVE must name the kiro launch flag, got %q", inactive(rk))
+	}
+
+	// the seen log lives beside the contract index, whatever PIPELINE_LOGDIR says in either environment
+	t.Setenv("PIPELINE_LOGDIR", t.TempDir())
+	if !strings.HasPrefix(contract.SeenPath("g"), contract.IndexDir()) {
+		t.Errorf("seen path %s must be under the contract index %s", contract.SeenPath("g"), contract.IndexDir())
+	}
+	// evidence that does not count: a stale generation, a post-tool line, an unrelated vendor
+	write(t, contract.SeenPath("g"), "2026-10-08T10:00:00 codex pretool Bash gen=old\n"+
+		"2026-10-08T10:00:01 codex stop - gen=g1\n"+
+		"2026-10-08T10:00:02 agy pretool Bash gen=g1\n")
+	if r, _ = CheckWith(c, wt, "origin/main", nil, codex); inactive(r) == "" {
+		t.Error("stale generation / stop-only / other-vendor lines must not satisfy the guard")
+	}
+	write(t, contract.SeenPath("g"), "2026-10-08T10:00:00 codex pretool Bash gen=g1\n")
+	if r, _ = CheckWith(c, wt, "origin/main", nil, codex); inactive(r) != "" {
+		t.Error("a current-generation pretool line of an installed vendor proves the guard ran")
+	}
+	// codex ran, but the fallback launch was kiro without --agent rein: expecting kiro catches it
+	if r, _ = CheckWith(c, wt, "origin/main", nil, Options{ExpectGuard: "kiro"}); !strings.Contains(inactive(r), "kiro") {
+		t.Errorf("--expect-guard kiro must not be satisfied by codex lines, got %q", inactive(r))
+	}
+
+	_ = os.Remove(contract.SeenPath("g"))
+	c.HooksInstalled, c.HooksGeneration = nil, ""
+	if r, _ = CheckWith(c, wt, "origin/main", nil, Options{ExpectGuard: "codex"}); inactive(r) == "" {
+		t.Error("--expect-guard with an empty seen log must be drift")
+	}
+}
+
+func TestHeadMovingMeansCannotJudge(t *testing.T) {
+	wt, c := repo(t, "m")
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a2\n")
+	sh(t, wt, "git", "add", "-A")
+	sh(t, wt, "git", "commit", "-qm", "feat: x #169")
+	midCheck = func() { sh(t, wt, "git", "commit", "-q", "--allow-empty", "-m", "late #169") }
+	defer func() { midCheck = nil }()
+	if _, err := Check(c, wt, "origin/main", nil); err == nil || !strings.Contains(err.Error(), "HEAD moved") {
+		t.Errorf("want a HEAD-moved error, got %v", err)
+	}
+}
+
+func gitOut(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(out)
+}

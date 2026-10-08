@@ -3,6 +3,7 @@ package guard
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -42,7 +43,19 @@ type ctx struct {
 	vars       map[string]string // simple VAR=literal assignments seen so far
 	deep       int
 	ports      *regexp.Regexp
+	stdin      stdinKind             // where the statement being checked reads stdin from
+	hdoc       string                // the heredoc body, when stdin == stdinHeredoc
+	pipeRHS    map[*syntax.Stmt]bool // statements that read a pipe
 }
+
+type stdinKind int
+
+const (
+	stdinTTY     stdinKind = iota // terminal or inherited: unknown to the guard
+	stdinPipe                     // a pipeline feeds it
+	stdinFile                     // < file, <<< here-string, or another redirect
+	stdinHeredoc                  // a literal heredoc, which the guard can read
+)
 
 // valueOpts lists, per wrapper, the options that consume the next argument.
 var valueOpts = map[string]map[string]bool{
@@ -62,7 +75,7 @@ var textOnly = map[string]bool{"git": true, "echo": true, "printf": true, "grep"
 
 // CheckBash returns a non-empty reason when the command must be denied.
 func CheckBash(cmd string, c *contract.Contract, top, cwd string) string {
-	x := &ctx{c: c, top: top, cwd: cwd, vars: map[string]string{}, ports: portRx(c.Profile.ProtectPorts)}
+	x := &ctx{c: c, top: top, cwd: cwd, vars: map[string]string{}, ports: portRx(c.Profile.ProtectPorts), pipeRHS: map[*syntax.Stmt]bool{}}
 	if h, err := os.UserHomeDir(); err == nil {
 		x.vars["HOME"] = h
 	}
@@ -84,7 +97,22 @@ func (x *ctx) script(src string) string {
 		}
 		switch n := n.(type) {
 		case *syntax.Stmt:
+			x.stdin, x.hdoc = stdinTTY, ""
+			if x.pipeRHS[n] {
+				x.stdin = stdinPipe
+			}
 			for _, r := range n.Redirs {
+				switch r.Op {
+				case syntax.RdrIn, syntax.WordHdoc:
+					x.stdin = stdinFile
+				case syntax.Hdoc, syntax.DashHdoc:
+					x.stdin = stdinFile // unreadable unless the body is literal
+					if r.Hdoc != nil {
+						if body, ok := literalText(r.Hdoc); ok {
+							x.stdin, x.hdoc = stdinHeredoc, body
+						}
+					}
+				}
 				switch r.Op {
 				case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.ClbOut, syntax.RdrInOut:
 					if r.Word != nil {
@@ -93,6 +121,10 @@ func (x *ctx) script(src string) string {
 						}
 					}
 				}
+			}
+		case *syntax.BinaryCmd:
+			if n.Op == syntax.Pipe || n.Op == syntax.PipeAll {
+				x.pipeRHS[n.Y] = true
 			}
 		case *syntax.DeclClause: // export / declare / local / readonly X=literal
 			for _, a := range n.Args {
@@ -114,6 +146,19 @@ func (x *ctx) script(src string) string {
 		return reason == ""
 	})
 	return reason
+}
+
+// literalText returns a word's text when it has no expansion in it (a quoted heredoc body).
+func literalText(w *syntax.Word) (string, bool) {
+	var b strings.Builder
+	for _, p := range w.Parts {
+		l, ok := p.(*syntax.Lit)
+		if !ok {
+			return "", false
+		}
+		b.WriteString(l.Value)
+	}
+	return b.String(), true
 }
 
 func (x *ctx) assign(a *syntax.Assign) {
@@ -262,13 +307,9 @@ func (x *ctx) call(args []string) string {
 			return x.call(rest[i:])
 		}
 	case name == "bash" || name == "sh" || name == "zsh" || name == "dash" || name == "ksh":
-		for i, a := range rest {
-			if (a == "-c" || (strings.HasPrefix(a, "-") && strings.Contains(a, "c") && !strings.HasPrefix(a, "--"))) && i+1 < len(rest) {
-				x.deep++
-				defer func() { x.deep-- }()
-				return x.script(rest[i+1])
-			}
-		}
+		return x.shell(rest)
+	case name == "find":
+		return x.find(rest)
 	case name == "eval":
 		x.deep++
 		defer func() { x.deep-- }()
@@ -375,6 +416,9 @@ func (x *ctx) git(args []string) string {
 		return ""
 	}
 	sub, rest := args[i], args[i+1:]
+	if repo == "" && !x.cwdUnknown && !inside(x.cwd, x.top) && outsideWrite(x.cwd, x.cwd, x.c, x.top) != "" {
+		repo = x.cwd // git runs in whatever directory the tool (or an earlier cd) put it in; scratch dirs in temp are fine
+	}
 	if repo != "" && !gitReadOnly[sub] {
 		if p := x.abs(repo); !inside(p, x.top) {
 			return fmt.Sprintf("git %s in another repository (%s) is not this task's work", sub, repo)
@@ -419,6 +463,12 @@ func (x *ctx) git(args []string) string {
 	case "reset":
 		if has(func(a string) bool { return a == "--hard" || a == "--merge" || a == "--keep" }) {
 			return "git reset --hard discards work; the steward handles history"
+		}
+	case "stash":
+		if has(func(a string) bool {
+			return a == "--all" || a == "--include-untracked" || (strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.ContainsAny(a, "au"))
+		}) {
+			return "git stash --all/--include-untracked moves untracked and ignored files, including the guard's hook files"
 		}
 	case "clean":
 		if has(func(a string) bool {
@@ -563,6 +613,9 @@ func (x *ctx) write(target string, deletion bool) string {
 	if x.cwdUnknown && !filepath.IsAbs(target) && !strings.HasPrefix(target, "~/") {
 		return fmt.Sprintf("relative write %q after a cd the guard could not follow; use an absolute path or cd to a literal path", target)
 	}
+	if x.globHitsHook(target) {
+		return fmt.Sprintf("%s could match the rein guard files of task %s; workers never change them", target, x.c.Name)
+	}
 	p := x.abs(target)
 	if p == x.top || inside(x.top, p) {
 		return fmt.Sprintf("%s is the worktree itself (or contains it)", target)
@@ -578,6 +631,9 @@ func (x *ctx) write(target string, deletion bool) string {
 	rel := filepath.ToSlash(mustRel(x.top, p))
 	if glob.Match(rel, x.c.Deny) {
 		return fmt.Sprintf("%s is on the never-edit list of task %s", rel, x.c.Name)
+	}
+	if protectedHook(x.top, rel) {
+		return fmt.Sprintf("%s belongs to the rein guard installed for task %s; workers never change it", rel, x.c.Name)
 	}
 	if !deletion {
 		if _, err := os.Stat(p); err == nil && !glob.Match(rel, x.c.Allow) {
@@ -617,4 +673,129 @@ func outsideWrite(p, shown string, c *contract.Contract, top string) string {
 		}
 	}
 	return fmt.Sprintf("%s is outside your worktree %s", shown, top)
+}
+
+// shell judges a shell invocation. `-c script` is judged as that script. Otherwise the shell runs a script file
+// (allowed: the drift check reads what it wrote) or reads commands from stdin (-s, -i, or no file at all): those
+// are judged when stdin is a literal heredoc and denied otherwise, because the guard cannot see a pipe or a tty.
+func (x *ctx) shell(rest []string) string {
+	stdinFlag, file := false, ""
+	for i := 0; i < len(rest); i++ {
+		a := rest[i]
+		switch {
+		case a == "--":
+			if i+1 < len(rest) {
+				file = rest[i+1]
+			}
+			i = len(rest)
+		case a == "-o" || a == "+o" || a == "-O" || a == "+O" || a == "--rcfile" || a == "--init-file":
+			i++ // the option's value is not the script
+		case strings.HasPrefix(a, "--"):
+		case strings.HasPrefix(a, "-") && len(a) > 1:
+			if strings.Contains(a, "c") && i+1 < len(rest) {
+				x.deep++
+				defer func() { x.deep-- }()
+				return x.script(rest[i+1])
+			}
+			if strings.ContainsAny(a[1:], "si") {
+				stdinFlag = true
+			}
+		case a != "" && !strings.HasPrefix(a, "+") && file == "":
+			file = a
+		}
+	}
+	if file != "" && !stdinFlag {
+		return ""
+	}
+	if x.stdin == stdinHeredoc {
+		x.deep++
+		defer func() { x.deep-- }()
+		return x.script(x.hdoc)
+	}
+	return "no shells that read commands from stdin (bash, sh -i, bash -s, | bash): run each command directly so the guard can judge it"
+}
+
+var globChars = "*?["
+
+// matchesHook reports whether a path pattern (relative to the worktree, slash form) could name a hook file or a
+// directory that holds one. Segments are matched like shell globs: a leading dot needs a literal dot.
+func matchesHook(top, pattern string) bool {
+	segs := strings.Split(pattern, "/")
+	cands := append([]string{".codex", ".agents", ".kiro", ".kiro/agents", ".opencode", ".opencode/plugins", ".opencode/plugins/rein", ".claude"}, hookFiles...)
+	for _, c := range cands {
+		cs := strings.Split(c, "/")
+		if len(cs) != len(segs) || !protectedHook(top, c) {
+			continue
+		}
+		ok := true
+		for i := range cs {
+			if strings.HasPrefix(cs[i], ".") && !strings.HasPrefix(segs[i], ".") {
+				ok = false
+				break
+			}
+			if m, err := path.Match(segs[i], cs[i]); err != nil || !m {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
+// globHitsHook judges a mutating command's operand that contains glob characters: it is denied when the shell
+// could expand it to a hook file or to a directory holding one.
+func (x *ctx) globHitsHook(target string) bool {
+	if !strings.ContainsAny(target, globChars) {
+		return false
+	}
+	p := x.abs(target)
+	if inside(p, x.top) {
+		return matchesHook(x.top, filepath.ToSlash(mustRel(x.top, p)))
+	}
+	return false
+}
+
+// holdsHook reports whether an installed hook file lives at or under dir.
+func (x *ctx) holdsHook(dir string) bool {
+	for _, f := range hookFiles {
+		hp := filepath.Join(x.top, filepath.FromSlash(f))
+		if _, err := os.Stat(hp); err == nil && inside(hp, dir) {
+			return true
+		}
+	}
+	return false
+}
+
+// find with an action (-delete, -exec...) can remove or rewrite hook files it walks over.
+func (x *ctx) find(args []string) string {
+	acts := false
+	var roots []string
+	rootsDone := false
+	for _, a := range args {
+		switch a {
+		case "-delete", "-exec", "-execdir", "-ok", "-okdir":
+			acts = true
+		}
+		if !rootsDone && (strings.HasPrefix(a, "-") || a == "(" || a == "!") {
+			rootsDone = true
+		}
+		if !rootsDone {
+			roots = append(roots, a)
+		}
+	}
+	if !acts {
+		return ""
+	}
+	if len(roots) == 0 {
+		roots = []string{"."}
+	}
+	for _, r := range roots {
+		if x.holdsHook(x.abs(r)) {
+			return "find with -delete/-exec over the rein guard files is denied; the installed hook files are not yours to change"
+		}
+	}
+	return ""
 }
