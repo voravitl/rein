@@ -1,0 +1,14 @@
+{
+  "name": "rein",
+  "description": "rein: keep cheap and fallback worker models on task in multi-agent worktree pipelines.",
+  "owner": { "name": "P' Tik", "url": "https://github.com/voravitl" },
+  "plugins": [
+    {
+      "name": "rein",
+      "source": ".",
+      "description": "Task contracts, a guard hook that parses shell commands, a vendor-neutral drift check, and the worktree-pipeline playbook (Orca + OMC) with its coordinator agents.",
+      "category": "development",
+      "tags": ["guardrails", "multi-agent", "worktree", "orca", "supervisor"]
+    }
+  ]
+}

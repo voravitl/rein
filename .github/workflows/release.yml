@@ -1,0 +1,25 @@
+name: release
+# Push a tag v<version> that matches .claude-plugin/plugin.json; the plugin's SessionStart installer downloads
+# rein-<os>-<arch> from this release (checked against SHA256SUMS) on machines without Go.
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: tag matches plugin version
+        run: |
+          want="v$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' .claude-plugin/plugin.json | head -1)"
+          test "$want" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != plugin.json $want"; exit 1; }
+      - run: go test ./...
+      - run: VERSION="${GITHUB_REF_NAME#v}" sh scripts/build.sh
+      - run: gh release create "$GITHUB_REF_NAME" dist/rein-* dist/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

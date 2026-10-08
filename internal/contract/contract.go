@@ -31,6 +31,9 @@ type Profile struct {
 	SandboxExcludedCommands  []string `json:"sandbox_excluded_commands,omitempty"`
 	SandboxAllowedDomains    []string `json:"sandbox_allowed_domains,omitempty"`
 	SandboxFailIfUnavailable bool     `json:"sandbox_fail_if_unavailable,omitempty"`
+	// Project pack: a local directory with the project's gates, safety notes and rule addenda (PACK.md). rein itself
+	// does not read it; the worktree-pipeline skill does.
+	Pack string `json:"pack,omitempty"`
 }
 
 // LoadProfile reads a profile file; "" means $REIN_PROFILE, then no profile (generic rules only).

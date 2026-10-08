@@ -10,3 +10,4 @@ for t in darwin/arm64 darwin/amd64 linux/amd64 linux/arm64 windows/amd64 windows
     -o "dist/rein-$os-$arch$ext" ./cmd/rein
   echo "built dist/rein-$os-$arch$ext"
 done
+(cd dist && { sha256sum rein-* 2>/dev/null || shasum -a 256 rein-*; } > SHA256SUMS) && echo "wrote dist/SHA256SUMS"
