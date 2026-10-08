@@ -674,3 +674,59 @@ func TestRevisionIdentitiesMatch_FileIntersection(t *testing.T) {
 		t.Error("RevisionIdentitiesMatch should return true when patch IDs are equal")
 	}
 }
+
+func TestCheckVerdicts_Evidence(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 99
+	sha := "commit999"
+	patchID := "patch999"
+
+	// 1. Record an escalated reviewer verdict (Opus reviewing Sonnet)
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "claude-sonnet-4.5", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Record human approval
+	if err := RecordApproval(storageDir, mr, sha, patchID, "Approved by Security Lead"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+
+	if !result.Passed {
+		t.Fatalf("CheckVerdicts should pass, got missing reasons: %v", result.MissingReasons)
+	}
+
+	if len(result.MatchingVerdicts) != 1 {
+		t.Fatalf("MatchingVerdicts len = %d, want 1", len(result.MatchingVerdicts))
+	}
+	if result.MatchingVerdicts[0].ReviewerModel != "claude-opus-4.8" {
+		t.Errorf("ReviewerModel = %q, want claude-opus-4.8", result.MatchingVerdicts[0].ReviewerModel)
+	}
+
+	if len(result.MatchingApprovals) != 1 {
+		t.Fatalf("MatchingApprovals len = %d, want 1", len(result.MatchingApprovals))
+	}
+	if result.MatchingApprovals[0].Reason != "Approved by Security Lead" {
+		t.Errorf("Reason = %q, want 'Approved by Security Lead'", result.MatchingApprovals[0].Reason)
+	}
+
+	evidence := result.FormatEvidence()
+	if !strings.Contains(evidence, "[APPROVAL & REVIEW EVIDENCE]") {
+		t.Errorf("evidence missing header: %s", evidence)
+	}
+	if !strings.Contains(evidence, "claude-opus-4.8 [escalated reviewer]") {
+		t.Errorf("evidence missing escalated reviewer: %s", evidence)
+	}
+	if !strings.Contains(evidence, "Approved by Security Lead") {
+		t.Errorf("evidence missing human approval reason: %s", evidence)
+	}
+	if !strings.Contains(evidence, sha) {
+		t.Errorf("evidence missing sha: %s", evidence)
+	}
+}

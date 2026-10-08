@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/voravitl/rein/internal/tier"
@@ -91,11 +92,67 @@ func RecordApproval(storageDir string, mr int, sha, patchID, reason string) erro
 
 // CheckResult represents the result of a verdict check.
 type CheckResult struct {
-	Passed         bool
-	Tier           tier.Tier
-	MakerCount     int
-	HasApproval    bool
-	MissingReasons []string
+	Passed            bool             `json:"passed"`
+	Tier              tier.Tier        `json:"tier"`
+	MakerCount        int              `json:"maker_count"`
+	HasApproval       bool             `json:"has_approval"`
+	MissingReasons    []string         `json:"missing_reasons,omitempty"`
+	MatchingVerdicts  []VerdictRecord  `json:"matching_verdicts,omitempty"`
+	MatchingApprovals []ApprovalRecord `json:"matching_approvals,omitempty"`
+}
+
+// RequiredMakers returns the number of distinct makers needed for the tier.
+func (r *CheckResult) RequiredMakers() int {
+	if r.Tier == tier.T3 {
+		return 2
+	}
+	return 1
+}
+
+// FormatEvidence returns human-readable evidence of passing review and approvals.
+func (r *CheckResult) FormatEvidence() string {
+	if !r.Passed {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("[APPROVAL & REVIEW EVIDENCE]\n")
+	sb.WriteString("  Status: PASSED (Verified Review & Approval Gate)\n")
+	sb.WriteString(fmt.Sprintf("  Tier:   %s | Required Makers: %d | Actual Makers: %d\n", r.Tier, r.RequiredMakers(), r.MakerCount))
+	sb.WriteString("  Reviewer Verdicts:\n")
+	if len(r.MatchingVerdicts) == 0 {
+		sb.WriteString("    (none)\n")
+	} else {
+		for _, v := range r.MatchingVerdicts {
+			escalatedNote := ""
+			if IsEscalatedReviewer(v.WorkerModel, v.ReviewerModel) {
+				escalatedNote = " [escalated reviewer]"
+			}
+			patchInfo := ""
+			if v.PatchID != "" {
+				patchInfo = fmt.Sprintf(" | Patch: %s", v.PatchID)
+			}
+			sb.WriteString(fmt.Sprintf("    ✓ [%s] %s%s (Maker: %s)\n", v.Verdict, v.ReviewerModel, escalatedNote, NormalizeModelMaker(v.ReviewerModel)))
+			sb.WriteString(fmt.Sprintf("      Worker: %s | Time: %s%s\n", v.WorkerModel, v.Timestamp.UTC().Format(time.RFC3339), patchInfo))
+		}
+	}
+	sb.WriteString("  Human Approvals:\n")
+	if len(r.MatchingApprovals) == 0 {
+		sb.WriteString("    (none)\n")
+	} else {
+		for _, a := range r.MatchingApprovals {
+			reason := a.Reason
+			if reason == "" {
+				reason = "approved"
+			}
+			patchInfo := ""
+			if a.PatchID != "" {
+				patchInfo = fmt.Sprintf(" | Patch: %s", a.PatchID)
+			}
+			sb.WriteString(fmt.Sprintf("    ✓ Reason: %s\n", reason))
+			sb.WriteString(fmt.Sprintf("      SHA: %s | Time: %s%s\n", a.SHA, a.Timestamp.UTC().Format(time.RFC3339), patchInfo))
+		}
+	}
+	return sb.String()
 }
 
 // CheckVerdicts validates all conditions for merge approval.
@@ -137,6 +194,7 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	// Check verdicts for maker diversity
 	makers := make(map[string]bool)
 	workerMaker := ""
+	var matchingVerdicts []VerdictRecord
 
 	for _, v := range verdicts {
 		// Use RevisionIdentitiesMatch for comprehensive revision binding (ADR B2.2)
@@ -163,15 +221,14 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 		}
 
 		makers[reviewerMaker] = true
+		matchingVerdicts = append(matchingVerdicts, v)
 	}
 
+	result.MatchingVerdicts = matchingVerdicts
 	result.MakerCount = len(makers)
 
 	// Check maker count requirement
-	requiredMakers := 1
-	if taskTier == tier.T3 {
-		requiredMakers = 2
-	}
+	requiredMakers := result.RequiredMakers()
 
 	if result.MakerCount < requiredMakers {
 		result.MissingReasons = append(result.MissingReasons,
@@ -179,12 +236,14 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	}
 
 	// Check for human approval using RevisionIdentitiesMatch
+	var matchingApprovals []ApprovalRecord
 	for _, a := range approvals {
 		if revisionMatches(a.SHA, a.PatchID, sha, currentPatchID, repoPath, mrFiles) {
 			result.HasApproval = true
-			break
+			matchingApprovals = append(matchingApprovals, a)
 		}
 	}
+	result.MatchingApprovals = matchingApprovals
 
 	if !result.HasApproval {
 		result.MissingReasons = append(result.MissingReasons, "no human approval for this revision")

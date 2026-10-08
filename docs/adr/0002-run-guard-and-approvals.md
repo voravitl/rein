@@ -174,8 +174,12 @@ Each item records what the first draft assumed and what was found:
    - The approval proves the delta, not the merged result. The re-gate of merged main stays the real control.
 3. **Verdict check.** `rein verdict check --mr --sha` passes when all of these hold:
    - verdicts come from two model makers for T3, or one otherwise;
-   - no reviewer normalizes to the worker's model;
+   - no reviewer normalizes to the worker's model (except escalated models like Claude Opus reviewing Sonnet/Haiku);
    - a human approval exists for that sha or an equal combined id.
+
+   When passed, `verdict check` emits explicit **Approval & Review Evidence** (`[APPROVAL & REVIEW EVIDENCE]`),
+   displaying the reviewers, models, makers (and escalated flags), timestamps, human approver reasons, and patch-IDs
+   to ensure the user has visible proof of review and approval before merge.
 
    Approvals have no time expiry. Gate files are read whole and fail closed.
 4. **Approval, primary path.** This is a human-attention gate, not forgery-proof.

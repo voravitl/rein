@@ -145,6 +145,8 @@ func cmdVerdictCheck(args []string) int {
 		fmt.Printf("  Has approval: %v\n", result.HasApproval)
 		if result.Passed {
 			fmt.Println("  ✓ All conditions met")
+			fmt.Println()
+			fmt.Print(result.FormatEvidence())
 		} else {
 			fmt.Println("  ✗ Missing requirements:")
 			for _, reason := range result.MissingReasons {
