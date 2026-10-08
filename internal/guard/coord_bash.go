@@ -42,12 +42,8 @@ func (p *coordPolicy) runSpecLint(specPath string, c *contract.Contract) string 
 	}
 
 	// Build denial message with all violations
-	violations := make([]string, len(result.Violations))
-	for i, v := range result.Violations {
-		violations[i] = v
-	}
 	return fmt.Sprintf("spec lint failed with %d violation(s): %s",
-		len(result.Violations), strings.Join(violations, "; "))
+		len(result.Violations), strings.Join(result.Violations, "; "))
 }
 
 // bash judges a coordinator Bash command.

@@ -82,13 +82,13 @@ func checkScopeIDs(specContent string, c *contract.Contract, result *Result) {
 func hasScopeSection(content, scopeID string) bool {
 	lines := strings.Split(content, "\n")
 	inScopeSection := false
+	scopeHeadingRx := regexp.MustCompile(`(?i)^#+\s+scope\b`)
 
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		upper := strings.ToUpper(line)
 
-		// Detect "## Scope" heading
-		if strings.HasPrefix(trimmed, "#") && strings.Contains(upper, "SCOPE") {
+		// Detect "## Scope" heading (allows "## Scope:", "## Scope: Deliverables", etc.)
+		if scopeHeadingRx.MatchString(trimmed) {
 			inScopeSection = true
 			continue
 		}
@@ -114,7 +114,7 @@ func hasScopeSection(content, scopeID string) bool {
 func hasRedCheckInScope(content, scopeID string) bool {
 	lines := strings.Split(content, "\n")
 	redCheckRx := regexp.MustCompile(`(?i)red[\s-]check`)
-	scopeHeadingRx := regexp.MustCompile(`(?i)^#+\s+scope\s*$`)
+	scopeHeadingRx := regexp.MustCompile(`(?i)^#+\s+scope\b`)
 	bulletRx := regexp.MustCompile(`^(\s*)[-*]\s+\*\*` + regexp.QuoteMeta(scopeID) + `\*\*`)
 
 	inScopeSection := false

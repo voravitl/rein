@@ -524,9 +524,16 @@ Some content here but no S2 and no red checks
 
 	result, _ := Check(badSpec, c, "")
 
-	// Should have multiple violations
+	// Should have multiple violations:
+	// 1. Missing S2 section
+	// 2. Missing red-check for S1
+	// 3. Missing red-check for S2
+	// 4. Missing "Not in scope"
+	// 5. Missing contract snippet
+	// 6. Missing Gates
+	// 7. Missing Timebox
 	if len(result.Violations) < 5 {
-		t.Errorf("expected at least 5 violations (missing S2, missing red-checks, missing not in scope, missing contract, missing gates, missing timebox), got %d: %v",
+		t.Errorf("expected at least 5 violations, got %d: %v",
 			len(result.Violations), result.Violations)
 	}
 }
