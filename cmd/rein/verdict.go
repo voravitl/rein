@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/tier"
 	"github.com/voravitl/rein/internal/verdict"
 )
@@ -231,6 +232,8 @@ func cmdApprovePrompt(args []string) int {
 	sha := fs.String("sha", "", "commit SHA (defaults to HEAD)")
 	runDir := fs.String("run-dir", "", "run directory (optional)")
 	repoPath := fs.String("repo", ".", "repository path")
+	title := fs.String("title", "", "MR title (optional, extracts from git if not provided)")
+	contractName := fs.String("contract", "", "contract name to read tier from (optional)")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -252,19 +255,53 @@ func cmdApprovePrompt(args []string) int {
 		actualSHA = strings.TrimSpace(string(out))
 	}
 
-	// Get MR title (stub for now)
-	mrTitle := fmt.Sprintf("MR %d", *mr)
-
-	// Determine tier (stub - in real usage, read from contract or compute)
-	taskTier := tier.T1
-
-	// Get verdict summary (stub - in real usage, read from verdict files)
-	storageDir := verdict.StorageDir(*runDir, *repoPath)
-	verdictPath := verdict.VerdictPath(storageDir, *mr)
-	verdictSummary := "No verdicts recorded"
-	if _, err := os.Stat(verdictPath); err == nil {
-		verdictSummary = "Verdicts available (see files)"
+	// Get MR title
+	mrTitle := *title
+	if mrTitle == "" {
+		// Try to extract from git commit message (first line)
+		out, err := execOutput(*repoPath, "git", "log", "-1", "--format=%s", actualSHA)
+		if err == nil {
+			mrTitle = strings.TrimSpace(string(out))
+		}
+		if mrTitle == "" {
+			mrTitle = fmt.Sprintf("MR %d", *mr)
+		}
 	}
+
+	// Determine tier - read from contract if available
+	var taskTier tier.Tier = tier.T1
+	if *contractName != "" {
+		c, err := contract.Load(*contractName)
+		if err == nil {
+			// Evaluate tier from contract
+			taskTier = tier.EvaluateFromAllowGlobs(c.Allow, c.Profile.SensitivePaths)
+
+			// Also escalate based on actual changed files
+			changedFiles, err := getChangedFiles(*repoPath, "origin/main", "HEAD")
+			if err == nil {
+				taskTier = tier.EvaluateFromChangedFiles(changedFiles, c.Profile.SensitivePaths, taskTier)
+			}
+		}
+	} else {
+		// No contract provided - try to infer from changed files
+		changedFiles, err := getChangedFiles(*repoPath, "origin/main", "HEAD")
+		if err == nil && len(changedFiles) > 0 {
+			// Use simple heuristics for tier without contract
+			for _, f := range changedFiles {
+				// If any file looks sensitive (auth, security, etc), escalate to T3
+				fl := strings.ToLower(f)
+				if strings.Contains(fl, "auth") || strings.Contains(fl, "security") ||
+					strings.Contains(fl, "credential") || strings.Contains(fl, "secret") {
+					taskTier = tier.T3
+					break
+				}
+			}
+		}
+	}
+
+	// Get verdict summary - read from verdict files
+	storageDir := verdict.StorageDir(*runDir, *repoPath)
+	verdictSummary := getVerdictSummary(storageDir, *mr, actualSHA)
 
 	// Build AskUserQuestion payload
 	question := fmt.Sprintf(`Approve merge for %s?
@@ -274,7 +311,7 @@ Tier: %s
 Verdicts: %s
 
 This approval gates the merge. Review the verdicts and changes before approving.`,
-		mrTitle, actualSHA[:8], taskTier, verdictSummary)
+		mrTitle, actualSHA[:min(8, len(actualSHA))], taskTier, verdictSummary)
 
 	payload := map[string]interface{}{
 		"question": question,
@@ -294,6 +331,73 @@ This approval gates the merge. Review the verdicts and changes before approving.
 
 	fmt.Println(string(data))
 	return 0
+}
+
+func getVerdictSummary(storageDir string, mr int, sha string) string {
+	verdictPath := verdict.VerdictPath(storageDir, mr)
+
+	// Try to read verdicts
+	data, err := os.ReadFile(verdictPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "No verdicts recorded yet"
+		}
+		return "Error reading verdicts"
+	}
+
+	var records []verdict.VerdictRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		return "Error parsing verdicts"
+	}
+
+	if len(records) == 0 {
+		return "No verdicts recorded yet"
+	}
+
+	// Build summary: count approvals and request-changes
+	var approvals, changes []string
+	for _, rec := range records {
+		if rec.SHA == sha || rec.PatchID != "" {
+			maker := verdict.NormalizeModelMaker(rec.ReviewerModel)
+			switch rec.Verdict {
+			case verdict.Approve:
+				approvals = append(approvals, maker)
+			case verdict.RequestChanges:
+				changes = append(changes, maker)
+			}
+		}
+	}
+
+	parts := []string{fmt.Sprintf("%d verdict(s)", len(records))}
+	if len(approvals) > 0 {
+		parts = append(parts, fmt.Sprintf("APPROVE: %s", strings.Join(approvals, ", ")))
+	}
+	if len(changes) > 0 {
+		parts = append(parts, fmt.Sprintf("REQUEST_CHANGES: %s", strings.Join(changes, ", ")))
+	}
+
+	return strings.Join(parts, " | ")
+}
+
+func getChangedFiles(repoPath, base, head string) ([]string, error) {
+	out, err := execOutput(repoPath, "git", "diff", "--name-only", "--no-renames", base+"..."+head)
+	if err != nil {
+		return nil, err
+	}
+	var files []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if f := strings.TrimSpace(line); f != "" {
+			files = append(files, f)
+		}
+	}
+	return files, nil
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func inClaudeCode() bool {

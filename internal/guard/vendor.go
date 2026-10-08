@@ -8,18 +8,20 @@ import (
 
 // Action is what a vendor's hook event means, normalised so one judge (decide) serves every vendor.
 type Action struct {
-	Event      string   // "pretool" | "stop" | "" (an event the guard does not judge)
-	Kind       string   // "bash" | "write" | "other"
+	Event      string   // "pretool" | "posttool" | "stop" | "" (an event the guard does not judge)
+	Kind       string   // "bash" | "write" | "ask" | "other"
 	Tool       string   // the vendor's tool name, for the seen log and messages
 	Command    string   // shell command (Kind bash)
 	Paths      []string // files the tool writes (Kind write); relative paths are relative to Cwd
+	ToolInput  string   // raw JSON tool input (for approval checking)
+	Response   string   // raw tool response (for PostToolUse)
 	Cwd        string   // directory the tool runs in
 	Anchor     string   // directory that identifies the worker's worktree; "" means Cwd
 	StopActive bool     // this stop already continued once (let it end)
 	DenyCoord  bool     // PreToolUse(Agent) starting the pipeline coordinator as a Claude subagent: denied in every session, contract or not
 
 	// Claude Code fields the coordinator guard (coordinator.go) reads; empty for the other vendors.
-	Hook      string // hook_event_name as sent: PreToolUse | Stop | SessionStart | SubagentStart | ...
+	Hook      string // hook_event_name as sent: PreToolUse | PostToolUse | Stop | SessionStart | SubagentStart | ...
 	SessionID string
 	AgentID   string // set on tool calls made by a subagent
 	Source    string // SessionStart: startup | resume | clear | compact
@@ -105,6 +107,7 @@ func parseClaude(raw []byte, codex bool) (Action, bool) {
 		ToolName       string          `json:"tool_name"`
 		Cwd            string          `json:"cwd"`
 		ToolInput      json.RawMessage `json:"tool_input"`
+		ToolResponse   json.RawMessage `json:"tool_response"`
 		StopHookActive bool            `json:"stop_hook_active"`
 		SessionID      string          `json:"session_id"`
 		AgentID        string          `json:"agent_id"`
@@ -114,13 +117,17 @@ func parseClaude(raw []byte, codex bool) (Action, bool) {
 		return Action{}, false
 	}
 	a := Action{Tool: ev.ToolName, Cwd: ev.Cwd, StopActive: ev.StopHookActive, Kind: "other",
-		Hook: ev.HookEventName, SessionID: ev.SessionID, AgentID: ev.AgentID, Source: ev.Source}
+		Hook: ev.HookEventName, SessionID: ev.SessionID, AgentID: ev.AgentID, Source: ev.Source,
+		ToolInput: string(ev.ToolInput), Response: string(ev.ToolResponse)}
 	switch ev.HookEventName {
 	case "Stop":
 		a.Event = "stop"
 		return a, true
 	case "PreToolUse":
 		a.Event = "pretool"
+	case "PostToolUse":
+		a.Event = "posttool"
+		return a, true
 	default:
 		return a, true
 	}
@@ -135,6 +142,10 @@ func parseClaude(raw []byte, codex bool) (Action, bool) {
 	// orchestration entirely, so it is denied before any contract lookup, in every session (ADR 0002 B0).
 	if !codex && ev.ToolName == "Agent" && coordAgents[str(in, "subagent_type")] {
 		a.DenyCoord = true
+	}
+	// Check if this is AskUserQuestion for approval guard
+	if ev.ToolName == "AskUserQuestion" {
+		a.Kind = "ask"
 	}
 	switch {
 	case ev.ToolName == "Bash":

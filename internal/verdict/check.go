@@ -15,8 +15,13 @@ func RecordVerdict(storageDir string, mr int, sha string, verdict Verdict, revie
 		return fmt.Errorf("failed to create storage dir: %w", err)
 	}
 
-	// Compute patch ID (may be empty if we're not in the repo)
-	patchID := ""
+	// Compute patch ID from current directory
+	repoPath := "."
+	patchID, err := ComputeRevisionID(repoPath, "origin/main", "HEAD")
+	if err != nil {
+		// Log warning but don't fail - patch ID is optional
+		patchID = ""
+	}
 
 	record := VerdictRecord{
 		MR:            mr,
@@ -121,12 +126,19 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 		}
 	}
 
+	// Get MR files for post-rebase matching
+	mrFiles, err := getFilesChangedBetween(repoPath, "origin/main", "HEAD")
+	if err != nil {
+		mrFiles = []string{} // Continue without files for post-rebase check
+	}
+
 	// Check verdicts for maker diversity
 	makers := make(map[string]bool)
 	workerMaker := ""
 
 	for _, v := range verdicts {
-		if v.SHA != sha && v.PatchID != currentPatchID {
+		// Use RevisionIdentitiesMatch for comprehensive revision binding (ADR B2.2)
+		if !revisionMatches(v.SHA, v.PatchID, sha, currentPatchID, repoPath, mrFiles) {
 			continue
 		}
 		if v.Verdict != Approve {
@@ -159,13 +171,9 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 			fmt.Sprintf("need verdicts from %d distinct model maker(s), have %d", requiredMakers, result.MakerCount))
 	}
 
-	// Check for human approval
+	// Check for human approval using RevisionIdentitiesMatch
 	for _, a := range approvals {
-		if a.SHA == sha {
-			result.HasApproval = true
-			break
-		}
-		if a.PatchID != "" && a.PatchID == currentPatchID {
+		if revisionMatches(a.SHA, a.PatchID, sha, currentPatchID, repoPath, mrFiles) {
 			result.HasApproval = true
 			break
 		}
@@ -177,6 +185,21 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 
 	result.Passed = len(result.MissingReasons) == 0
 	return result, nil
+}
+
+// revisionMatches uses RevisionIdentitiesMatch for comprehensive revision binding.
+func revisionMatches(recordSHA, recordPatchID, currentSHA, currentPatchID, repoPath string, mrFiles []string) bool {
+	// Exact SHA match
+	if recordSHA == currentSHA {
+		return true
+	}
+
+	// Patch-ID based matching with post-rebase support
+	if recordPatchID != "" && currentPatchID != "" {
+		return RevisionIdentitiesMatch(recordPatchID, currentPatchID, repoPath, recordSHA, currentSHA, mrFiles)
+	}
+
+	return false
 }
 
 func loadVerdictRecords(path string) ([]VerdictRecord, error) {

@@ -3,6 +3,7 @@ package approval
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 )
 
@@ -49,10 +50,14 @@ func CheckPreToolUse(toolInput string, agentID string, sessionID string, ownerSe
 		return "APPROVAL_DENIED: approval questions must come from the owner session. Current session does not match the run owner. If you are the coordinator, ensure you're running in the correct session."
 	}
 
-	// Rule 4: Validate template (byte-equal check would go here in real implementation)
-	// For now, check basic structure
+	// Rule 4a: Check for Approve option (basic requirement)
 	if !hasApproveOption(&payload) {
 		return "APPROVAL_DENIED: approval question must have 'Approve' as an option. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+
+	// Rule 4b: Validate template (byte-equal check against canonical template, if metadata present)
+	if reason := validateTemplate(&payload); reason != "" {
+		return reason
 	}
 
 	// Rule 5: Deny if bypassPermissions is set
@@ -63,6 +68,49 @@ func CheckPreToolUse(toolInput string, agentID string, sessionID string, ownerSe
 	// Rule 6: Deny if multiSelect with multiple MRs
 	if payload.MultiSelect {
 		return "APPROVAL_DENIED: multiSelect cannot be used for approvals (risk of approving multiple MRs at once). Use single-select with one MR per question."
+	}
+
+	return ""
+}
+
+// validateTemplate checks if the question matches the canonical template structure.
+// This implements byte-equal template validation (ADR B2.4 requirement #1).
+func validateTemplate(payload *AskUserQuestionPayload) string {
+	// Only validate if metadata is present (indicates canonical template usage)
+	if len(payload.Metadata) == 0 {
+		return "" // No metadata means not using canonical template, skip validation
+	}
+
+	// Extract metadata
+	_, hasMR := payload.Metadata["mr"]
+	sha, hasSHA := payload.Metadata["sha"]
+	tierStr, hasTier := payload.Metadata["tier"]
+
+	if !hasMR || !hasSHA || !hasTier {
+		return "APPROVAL_DENIED: approval question must have 'mr', 'sha', and 'tier' in metadata. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+
+	// Validate question structure - must contain key elements
+	q := payload.Question
+	if !strings.Contains(q, "Approve merge for") {
+		return "APPROVAL_DENIED: approval question must start with 'Approve merge for'. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+	if !strings.Contains(q, fmt.Sprintf("SHA: %v", sha)) {
+		return "APPROVAL_DENIED: approval question must include the SHA line matching metadata. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+	if !strings.Contains(q, fmt.Sprintf("Tier: %v", tierStr)) {
+		return "APPROVAL_DENIED: approval question must include the Tier line matching metadata. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+	if !strings.Contains(q, "Verdicts:") {
+		return "APPROVAL_DENIED: approval question must include a Verdicts line. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+	if !strings.Contains(q, "This approval gates the merge") {
+		return "APPROVAL_DENIED: approval question must include the warning 'This approval gates the merge'. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+
+	// Validate options
+	if len(payload.Options) != 1 || payload.Options[0] != "Approve" {
+		return "APPROVAL_DENIED: approval question must have exactly one option: 'Approve'. Use 'rein approve prompt --mr N' to generate the correct template."
 	}
 
 	return ""

@@ -13,8 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/voravitl/rein/internal/approval"
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/glob"
+	"github.com/voravitl/rein/internal/run"
+	"github.com/voravitl/rein/internal/verdict"
 )
 
 // workerRoot walks up from dir past every directory that holds .git (a dir, or a file for linked worktrees and
@@ -181,9 +184,54 @@ func judge(vendor string, a Action, c *contract.Contract, top, cwd string, w, st
 	if a.Event != "" {
 		logSeen(vendor, c, a)
 	}
+
+	// Handle PostToolUse for approval recording
+	if a.Event == "posttool" && vendor == "claude" && a.Tool == "AskUserQuestion" {
+		return judgePost(vendor, a, c, top, w, stderr)
+	}
+
 	if reason := decide(a, c, top, cwd); reason != "" {
 		return emit(vendor, w, stderr, a.Event, c.Name, reason)
 	}
+	return 0
+}
+
+// judgePost handles PostToolUse events for approval recording.
+func judgePost(vendor string, a Action, c *contract.Contract, top string, w, stderr io.Writer) int {
+	// Get run marker to extract owner session
+	loc, found := run.Find(top)
+	if !found {
+		return 0 // No run context, skip approval recording
+	}
+	_, err := run.Load(loc.Marker)
+	if err != nil {
+		return 0 // Cannot load run, skip approval recording
+	}
+
+	// Check if approval was recorded
+	storageDir := verdict.StorageDir("", top)
+	approved, err := approval.ProcessPostToolUse("", a.Response, storageDir)
+	if err != nil || !approved {
+		return 0 // Not an approval or error, just continue
+	}
+
+	// Extract MR and SHA from metadata in tool input
+	var payload approval.AskUserQuestionPayload
+	if err := json.Unmarshal([]byte(a.ToolInput), &payload); err != nil {
+		return 0
+	}
+
+	mr, _ := payload.Metadata["mr"].(float64)
+	sha, _ := payload.Metadata["sha"].(string)
+
+	if mr > 0 && sha != "" {
+		// Compute patch ID
+		patchID, _ := verdict.ComputeRevisionID(top, "origin/main", "HEAD")
+
+		// Record approval
+		_ = verdict.RecordApproval(storageDir, int(mr), sha, patchID, "Human approval via AskUserQuestion")
+	}
+
 	return 0
 }
 
@@ -197,7 +245,25 @@ func decide(a Action, c *contract.Contract, top, cwd string) string {
 			return fmt.Sprintf("write your report to %s (one heading per scope id %s with status, gate numbers, red checks), then send worker_done",
 				c.ReportPath, strings.Join(c.Scope, ", "))
 		}
+	case "posttool":
+		// PostToolUse is logged but not denied (approval recording happens in judgePost)
+		return ""
 	case "pretool":
+		// Check AskUserQuestion approval guard (ADR B2.4)
+		if a.Kind == "ask" && a.Tool == "AskUserQuestion" && a.ToolInput != "" {
+			// Get owner session from run marker
+			ownerSessionID := ""
+			if loc, found := run.Find(top); found {
+				if m, err := run.Load(loc.Marker); err == nil {
+					ownerSessionID = m.SessionID
+				}
+			}
+
+			// Check approval rules
+			if reason := approval.CheckPreToolUse(a.ToolInput, a.AgentID, a.SessionID, ownerSessionID); reason != "" {
+				return reason
+			}
+		}
 		switch a.Kind {
 		case "bash":
 			if strings.Contains(a.Command, patchMarker) && invokesApplyPatch.MatchString(a.Command) { // apply_patch run through the shell writes files too

@@ -14,6 +14,7 @@ import (
 
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/glob"
+	"github.com/voravitl/rein/internal/tier"
 )
 
 type Finding struct {
@@ -24,6 +25,7 @@ type Finding struct {
 type Result struct {
 	Name     string    `json:"name"`
 	Head     string    `json:"head"` // the worktree revision this verdict judged
+	Tier     string    `json:"tier"` // computed tier (T1/T2/T3)
 	Drift    []Finding `json:"drift"`
 	Warnings []Finding `json:"warnings"`
 	Commits  int       `json:"commits"`
@@ -175,6 +177,12 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 	}
 	files := nulSplit(names) // -z: no C-style quoting, so non-ASCII names match the globs as written
 	r.Files = len(files)
+
+	// Compute tier from allow globs, then escalate from actual changed files (ADR B2.1)
+	baseTier := tier.EvaluateFromAllowGlobs(c.Allow, c.Profile.SensitivePaths)
+	computedTier := tier.EvaluateFromChangedFiles(files, c.Profile.SensitivePaths, baseTier)
+	r.Tier = computedTier.String()
+
 	status, err := git(wt, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, err
