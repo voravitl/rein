@@ -81,10 +81,12 @@ Timebox: 2h
 		t.Fatalf("failed to write tick: %v", err)
 	}
 
-	// Create coordPolicy
+	// Create coordPolicy with allowed task (ADR 0002 B4.4)
 	loc := run.Loc{Top: tmpDir, Common: commonDir}
 	p := &coordPolicy{
-		m:   &run.Marker{},
+		m: &run.Marker{
+			Allowed: []run.Allowance{{Kind: "task", Ref: "test-task", Reason: "test"}},
+		},
 		loc: loc,
 	}
 

@@ -51,6 +51,7 @@ type Marker struct {
 	Run                 string      `json:"run"`
 	StartedAt           string      `json:"started_at"`
 	Root                string      `json:"root"`              // main checkout root (not derivable from the common dir with separate-git-dir)
+	RunDir              string      `json:"run_dir,omitempty"` // run directory for decisions.tsv and standing.md (ADR 0002 B4)
 	StartSHA            string      `json:"start_sha"`         // HEAD of the main checkout at start: audit looks at start..BaseRef
 	BaseRef             string      `json:"base_ref"`          // branch the main checkout was on ("HEAD" when detached)
 	SessionID           string      `json:"session_id"`        // owner session; rebound by Resume
@@ -425,7 +426,7 @@ func Start(repo, name string, prof *contract.Profile, who Owner) (*Marker, error
 	if err != nil || ref == "" {
 		ref = "HEAD"
 	}
-	m := &Marker{Schema: Schema, Run: name, StartedAt: now(), Root: root, StartSHA: head, BaseRef: ref,
+	m := &Marker{Schema: Schema, Run: name, StartedAt: now(), Root: root, RunDir: "", StartSHA: head, BaseRef: ref,
 		SessionID: who.SessionID, PID: who.PID, StartTime: st, BootID: bootID(),
 		CoordinatorWritable: pick(prof.CoordinatorWritable, DefaultWritable),
 		CoordinatorTools:    pick(prof.CoordinatorTools, DefaultTools),
@@ -437,6 +438,23 @@ func Start(repo, name string, prof *contract.Profile, who Owner) (*Marker, error
 		return nil, err
 	}
 	return m, nil
+}
+
+// SetRunDir updates the marker's RunDir field if not already set (ADR 0002 B4).
+// This is called by contract.New when the first contract for a run is created.
+func SetRunDir(markerPath, runDir string) error {
+	if runDir == "" {
+		return nil // nothing to set
+	}
+	m, err := Load(markerPath)
+	if err != nil {
+		return err
+	}
+	if m.RunDir != "" {
+		return nil // already set
+	}
+	m.RunDir = runDir
+	return writeMarker(markerPath, m, false) // not exclusive - updating existing marker
 }
 
 // load finds the marker of the repo that holds repo.

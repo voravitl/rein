@@ -567,3 +567,174 @@ func TestCoordTickFreshAllowsWorkerSpawn(t *testing.T) {
 		t.Errorf("fresh tick should not deny for staleness, got: %q", out)
 	}
 }
+
+// Tests for B4: Standing Orders & Decision Trail
+
+func TestCoordRecordDecision(t *testing.T) {
+	e := newCoordEnv(t)
+	runDir := filepath.Join(e.outside, "run")
+	e.m.RunDir = runDir
+	e.save()
+
+	// Simulate PostToolUse for AskUserQuestion
+	toolInput := `{"question":"Deploy to production?","options":["Yes","No"]}`
+	toolResponse := `{"answers":["Yes"],"free_text":"Looks good to go"}`
+
+	ev := map[string]any{
+		"hook_event_name": "PostToolUse",
+		"tool_name":       "AskUserQuestion",
+		"tool_input":      json.RawMessage(toolInput),
+		"tool_response":   json.RawMessage(toolResponse),
+		"session_id":      coordSession,
+		"cwd":             e.root,
+	}
+
+	out := e.fire(ev)
+	if out != "" {
+		t.Errorf("expected no output, got %q", out)
+	}
+
+	// Verify decisions.tsv was created
+	decisionsPath := filepath.Join(runDir, "decisions.tsv")
+	content, err := os.ReadFile(decisionsPath)
+	if err != nil {
+		t.Fatalf("decisions.tsv not created: %v", err)
+	}
+
+	line := string(content)
+	if !strings.Contains(line, "Deploy to production?") {
+		t.Errorf("decision does not contain question: %q", line)
+	}
+	if !strings.Contains(line, "Yes") {
+		t.Errorf("decision does not contain chosen option: %q", line)
+	}
+	if !strings.Contains(line, "Looks good to go") {
+		t.Errorf("decision does not contain free text: %q", line)
+	}
+}
+
+func TestCoordRecordDecisionWithSecret(t *testing.T) {
+	e := newCoordEnv(t)
+	runDir := filepath.Join(e.outside, "run")
+	e.m.RunDir = runDir
+	e.save()
+
+	// Simulate PostToolUse with secret in free text
+	toolInput := `{"question":"What's the key?","options":["Continue"]}`
+	toolResponse := `{"answers":["Continue"],"free_text":"API key is AKIAIOSFODNN7EXAMPLE"}`
+
+	ev := map[string]any{
+		"hook_event_name": "PostToolUse",
+		"tool_name":       "AskUserQuestion",
+		"tool_input":      json.RawMessage(toolInput),
+		"tool_response":   json.RawMessage(toolResponse),
+		"session_id":      coordSession,
+		"cwd":             e.root,
+	}
+
+	e.fire(ev)
+
+	// Verify secret was redacted
+	decisionsPath := filepath.Join(runDir, "decisions.tsv")
+	content, err := os.ReadFile(decisionsPath)
+	if err != nil {
+		t.Fatalf("decisions.tsv not created: %v", err)
+	}
+
+	line := string(content)
+	if strings.Contains(line, "AKIA") {
+		t.Errorf("AWS key should be redacted, got: %q", line)
+	}
+	if !strings.Contains(line, "[REDACTED]") {
+		t.Errorf("expected [REDACTED] in decision: %q", line)
+	}
+}
+
+func TestCoordStandingMdWriteDenied(t *testing.T) {
+	e := newCoordEnv(t)
+	runDir := filepath.Join(e.outside, "run")
+	e.m.RunDir = runDir
+	e.save()
+
+	standingPath := filepath.Join(runDir, "standing.md")
+
+	// Try to write standing.md with Write tool
+	out := e.tool("Write", map[string]any{"file_path": standingPath})
+	e.expect(true, out, "Write tool to standing.md should be denied")
+	if !strings.Contains(out, "user-only: standing.md cannot be written by coordinator") {
+		t.Errorf("wrong denial reason: %q", out)
+	}
+
+	// Try to write standing.md with Bash
+	out = e.bash("echo test > " + standingPath)
+	e.expect(true, out, "Bash write to standing.md should be denied")
+	if !strings.Contains(out, "user-only: standing.md cannot be written by coordinator") {
+		t.Errorf("wrong denial reason: %q", out)
+	}
+}
+
+func TestCoordSessionStartInjectsStandingMd(t *testing.T) {
+	e := newCoordEnv(t)
+	runDir := filepath.Join(e.outside, "run")
+	e.m.RunDir = runDir
+	e.save()
+
+	// Create standing.md
+	standingPath := filepath.Join(runDir, "standing.md")
+	standingContent := "# Standing Orders\n\n1. Always verify tests pass\n2. No direct commits to main"
+	writeFile(t, standingPath, standingContent)
+
+	// Simulate SessionStart with resume source
+	ev := map[string]any{
+		"hook_event_name": "SessionStart",
+		"session_id":      "sess-new",
+		"source":          "resume",
+		"cwd":             e.root,
+	}
+
+	out := e.fire(ev)
+	if !strings.Contains(out, "standing orders for run") {
+		t.Errorf("SessionStart should inject standing orders, got: %q", out)
+	}
+	if !strings.Contains(out, "Always verify tests pass") {
+		t.Errorf("SessionStart should include standing.md content, got: %q", out)
+	}
+}
+
+func TestCoordWorkerStartScopeRulingDenial(t *testing.T) {
+	e := newCoordEnv(t)
+
+	// Try to start a worker for a task that's not allowed
+	out := e.bash("orca orchestration worker-start --task unapproved-task --worktree path:" + e.side)
+	e.expect(true, out, "worker-start without approval should be denied")
+	if !strings.Contains(out, "is not in the approved scope ruling") {
+		t.Errorf("wrong denial reason: %q", out)
+	}
+	if !strings.Contains(out, "rein run allow --task") {
+		t.Errorf("denial should suggest rein run allow: %q", out)
+	}
+}
+
+func TestCoordWorkerStartScopeRulingAllowed(t *testing.T) {
+	e := newCoordEnv(t)
+
+	// Allow the task named "side" (matching the worktree name)
+	e.m.Allowed = append(e.m.Allowed, run.Allowance{Kind: "task", Ref: "side", Reason: "test", At: "2026-10-08"})
+	e.save()
+
+	// Create a contract for the task with the same name as the worktree
+	c := &contract.Contract{
+		Name:       "side",
+		Worktree:   e.side,
+		Allow:      []string{"**"},
+		Deny:       contract.AlwaysDeny,
+		Scope:      []string{"S1"},
+		ReportPath: filepath.Join(e.outside, "reports", "side.md"),
+	}
+	b, _ := json.Marshal(c)
+	writeFile(t, filepath.Join(e.contract, "side.json"), string(b))
+
+	// Now worker-start should be allowed
+	out := e.bash("orca orchestration worker-start --task side --worktree path:" + e.side)
+	e.expect(false, out, "worker-start with approval should be allowed")
+}

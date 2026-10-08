@@ -13,6 +13,7 @@ import (
 
 	"github.com/voravitl/rein/internal/budget"
 	"github.com/voravitl/rein/internal/contract"
+	"github.com/voravitl/rein/internal/decision"
 	"github.com/voravitl/rein/internal/glob"
 	"github.com/voravitl/rein/internal/run"
 )
@@ -35,7 +36,7 @@ func coordinate(vendor string, a Action, cwd string, w, stderr io.Writer) int {
 		return 0
 	}
 	switch a.Hook {
-	case "PreToolUse", "SessionStart", "SubagentStart":
+	case "PreToolUse", "PostToolUse", "SessionStart", "SubagentStart":
 	default:
 		return 0
 	}
@@ -58,6 +59,13 @@ func coordinate(vendor string, a Action, cwd string, w, stderr io.Writer) int {
 	}
 	if a.Hook == "SessionStart" {
 		return coordSessionStart(a, loc, m, w)
+	}
+	// PostToolUse for decision recording (ADR 0002 B4.1)
+	if a.Hook == "PostToolUse" {
+		if a.Tool == "AskUserQuestion" && a.SessionID == m.SessionID && m.OwnerAlive() {
+			coordRecordDecision(a, m)
+		}
+		return 0 // PostToolUse is logged but never denied
 	}
 	if a.SessionID == "" || a.SessionID != m.SessionID || !m.OwnerAlive() {
 		return 0 // another session, or a dead owner: the hook stays silent
@@ -270,6 +278,16 @@ func (p *coordPolicy) contracted(tree string) bool {
 // judgePath judges one write target (absolute). shown is how the caller named it.
 func (p *coordPolicy) judgePath(abs, shown string) string {
 	abs = contract.Real(abs)
+
+	// B4.2: standing.md is user-only (ADR 0002 B4.2)
+	if filepath.Base(abs) == "standing.md" {
+		// Check if it's in the run directory
+		runDir := p.m.RunDir
+		if runDir != "" && (abs == filepath.Join(runDir, "standing.md") || inside(abs, runDir)) {
+			return "user-only: standing.md cannot be written by coordinator (propose text for user to write)"
+		}
+	}
+
 	if inside(abs, contract.Real(p.loc.Common)) {
 		return fmt.Sprintf("%s is inside the repository's git directory (the run marker lives there); the coordinator never writes it", shown)
 	}
@@ -297,8 +315,8 @@ func (p *coordPolicy) judgePath(abs, shown string) string {
 	return ""
 }
 
-// coordSessionStart rebinds the run to a new session id of the same live Claude process (/clear, compact, resume)
-// and tells a session in a repo with a dead owner's run that the run is pending.
+// coordSessionStart rebinds the run to a new session id of the same live Claude process (/clear, compact, resume),
+// tells a session in a repo with a dead owner's run that the run is pending, and injects standing.md content (ADR 0002 B4.3).
 func coordSessionStart(a Action, loc run.Loc, m *run.Marker, w io.Writer) int {
 	var msg string
 	switch {
@@ -312,11 +330,68 @@ func coordSessionStart(a Action, loc run.Loc, m *run.Marker, w io.Writer) int {
 			msg = fmt.Sprintf("[rein] run %q is active: the coordinator guard now follows this session.", m.Run)
 		}
 	}
+
+	// Inject standing.md if present (ADR 0002 B4.3) - on resume, compact, or startup
+	if a.Source == "resume" || a.Source == "compact" || a.Source == "startup" {
+		runDir := runDirFromMarker(m)
+		if runDir != "" {
+			standingPath := filepath.Join(runDir, "standing.md")
+			if content, err := os.ReadFile(standingPath); err == nil && len(content) > 0 {
+				if msg != "" {
+					msg += "\n\n"
+				}
+				msg += fmt.Sprintf("[rein] standing orders for run %s:\n%s", m.Run, string(content))
+			}
+		}
+	}
+
 	if msg != "" {
 		_ = json.NewEncoder(w).Encode(map[string]any{"hookSpecificOutput": map[string]string{
 			"hookEventName": "SessionStart", "additionalContext": msg}})
 	}
 	return 0
+}
+
+// coordRecordDecision records AskUserQuestion decisions to decisions.tsv (ADR 0002 B4.1).
+func coordRecordDecision(a Action, m *run.Marker) {
+	// Parse tool input to get the question
+	var payload struct {
+		Question string   `json:"question"`
+		Options  []string `json:"options,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(a.ToolInput), &payload); err != nil {
+		return // cannot parse, skip
+	}
+
+	// Parse tool response to get chosen option and free text
+	var response struct {
+		Answers  []string `json:"answers,omitempty"`
+		FreeText string   `json:"free_text,omitempty"` // if the question has free-text input
+	}
+	if err := json.Unmarshal([]byte(a.Response), &response); err != nil {
+		return // cannot parse, skip
+	}
+
+	question := payload.Question
+	chosenOption := ""
+	if len(response.Answers) > 0 {
+		chosenOption = strings.Join(response.Answers, ", ")
+	}
+	freeText := response.FreeText
+
+	// Get run directory from marker
+	runDir := runDirFromMarker(m)
+	if runDir == "" {
+		return // cannot determine run dir
+	}
+
+	// Append to decisions.tsv
+	_ = decision.Append(runDir, question, chosenOption, freeText)
+}
+
+// runDirFromMarker returns the run directory from the marker (ADR 0002 B4).
+func runDirFromMarker(m *run.Marker) string {
+	return m.RunDir
 }
 
 // sameProcess reports whether the hook runs on behalf of the marker's Claude process (CLAUDE_PID, or the hook's

@@ -140,15 +140,19 @@ func flagValue(args []string, name string) (string, bool) {
 // contract: its worker would run without a contract or guard. `terminal send` names only a terminal handle, which
 // says nothing about a worktree, so it cannot be judged here.
 // Also runs spec lint if --spec is provided (ADR 0002 B3).
+// Also checks scope ruling for task approval (ADR 0002 B4.4).
 func (x *ctx) coordWorkerStart(rest []string) string {
 	// Check tick staleness and budget before allowing worker spawn
 	if reason := x.coord.checkTickAndBudget(); reason != "" {
 		return reason
 	}
 
+	// Extract task name if provided (ADR 0002 B4.4)
+	taskName, hasTask := flagValue(rest, "--task")
+
 	// Check for spec lint if --spec flag is present
 	if specPath, hasSpec := flagValue(rest, "--spec"); hasSpec {
-		if taskName, hasTask := flagValue(rest, "--task"); hasTask {
+		if hasTask {
 			if reason := x.coord.checkSpec(specPath, taskName); reason != "" {
 				return fmt.Sprintf("SPEC_LINT_FAILED: %s", reason)
 			}
@@ -166,6 +170,14 @@ func (x *ctx) coordWorkerStart(rest []string) string {
 	if !has || strings.HasPrefix(wt, "new-") {
 		return "" // a new worktree is created by Orca; the contract and hooks come with the spec flow
 	}
+
+	// Check scope ruling: task must be allowed via rein run allow (ADR 0002 B4.4)
+	// Only check for existing worktrees - new worktrees are handled above
+	if hasTask && taskName != "" && !x.coord.m.Allows("task", taskName) {
+		return fmt.Sprintf("task %q is not in the approved scope ruling: the coordinator must run `rein run allow --task %s --reason <text>` before spawning this worker",
+			taskName, taskName)
+	}
+
 	dir := ""
 	switch {
 	case wt == "current" || wt == "active":
