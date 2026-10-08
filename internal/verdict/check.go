@@ -10,13 +10,15 @@ import (
 )
 
 // RecordVerdict saves a verdict record to the appropriate file.
-func RecordVerdict(storageDir string, mr int, sha string, verdict Verdict, reviewerModel, workerModel string) error {
+func RecordVerdict(storageDir string, mr int, sha string, verdict Verdict, reviewerModel, workerModel, repoPath string) error {
 	if err := EnsureDir(storageDir); err != nil {
 		return fmt.Errorf("failed to create storage dir: %w", err)
 	}
 
-	// Compute patch ID from current directory
-	repoPath := "."
+	// Compute patch ID from repo path (default to current directory if empty)
+	if repoPath == "" {
+		repoPath = "."
+	}
 	patchID, err := ComputeRevisionID(repoPath, "origin/main", "HEAD")
 	if err != nil {
 		// Log warning but don't fail - patch ID is optional

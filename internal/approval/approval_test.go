@@ -9,8 +9,9 @@ import (
 // TestGoldenCase_A_RealClick tests case (a): real click -> should pass and record approval
 func TestGoldenCase_A_RealClick(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nReview the changes before approving.",
+		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:  []string{"Approve"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
@@ -37,9 +38,10 @@ func TestGoldenCase_A_RealClick(t *testing.T) {
 // TestGoldenCase_B_PrefilledAnswers tests case (b): answers pre-filled by model -> denied
 func TestGoldenCase_B_PrefilledAnswers(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question: "Approve merge for MR 42?",
+		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:  []string{"Approve"},
 		Answers:  []string{"Approve"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
@@ -58,35 +60,29 @@ func TestGoldenCase_B_PrefilledAnswers(t *testing.T) {
 // TestGoldenCase_C_DeclineOrOther tests case (c): decline or other answer -> no approval
 func TestGoldenCase_C_DeclineOrOther(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question: "Approve merge for MR 42?",
+		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:  []string{"Approve", "Decline"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
-	// Should pass PreToolUse
+	// Should fail PreToolUse because options has more than just "Approve"
 	reason := CheckPreToolUse(string(input), "", "session-123", "session-123")
-	if reason != "" {
-		t.Errorf("Valid question should pass, got: %s", reason)
+	if reason == "" {
+		t.Error("Multiple options should be denied")
 	}
-
-	// User chose "Decline"
-	response := AskUserQuestionResponse{
-		Answers: []string{"Decline"},
-	}
-	respJSON, _ := json.Marshal(response)
-
-	recorded, _ := ProcessPostToolUse("tool-1", string(respJSON), "/tmp/verdicts")
-	if recorded {
-		t.Error("Decline should not trigger approval recording")
+	if !strings.Contains(reason, "exactly one option") {
+		t.Errorf("Denial should mention exactly one option, got: %s", reason)
 	}
 }
 
 // TestGoldenCase_D_MultiSelectAcrossMRs tests case (d): multiSelect across MRs -> denied
 func TestGoldenCase_D_MultiSelectAcrossMRs(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question:    "Approve these merges: MR 42, MR 43?",
+		Question:    "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:     []string{"Approve"},
 		MultiSelect: true,
+		Metadata:    map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
@@ -105,9 +101,10 @@ func TestGoldenCase_D_MultiSelectAcrossMRs(t *testing.T) {
 // TestGoldenCase_E_BypassPermissions tests case (e): bypassPermissions -> denied
 func TestGoldenCase_E_BypassPermissions(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question:          "Approve merge for MR 42?",
+		Question:          "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:           []string{"Approve"},
 		BypassPermissions: true,
+		Metadata:          map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
@@ -126,8 +123,9 @@ func TestGoldenCase_E_BypassPermissions(t *testing.T) {
 // TestGoldenCase_F_SubagentAsking tests case (f): subagent asking -> denied
 func TestGoldenCase_F_SubagentAsking(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question: "Approve merge for MR 42?",
+		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:  []string{"Approve"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
@@ -146,8 +144,9 @@ func TestGoldenCase_F_SubagentAsking(t *testing.T) {
 // TestNonOwnerSession tests approval from non-owner session -> denied
 func TestNonOwnerSession(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question: "Approve merge for MR 42?",
+		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:  []string{"Approve"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
@@ -163,8 +162,9 @@ func TestNonOwnerSession(t *testing.T) {
 // TestMissingApproveOption tests question without "Approve" option -> denied
 func TestMissingApproveOption(t *testing.T) {
 	payload := AskUserQuestionPayload{
-		Question: "Approve merge for MR 42?",
+		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:  []string{"Yes", "No"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 	}
 	input, _ := json.Marshal(payload)
 
@@ -177,6 +177,25 @@ func TestMissingApproveOption(t *testing.T) {
 	}
 	if !strings.Contains(reason, "rein approve prompt") {
 		t.Errorf("Denial should point to the template command, got: %s", reason)
+	}
+}
+
+// TestRewordedQuestionDenied verifies that a modified or reworded question fails validation
+func TestRewordedQuestionDenied(t *testing.T) {
+	payload := AskUserQuestionPayload{
+		Question: "Please approve this merge for MR 42?\n\nCommit: abc123\nLevel: T1\n\nReviews:\n- claude-opus: APPROVE\n\nYour approval is required.",
+		Options:  []string{"Approve"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
+	}
+	input, _ := json.Marshal(payload)
+
+	reason := CheckPreToolUse(string(input), "", "session-123", "session-123")
+	if reason == "" {
+		t.Error("Reworded question should be denied")
+	}
+	// Should fail on multiple template checks
+	if !strings.Contains(reason, "APPROVAL_DENIED") {
+		t.Errorf("Denial should be present for reworded question, got: %s", reason)
 	}
 }
 
@@ -203,12 +222,39 @@ func TestAllDenialsHaveClearReasonsAndNextSteps(t *testing.T) {
 		session string
 		owner   string
 	}{
-		{"pre-filled", AskUserQuestionPayload{Question: "Approve merge for MR 42?", Options: []string{"Approve"}, Answers: []string{"Approve"}}, "", "s1", "s1"},
-		{"subagent", AskUserQuestionPayload{Question: "Approve merge for MR 42?", Options: []string{"Approve"}}, "agent-1", "s1", "s1"},
-		{"non-owner", AskUserQuestionPayload{Question: "Approve merge for MR 42?", Options: []string{"Approve"}}, "", "s2", "s1"},
-		{"no-approve-option", AskUserQuestionPayload{Question: "Approve merge for MR 42?", Options: []string{"Yes"}}, "", "s1", "s1"},
-		{"bypass", AskUserQuestionPayload{Question: "Approve merge for MR 42?", Options: []string{"Approve"}, BypassPermissions: true}, "", "s1", "s1"},
-		{"multiselect", AskUserQuestionPayload{Question: "Approve merge for MR 42?", Options: []string{"Approve"}, MultiSelect: true}, "", "s1", "s1"},
+		{"pre-filled", AskUserQuestionPayload{
+			Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+			Options:  []string{"Approve"},
+			Answers:  []string{"Approve"},
+			Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
+		}, "", "s1", "s1"},
+		{"subagent", AskUserQuestionPayload{
+			Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+			Options:  []string{"Approve"},
+			Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
+		}, "agent-1", "s1", "s1"},
+		{"non-owner", AskUserQuestionPayload{
+			Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+			Options:  []string{"Approve"},
+			Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
+		}, "", "s2", "s1"},
+		{"no-approve-option", AskUserQuestionPayload{
+			Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+			Options:  []string{"Yes"},
+			Metadata: map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
+		}, "", "s1", "s1"},
+		{"bypass", AskUserQuestionPayload{
+			Question:          "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+			Options:           []string{"Approve"},
+			BypassPermissions: true,
+			Metadata:          map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
+		}, "", "s1", "s1"},
+		{"multiselect", AskUserQuestionPayload{
+			Question:    "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+			Options:     []string{"Approve"},
+			MultiSelect: true,
+			Metadata:    map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
+		}, "", "s1", "s1"},
 	}
 
 	for _, tt := range tests {

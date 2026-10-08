@@ -453,3 +453,58 @@ func TestNestedRepoWithBrokenParentContractFailsClosed(t *testing.T) {
 		t.Errorf("broken parent contract must fail closed, got %q", out)
 	}
 }
+
+// TestAskUserQuestionHooks verifies that AskUserQuestion PreToolUse and PostToolUse hooks execute.
+func TestAskUserQuestionHooks(t *testing.T) {
+	wt, _ := setup(t)
+
+	// Test PreToolUse for AskUserQuestion with pre-filled answers (should be denied)
+	// This test verifies the hooks are wired up, even without a full run marker
+	prePayload := map[string]any{
+		"question": "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+		"options":  []string{"Approve"},
+		"answers":  []string{"Approve"}, // Pre-filled - should be denied
+		"metadata": map[string]any{"mr": 42, "sha": "abc123", "tier": "T1"},
+	}
+	preInput, _ := json.Marshal(prePayload)
+	preEvent := map[string]any{
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "AskUserQuestion",
+		"cwd":             wt,
+		"tool_input":      json.RawMessage(preInput),
+	}
+	preIn, _ := json.Marshal(preEvent)
+	var preOut bytes.Buffer
+	Run(bytes.NewReader(preIn), &preOut)
+	preResult := preOut.String()
+
+	// Should be denied (either pre-filled answers or missing owner session, both are valid denials)
+	if !strings.Contains(preResult, `"deny"`) {
+		t.Errorf("PreToolUse with pre-filled answers should be denied, got: %s", preResult)
+	}
+	if !strings.Contains(preResult, "APPROVAL_DENIED") {
+		t.Errorf("Denial should use APPROVAL_DENIED prefix, got: %s", preResult)
+	}
+
+	// Test PostToolUse for AskUserQuestion (should execute without panic)
+	postResponse := map[string]any{
+		"answers": []string{"Approve"},
+	}
+	postRespJSON, _ := json.Marshal(postResponse)
+	postEvent := map[string]any{
+		"hook_event_name": "PostToolUse",
+		"tool_name":       "AskUserQuestion",
+		"cwd":             wt,
+		"tool_input":      json.RawMessage(preInput),
+		"tool_response":   json.RawMessage(postRespJSON),
+	}
+	postIn, _ := json.Marshal(postEvent)
+	var postOut bytes.Buffer
+	Run(bytes.NewReader(postIn), &postOut)
+	postResult := postOut.String()
+
+	// PostToolUse should not deny (it just records approval silently or skips if no run)
+	if strings.Contains(postResult, `"deny"`) {
+		t.Errorf("PostToolUse should not deny, got: %s", postResult)
+	}
+}

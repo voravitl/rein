@@ -303,7 +303,7 @@ func mergeGroups(doc map[string]any, event, marker string, group map[string]any)
 	doc["hooks"] = hooks
 }
 
-// claudeStyle writes PreToolUse + Stop groups in the Claude settings format (codex and Claude share it).
+// claudeStyle writes PreToolUse + PostToolUse + Stop groups in the Claude settings format (codex and Claude share it).
 func claudeStyle(wt, rel, vendor, task, bin, matcher string) ([]string, error) {
 	path, err := prepare(wt, rel)
 	if err != nil {
@@ -316,6 +316,7 @@ func claudeStyle(wt, rel, vendor, task, bin, matcher string) ([]string, error) {
 	h := []any{map[string]any{"type": "command", "command": command(bin, vendor, task), "timeout": 10}}
 	marker := "hook --vendor " + vendor
 	mergeGroups(doc, "PreToolUse", marker, map[string]any{"matcher": matcher, "hooks": h})
+	mergeGroups(doc, "PostToolUse", marker, map[string]any{"matcher": "AskUserQuestion", "hooks": h})
 	mergeGroups(doc, "Stop", marker, map[string]any{"hooks": h})
 	return []string{rel}, writeJSON(path, doc)
 }
@@ -325,7 +326,7 @@ func writeCodex(wt string, c *contract.Contract, bin string) ([]string, error) {
 }
 
 func writeClaude(wt string, c *contract.Contract, bin string) ([]string, error) {
-	return claudeStyle(wt, ".claude/settings.local.json", "claude", c.Name, bin, "Bash|Edit|Write|MultiEdit|NotebookEdit")
+	return claudeStyle(wt, ".claude/settings.local.json", "claude", c.Name, bin, "Bash|Edit|Write|MultiEdit|NotebookEdit|Agent|AskUserQuestion")
 }
 
 func writeAgy(wt string, c *contract.Contract, bin string) ([]string, error) {

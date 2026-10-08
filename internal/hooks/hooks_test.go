@@ -94,9 +94,37 @@ func TestInstallWritesExcludesAndRecords(t *testing.T) {
 	if len(cx["PreToolUse"].([]any)) != 1 || len(cx["Stop"].([]any)) != 1 {
 		t.Errorf("codex groups duplicated: %v", cx)
 	}
+	// Check PostToolUse is present
+	if cx["PostToolUse"] == nil {
+		t.Error("codex hooks must include PostToolUse")
+	}
+	if len(cx["PostToolUse"].([]any)) != 1 {
+		t.Errorf("codex PostToolUse should have 1 group, got %d", len(cx["PostToolUse"].([]any)))
+	}
+	postGroup := cx["PostToolUse"].([]any)[0].(map[string]any)
+	if postGroup["matcher"] != "AskUserQuestion" {
+		t.Errorf("PostToolUse matcher = %q, want AskUserQuestion", postGroup["matcher"])
+	}
 	agy := mustJSON(t, filepath.Join(wt, ".agents/hooks.json"))["rein"].(map[string]any)
 	if _, flat := agy["Stop"].([]any)[0].(map[string]any)["command"]; !flat {
 		t.Errorf("agy Stop must be flat: %v", agy["Stop"])
+	}
+	// Check Claude settings.local.json has AskUserQuestion in matcher and PostToolUse
+	claude := mustJSON(t, filepath.Join(wt, ".claude/settings.local.json"))["hooks"].(map[string]any)
+	claudePreToolUse := claude["PreToolUse"].([]any)[0].(map[string]any)
+	claudeMatcher := claudePreToolUse["matcher"].(string)
+	if !strings.Contains(claudeMatcher, "AskUserQuestion") {
+		t.Errorf("Claude PreToolUse matcher should include AskUserQuestion, got: %q", claudeMatcher)
+	}
+	if claude["PostToolUse"] == nil {
+		t.Error("Claude hooks must include PostToolUse")
+	}
+	if len(claude["PostToolUse"].([]any)) != 1 {
+		t.Errorf("Claude PostToolUse should have 1 group, got %d", len(claude["PostToolUse"].([]any)))
+	}
+	claudePostGroup := claude["PostToolUse"].([]any)[0].(map[string]any)
+	if claudePostGroup["matcher"] != "AskUserQuestion" {
+		t.Errorf("Claude PostToolUse matcher = %q, want AskUserQuestion", claudePostGroup["matcher"])
 	}
 	kiro := mustJSON(t, filepath.Join(wt, ".kiro/agents/rein.json"))
 	if kiro["name"] != "rein" || kiro["hooks"].(map[string]any)["preToolUse"] == nil {

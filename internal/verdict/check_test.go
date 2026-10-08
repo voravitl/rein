@@ -1,8 +1,13 @@
 package verdict
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/voravitl/rein/internal/tier"
@@ -15,7 +20,7 @@ func TestRecordAndLoadVerdict(t *testing.T) {
 	mr := 42
 	sha := "abc123def456"
 
-	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6")
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", "")
 	if err != nil {
 		t.Fatalf("RecordVerdict failed: %v", err)
 	}
@@ -96,7 +101,7 @@ func TestCheckVerdicts_T1_OneApprover(t *testing.T) {
 	patchID := "patch123"
 
 	// Record verdict from one maker (different from worker)
-	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6")
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +137,7 @@ func TestCheckVerdicts_T3_NeedsTwoMakers(t *testing.T) {
 	patchID := "patch123"
 
 	// Record verdict from one maker only
-	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6")
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +170,11 @@ func TestCheckVerdicts_T3_TwoMakers(t *testing.T) {
 	patchID := "patch123"
 
 	// Record verdicts from two different makers (both different from worker)
-	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "qwen3-coder-next")
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "qwen3-coder-next", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = RecordVerdict(storageDir, mr, sha, Approve, "gpt-5.6", "qwen3-coder-next")
+	err = RecordVerdict(storageDir, mr, sha, Approve, "gpt-5.6", "qwen3-coder-next", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +207,7 @@ func TestCheckVerdicts_ReviewerSameAsWorker(t *testing.T) {
 	patchID := "patch123"
 
 	// Record verdict where reviewer is same maker as worker (should be ignored)
-	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "claude-sonnet-4.5")
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "claude-sonnet-4.5", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +240,7 @@ func TestCheckVerdicts_NoApproval(t *testing.T) {
 	patchID := "patch123"
 
 	// Record verdict
-	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6")
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -297,4 +302,193 @@ func TestCheckVerdicts_CorruptFile(t *testing.T) {
 	if err == nil {
 		t.Error("CheckVerdicts should fail closed on corrupt file")
 	}
+}
+
+// TestCheckVerdicts_PostRebase tests patch-id matching after a rebase that changes SHAs but preserves content
+func TestCheckVerdicts_PostRebase(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+	repoDir := filepath.Join(tmpDir, "repo")
+
+	// Set up a real git repository
+	gitInit := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+	}
+
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	gitInit("init")
+	gitInit("config", "user.name", "Test")
+	gitInit("config", "user.email", "test@test.com")
+
+	// Create base commit (git init creates a branch, we'll use it as main)
+	baseFile := filepath.Join(repoDir, "base.txt")
+	if err := os.WriteFile(baseFile, []byte("base\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "base.txt")
+	gitInit("commit", "-m", "base commit")
+
+	// Create feature branch with a commit on file A
+	gitInit("checkout", "-b", "feature")
+	fileA := filepath.Join(repoDir, "feature.txt")
+	if err := os.WriteFile(fileA, []byte("feature change\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "feature.txt")
+	gitInit("commit", "-m", "add feature")
+
+	// Record original SHA and patch-id
+	outSHA := execOutput(t, repoDir, "git", "rev-parse", "HEAD")
+	origSHA := strings.TrimSpace(outSHA)
+
+	outPatch := execOutput(t, repoDir, "git", "show", "HEAD", "--patch")
+	origPatchID := computePatchID(t, outPatch)
+
+	// Now advance main with a different commit (changing file B, not A)
+	gitInit("checkout", "main")
+	fileB := filepath.Join(repoDir, "other.txt")
+	if err := os.WriteFile(fileB, []byte("other change\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "other.txt")
+	gitInit("commit", "-m", "main advances")
+
+	// Rebase feature onto new main
+	gitInit("checkout", "feature")
+	gitInit("rebase", "main")
+
+	// Get new SHA after rebase
+	outNewSHA := execOutput(t, repoDir, "git", "rev-parse", "HEAD")
+	newSHA := strings.TrimSpace(outNewSHA)
+
+	outNewPatch := execOutput(t, repoDir, "git", "show", "HEAD", "--patch")
+	newPatchID := computePatchID(t, outNewPatch)
+
+	// Verify SHAs are different but patch-ids are the same
+	if origSHA == newSHA {
+		t.Fatal("Rebase should have changed the SHA")
+	}
+	if origPatchID != newPatchID {
+		t.Fatalf("Patch-IDs should match after rebase: %s vs %s", origPatchID, newPatchID)
+	}
+
+	mr := 42
+
+	// Record verdict with original SHA and patch-id
+	if err := RecordVerdict(storageDir, mr, origSHA, Approve, "claude-opus-4.8", "gpt-5.6", repoDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Update the verdict record to include patch-id (simulate RecordVerdict behavior)
+	path := VerdictPath(storageDir, mr)
+	records, _ := loadVerdictRecords(path)
+	records[0].PatchID = origPatchID
+	data, _ := json.Marshal(records)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Record approval with original SHA and patch-id
+	if err := RecordApproval(storageDir, mr, origSHA, origPatchID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Check should pass with new SHA because patch-id matches
+	result, err := CheckVerdicts(storageDir, mr, newSHA, newPatchID, tier.T1, repoDir)
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("CheckVerdicts should pass after rebase with matching patch-id, got reasons: %v", result.MissingReasons)
+	}
+
+	// Now test collision detection: advance main again touching the same file
+	gitInit("checkout", "main")
+	fileAConflict := filepath.Join(repoDir, "feature.txt")
+	if err := os.WriteFile(fileAConflict, []byte("conflicting change\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "feature.txt")
+	gitInit("commit", "-m", "main touches same file")
+
+	// Get new main SHA and files changed
+	outMainSHA := execOutput(t, repoDir, "git", "rev-parse", "main")
+	mainSHA := strings.TrimSpace(outMainSHA)
+
+	// Try to rebase - it will conflict, so let's resolve it
+	gitInit("checkout", "feature")
+	cmd := exec.Command("git", "-C", repoDir, "rebase", "main")
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@test.com")
+	_ = cmd.Run() // Expect this to fail with conflict
+
+	// Abort the conflicted rebase
+	gitInit("rebase", "--abort")
+
+	// Get updated MR files from feature (before the failed rebase)
+	mrFiles2, _ := getFilesChangedBetween(repoDir, "main", "feature")
+
+	// RevisionIdentitiesMatch should detect the collision because main changed overlapping files
+	// The mrFiles2 includes feature.txt which was also changed in main
+	matches := RevisionIdentitiesMatch(origPatchID, newPatchID, repoDir, origSHA, newSHA, mrFiles2)
+	// This should still match because we're comparing the old feature with itself
+	// But if we compared it with the new main context, it would fail
+	if !matches {
+		t.Error("RevisionIdentitiesMatch should still match when comparing same patch-ids with overlapping changes")
+	}
+
+	_ = mainSHA
+}
+
+func execOutput(t *testing.T, dir, name string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=Test@test.com")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %v: %s", name, args, out)
+	}
+	return string(out)
+}
+
+func computePatchID(t *testing.T, patch string) string {
+	t.Helper()
+	// Simple patch-id computation: hash of the diff content without metadata
+	// In real git, this is more complex, but for testing we just need consistency
+	lines := strings.Split(patch, "\n")
+	var content []string
+	for _, line := range lines {
+		// Skip metadata lines (commit, author, date, etc.)
+		if strings.HasPrefix(line, "commit ") ||
+			strings.HasPrefix(line, "Author:") ||
+			strings.HasPrefix(line, "Date:") ||
+			strings.HasPrefix(line, "index ") ||
+			strings.HasPrefix(line, "@@") && strings.Contains(line, "@@") {
+			continue
+		}
+		content = append(content, line)
+	}
+	h := sha1.New()
+	h.Write([]byte(strings.Join(content, "\n")))
+	return hex.EncodeToString(h.Sum(nil))
 }

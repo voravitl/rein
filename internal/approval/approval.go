@@ -75,13 +75,19 @@ func CheckPreToolUse(toolInput string, agentID string, sessionID string, ownerSe
 
 // validateTemplate checks if the question matches the canonical template structure.
 // This implements byte-equal template validation (ADR B2.4 requirement #1).
+// Strict validation without bypass - every approval question must match the canonical template.
 func validateTemplate(payload *AskUserQuestionPayload) string {
-	// Only validate if metadata is present (indicates canonical template usage)
-	if len(payload.Metadata) == 0 {
-		return "" // No metadata means not using canonical template, skip validation
+	// Check if this is an approval question
+	if !isApprovalQuestion(payload) {
+		return "" // Not an approval question, skip validation
 	}
 
-	// Extract metadata
+	// For approval questions, metadata is REQUIRED
+	if len(payload.Metadata) == 0 {
+		return "APPROVAL_DENIED: approval question must have 'mr', 'sha', and 'tier' in metadata. Use 'rein approve prompt --mr N' to generate the correct template."
+	}
+
+	// Extract metadata - all required
 	_, hasMR := payload.Metadata["mr"]
 	sha, hasSHA := payload.Metadata["sha"]
 	tierStr, hasTier := payload.Metadata["tier"]

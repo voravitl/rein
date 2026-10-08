@@ -77,7 +77,7 @@ func cmdVerdictRecord(args []string) int {
 	}
 
 	storageDir := verdict.StorageDir(*runDir, *repoPath)
-	if err := verdict.RecordVerdict(storageDir, *mr, *sha, v, *reviewer, *worker); err != nil {
+	if err := verdict.RecordVerdict(storageDir, *mr, *sha, v, *reviewer, *worker, *repoPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error recording verdict: %v\n", err)
 		return 1
 	}
@@ -354,10 +354,17 @@ func getVerdictSummary(storageDir string, mr int, sha string) string {
 		return "No verdicts recorded yet"
 	}
 
-	// Build summary: count approvals and request-changes
+	// Compute current patch ID for matching
+	currentPatchID, err := verdict.ComputeRevisionID(".", "origin/main", "HEAD")
+	if err != nil {
+		currentPatchID = ""
+	}
+
+	// Build summary: count approvals and request-changes matching this revision
 	var approvals, changes []string
 	for _, rec := range records {
-		if rec.SHA == sha || rec.PatchID != "" {
+		// Match either exact SHA or matching patch-id
+		if rec.SHA == sha || (rec.PatchID != "" && currentPatchID != "" && rec.PatchID == currentPatchID) {
 			maker := verdict.NormalizeModelMaker(rec.ReviewerModel)
 			switch rec.Verdict {
 			case verdict.Approve:
@@ -391,13 +398,6 @@ func getChangedFiles(repoPath, base, head string) ([]string, error) {
 		}
 	}
 	return files, nil
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func inClaudeCode() bool {
