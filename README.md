@@ -35,16 +35,33 @@ The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](http
 
 ## Install
 
-Requires Go 1.24+ to build (the result is one static binary, no runtime needed).
+As a Claude Code plugin (this repository is also its marketplace):
+
+```
+/plugin marketplace add voravitl/rein
+/plugin install rein@rein
+```
+
+Start a new session: the plugin's SessionStart hook builds the binary with Go (or downloads the release binary and
+checks `SHA256SUMS`) into the plugin data dir, which survives updates. Then run `/rein:setup` to check every
+prerequisite and set up a project. Full prerequisites, Orca and OMC integration, and migration from a manual
+install: [`docs/SETUP.md`](docs/SETUP.md).
+
+| Plugin part | Name |
+|---|---|
+| Guard hooks | SessionStart (install binary), PreToolUse + Stop (`rein hook`, exec form, silent outside a contracted worktree) |
+| Skills | `rein:setup`, `rein:worktree-pipeline` (coordinator playbook for Orca, with templates and scripts) |
+| Agents | `rein:orca-swarm` (Opus coordinator), `rein:orca-steward` (Sonnet/Haiku mechanical jobs) |
+
+Without the plugin (guard only), build it yourself (Go 1.26+; one static binary, no runtime):
 
 ```sh
 git clone https://github.com/voravitl/rein && cd rein
 sh scripts/install.sh          # builds bin/rein for this machine
-sh scripts/build.sh            # optional: dist/rein-<os>-<arch> for macOS, Linux, Windows
+sh scripts/build.sh            # optional: dist/rein-<os>-<arch> + SHA256SUMS for macOS, Linux, Windows
 ```
 
-As a Claude Code plugin, `hooks/hooks.json` runs `${CLAUDE_PLUGIN_ROOT}/bin/rein hook` in exec form (no shell).
-To use it without the plugin, add the same command to `~/.claude/settings.json`:
+and add the hook to `~/.claude/settings.json` (do not do this as well as installing the plugin, or the guard runs twice):
 
 ```json
 { "hooks": {
@@ -59,11 +76,12 @@ globally. Measured on Apple Silicon: about 5 ms per call (p50), inside or outsid
 
 ## Use
 
-**1. A project profile** (once per project; keep real profiles out of public repos):
+**1. A project profile and pack** (once per project; keep both out of public repos; `/rein:setup` helps):
 
 ```sh
-mkdir -p ~/.config/rein/profiles
+mkdir -p ~/.config/rein/profiles ~/.config/rein/packs
 cp examples/profile.example.json ~/.config/rein/profiles/myapp.json   # edit containers, ports, scripts
+cp -R examples/pack ~/.config/rein/packs/myapp                          # gates, safety notes, rule addenda
 ```
 
 **2. A contract per task**, written by the coordinator before the worker starts:
@@ -125,6 +143,8 @@ each chain is printed. Review chains should only list strong models: when none i
 | Contracts (hook lookup) | `~/.cache/worktree-pipeline/contracts/<name>.json`, override `PIPELINE_CONTRACTS` |
 | Guard denials log | `~/.cache/worktree-pipeline/logs/guard.log`, override `PIPELINE_LOGDIR` |
 | Default profile | `REIN_PROFILE` |
+| Project pack | the profile's `pack` field (read by the worktree-pipeline skill; `PIPELINE_PACK` for `advise.sh`) |
+| Plugin binary | `${CLAUDE_PLUGIN_DATA}/bin/rein` (`~/.claude/plugins/data/rein-rein/bin/rein`) |
 | Ledger / prices | `PIPELINE_LEDGER`, `PIPELINE_PRICES` (`{"<model>": {"usd_per_mtok": N}}`) |
 | Fallback chains | `--config`, `PIPELINE_FALLBACK`, `<bin>/../config/fallback-chain.json`, `~/.config/rein/fallback-chain.json` |
 
@@ -133,12 +153,14 @@ each chain is printed. Review chains should only list strong models: when none i
 | | macOS | Linux | Windows |
 |---|---|---|---|
 | Unit tests + hook smoke test (CI on every push) | ✅ | ✅ | ✅ |
-| Real Claude Code session: guard hook (exec form) | ✅ verified | not yet | not yet |
+| Real Claude Code session: guard hook (exec form) | ✅ verified (manual settings and as plugin) | not yet | not yet |
+| Real Claude Code session: plugin SessionStart installer | ✅ verified (`--plugin-dir`) | not yet | not yet |
 | Real Claude Code session: `rein sandbox` | ✅ verified | not yet | n/a (no native sandbox; use WSL2) |
 
-On Windows, `hooks/hooks.json` relies on `bin/rein` resolving to `bin\rein.exe` (`scripts/install.ps1`); that
-resolution has not been seen in a real Claude Code session yet. Git Bash paths (`/c/...`, `/tmp/...`) are mapped
-to native paths before they are judged (found by the Windows CI leg).
+On Windows the hooks run `${CLAUDE_PLUGIN_DATA}/bin/rein` and rely on Windows finding `rein.exe`; that has not been
+seen in a real Claude Code session yet. Git Bash paths (`/c/...`, `/tmp/...`) are mapped to native paths before they
+are judged (found by the Windows CI leg). No release has been published yet, so machines without Go cannot install
+the binary until the first `v*` tag.
 
 Design and the reasons for Go: [`docs/adr/0001-rein-supervisor.md`](docs/adr/0001-rein-supervisor.md).
 
