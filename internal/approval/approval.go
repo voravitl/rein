@@ -101,7 +101,13 @@ func validateTemplate(payload *AskUserQuestionPayload) string {
 	if !strings.Contains(q, "Approve merge for") {
 		return "APPROVAL_DENIED: approval question must start with 'Approve merge for'. Use 'rein approve prompt --mr N' to generate the correct template."
 	}
-	if !strings.Contains(q, fmt.Sprintf("SHA: %v", sha)) {
+	// Check if question contains either full SHA or 8-char SHA prefix
+	shaStr := fmt.Sprintf("%v", sha)
+	expectedShort := shaStr
+	if len(expectedShort) > 8 {
+		expectedShort = expectedShort[:8]
+	}
+	if !strings.Contains(q, fmt.Sprintf("SHA: %v", shaStr)) && !strings.Contains(q, fmt.Sprintf("SHA: %v", expectedShort)) {
 		return "APPROVAL_DENIED: approval question must include the SHA line matching metadata. Use 'rein approve prompt --mr N' to generate the correct template."
 	}
 	if !strings.Contains(q, fmt.Sprintf("Tier: %v", tierStr)) {

@@ -255,6 +255,11 @@ func TestAllDenialsHaveClearReasonsAndNextSteps(t *testing.T) {
 			MultiSelect: true,
 			Metadata:    map[string]interface{}{"mr": 42, "sha": "abc123", "tier": "T1"},
 		}, "", "s1", "s1"},
+		{"missing-metadata", AskUserQuestionPayload{
+			Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+			Options:  []string{"Approve"},
+			Metadata: map[string]interface{}{}, // Empty metadata
+		}, "", "s1", "s1"},
 	}
 
 	for _, tt := range tests {
@@ -276,7 +281,8 @@ func TestAllDenialsHaveClearReasonsAndNextSteps(t *testing.T) {
 				strings.Contains(lower, "owner") ||
 				strings.Contains(lower, "option") ||
 				strings.Contains(lower, "bypass") ||
-				strings.Contains(lower, "multiselect")
+				strings.Contains(lower, "multiselect") ||
+				strings.Contains(lower, "metadata")
 
 			if !hasProblem {
 				t.Errorf("%s: denial should clearly state the problem, got: %s", tt.name, reason)
@@ -292,5 +298,68 @@ func TestAllDenialsHaveClearReasonsAndNextSteps(t *testing.T) {
 				t.Errorf("%s: denial should state the next step, got: %s", tt.name, reason)
 			}
 		})
+	}
+}
+
+// TestRealSHA tests that validation works with a real 40-char SHA
+func TestRealSHA(t *testing.T) {
+	realSHA := "141b55db07abb71795bc22d7d661e9dbc0219cfd"
+	shortSHA := realSHA[:8] // "141b55db"
+
+	// Test with short SHA in question but full SHA in metadata
+	payload := AskUserQuestionPayload{
+		Question: "Approve merge for MR 42?\n\nSHA: " + shortSHA + "\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+		Options:  []string{"Approve"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": realSHA, "tier": "T1"},
+	}
+	input, _ := json.Marshal(payload)
+
+	reason := CheckPreToolUse(string(input), "", "s1", "s1")
+	if reason != "" {
+		t.Errorf("Canonical template with real SHA should pass validation, got denial: %s", reason)
+	}
+
+	// Test with full SHA in both places
+	payload2 := AskUserQuestionPayload{
+		Question: "Approve merge for MR 42?\n\nSHA: " + realSHA + "\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
+		Options:  []string{"Approve"},
+		Metadata: map[string]interface{}{"mr": 42, "sha": realSHA, "tier": "T1"},
+	}
+	input2, _ := json.Marshal(payload2)
+
+	reason2 := CheckPreToolUse(string(input2), "", "s1", "s1")
+	if reason2 != "" {
+		t.Errorf("Full SHA in question should also pass validation, got denial: %s", reason2)
+	}
+}
+
+// TestGeneratorValidatorCoherence tests that the canonical template produced by
+// cmdApprovePrompt is always accepted by CheckPreToolUse.
+// This simulates the real canonical template with 8-char SHA in question and full SHA in metadata.
+func TestGeneratorValidatorCoherence(t *testing.T) {
+	// Use the real SHA from the current worktree (from the review report)
+	realSHA := "141b55db07abb71795bc22d7d661e9dbc0219cfd"
+	shortSHA := realSHA[:8]
+
+	// Build a payload matching what cmdApprovePrompt generates:
+	// - Question has the short (8-char) SHA
+	// - Metadata has the full SHA
+	// - Verdicts line included
+	// - Warning line included
+	payload := AskUserQuestionPayload{
+		Question: "Approve merge for MR 42?\n\nSHA: " + shortSHA + "\nTier: T1\n\nVerdicts: No verdicts recorded yet\n\nThis approval gates the merge. Review the verdicts and changes before approving.",
+		Options:  []string{"Approve"},
+		Metadata: map[string]interface{}{
+			"mr":   42,
+			"sha":  realSHA, // Full 40-char SHA in metadata
+			"tier": "T1",
+		},
+	}
+	input, _ := json.Marshal(payload)
+
+	// This must NOT be denied
+	reason := CheckPreToolUse(string(input), "", "session-123", "session-123")
+	if reason != "" {
+		t.Errorf("Generator-produced canonical template should always pass CheckPreToolUse, got denial: %s", reason)
 	}
 }

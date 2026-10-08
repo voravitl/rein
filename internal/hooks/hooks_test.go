@@ -87,47 +87,104 @@ func TestInstallWritesExcludesAndRecords(t *testing.T) {
 		}
 	}
 	cx := mustJSON(t, filepath.Join(wt, ".codex/hooks.json"))["hooks"].(map[string]any)
-	cmd := cx["PreToolUse"].([]any)[0].(map[string]any)["hooks"].([]any)[0].(map[string]any)["command"].(string)
+	preToolUseRaw, ok := cx["PreToolUse"].([]any)
+	if !ok || len(preToolUseRaw) == 0 {
+		t.Fatalf("codex PreToolUse must be a non-empty array, got %T", cx["PreToolUse"])
+	}
+	preToolUseGroup, ok := preToolUseRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("codex PreToolUse[0] must be a map, got %T", preToolUseRaw[0])
+	}
+	hooksRaw, ok := preToolUseGroup["hooks"].([]any)
+	if !ok || len(hooksRaw) == 0 {
+		t.Fatalf("codex PreToolUse hooks must be a non-empty array, got %T", preToolUseGroup["hooks"])
+	}
+	hook0, ok := hooksRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("codex hooks[0] must be a map, got %T", hooksRaw[0])
+	}
+	cmd, ok := hook0["command"].(string)
+	if !ok {
+		t.Fatalf("codex command must be a string, got %T", hook0["command"])
+	}
 	if want := "'" + bin + "' hook --vendor codex --task w"; cmd != want { // always quoted, bound to the task
 		t.Errorf("codex command = %q, want %q", cmd, want)
 	}
-	if len(cx["PreToolUse"].([]any)) != 1 || len(cx["Stop"].([]any)) != 1 {
+	stopRaw, ok := cx["Stop"].([]any)
+	if !ok {
+		t.Fatalf("codex Stop must be an array, got %T", cx["Stop"])
+	}
+	if len(preToolUseRaw) != 1 || len(stopRaw) != 1 {
 		t.Errorf("codex groups duplicated: %v", cx)
 	}
 	// Check PostToolUse is present
-	if cx["PostToolUse"] == nil {
-		t.Error("codex hooks must include PostToolUse")
+	postToolUseRaw, ok := cx["PostToolUse"].([]any)
+	if !ok {
+		t.Error("codex hooks must include PostToolUse as an array")
 	}
-	if len(cx["PostToolUse"].([]any)) != 1 {
-		t.Errorf("codex PostToolUse should have 1 group, got %d", len(cx["PostToolUse"].([]any)))
+	if len(postToolUseRaw) != 1 {
+		t.Errorf("codex PostToolUse should have 1 group, got %d", len(postToolUseRaw))
 	}
-	postGroup := cx["PostToolUse"].([]any)[0].(map[string]any)
-	if postGroup["matcher"] != "AskUserQuestion" {
-		t.Errorf("PostToolUse matcher = %q, want AskUserQuestion", postGroup["matcher"])
+	if len(postToolUseRaw) > 0 {
+		postGroup, ok := postToolUseRaw[0].(map[string]any)
+		if !ok {
+			t.Fatalf("codex PostToolUse[0] must be a map, got %T", postToolUseRaw[0])
+		}
+		if postGroup["matcher"] != "AskUserQuestion" {
+			t.Errorf("PostToolUse matcher = %q, want AskUserQuestion", postGroup["matcher"])
+		}
 	}
 	agy := mustJSON(t, filepath.Join(wt, ".agents/hooks.json"))["rein"].(map[string]any)
-	if _, flat := agy["Stop"].([]any)[0].(map[string]any)["command"]; !flat {
+	agyStopRaw, ok := agy["Stop"].([]any)
+	if !ok || len(agyStopRaw) == 0 {
+		t.Fatalf("agy Stop must be a non-empty array, got %T", agy["Stop"])
+	}
+	agyStop0, ok := agyStopRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("agy Stop[0] must be a map, got %T", agyStopRaw[0])
+	}
+	if _, flat := agyStop0["command"]; !flat {
 		t.Errorf("agy Stop must be flat: %v", agy["Stop"])
 	}
 	// Check Claude settings.local.json has AskUserQuestion in matcher and PostToolUse
 	claude := mustJSON(t, filepath.Join(wt, ".claude/settings.local.json"))["hooks"].(map[string]any)
-	claudePreToolUse := claude["PreToolUse"].([]any)[0].(map[string]any)
-	claudeMatcher := claudePreToolUse["matcher"].(string)
+	claudePreToolUseRaw, ok := claude["PreToolUse"].([]any)
+	if !ok || len(claudePreToolUseRaw) == 0 {
+		t.Fatalf("Claude PreToolUse must be a non-empty array, got %T", claude["PreToolUse"])
+	}
+	claudePreToolUse, ok := claudePreToolUseRaw[0].(map[string]any)
+	if !ok {
+		t.Fatalf("Claude PreToolUse[0] must be a map, got %T", claudePreToolUseRaw[0])
+	}
+	claudeMatcher, ok := claudePreToolUse["matcher"].(string)
+	if !ok {
+		t.Fatalf("Claude matcher must be a string, got %T", claudePreToolUse["matcher"])
+	}
 	if !strings.Contains(claudeMatcher, "AskUserQuestion") {
 		t.Errorf("Claude PreToolUse matcher should include AskUserQuestion, got: %q", claudeMatcher)
 	}
-	if claude["PostToolUse"] == nil {
-		t.Error("Claude hooks must include PostToolUse")
+	claudePostToolUseRaw, ok := claude["PostToolUse"].([]any)
+	if !ok {
+		t.Error("Claude hooks must include PostToolUse as an array")
 	}
-	if len(claude["PostToolUse"].([]any)) != 1 {
-		t.Errorf("Claude PostToolUse should have 1 group, got %d", len(claude["PostToolUse"].([]any)))
+	if len(claudePostToolUseRaw) != 1 {
+		t.Errorf("Claude PostToolUse should have 1 group, got %d", len(claudePostToolUseRaw))
 	}
-	claudePostGroup := claude["PostToolUse"].([]any)[0].(map[string]any)
-	if claudePostGroup["matcher"] != "AskUserQuestion" {
-		t.Errorf("Claude PostToolUse matcher = %q, want AskUserQuestion", claudePostGroup["matcher"])
+	if len(claudePostToolUseRaw) > 0 {
+		claudePostGroup, ok := claudePostToolUseRaw[0].(map[string]any)
+		if !ok {
+			t.Fatalf("Claude PostToolUse[0] must be a map, got %T", claudePostToolUseRaw[0])
+		}
+		if claudePostGroup["matcher"] != "AskUserQuestion" {
+			t.Errorf("Claude PostToolUse matcher = %q, want AskUserQuestion", claudePostGroup["matcher"])
+		}
 	}
 	kiro := mustJSON(t, filepath.Join(wt, ".kiro/agents/rein.json"))
-	if kiro["name"] != "rein" || kiro["hooks"].(map[string]any)["preToolUse"] == nil {
+	kiroHooksRaw, ok := kiro["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("kiro hooks must be a map, got %T", kiro["hooks"])
+	}
+	if kiro["name"] != "rein" || kiroHooksRaw["preToolUse"] == nil {
 		t.Errorf("kiro agent: %v", kiro)
 	}
 	js, _ := os.ReadFile(filepath.Join(wt, ".opencode/plugins/rein/server.js"))

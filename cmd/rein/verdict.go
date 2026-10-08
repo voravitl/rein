@@ -301,7 +301,7 @@ func cmdApprovePrompt(args []string) int {
 
 	// Get verdict summary - read from verdict files
 	storageDir := verdict.StorageDir(*runDir, *repoPath)
-	verdictSummary := getVerdictSummary(storageDir, *mr, actualSHA)
+	verdictSummary := getVerdictSummary(storageDir, *mr, actualSHA, *repoPath)
 
 	// Build AskUserQuestion payload
 	question := fmt.Sprintf(`Approve merge for %s?
@@ -333,7 +333,7 @@ This approval gates the merge. Review the verdicts and changes before approving.
 	return 0
 }
 
-func getVerdictSummary(storageDir string, mr int, sha string) string {
+func getVerdictSummary(storageDir string, mr int, sha string, repoPath string) string {
 	verdictPath := verdict.VerdictPath(storageDir, mr)
 
 	// Try to read verdicts
@@ -354,8 +354,8 @@ func getVerdictSummary(storageDir string, mr int, sha string) string {
 		return "No verdicts recorded yet"
 	}
 
-	// Compute current patch ID for matching
-	currentPatchID, err := verdict.ComputeRevisionID(".", "origin/main", "HEAD")
+	// Compute current patch ID for matching - use the resolved repoPath
+	currentPatchID, err := verdict.ComputeRevisionID(repoPath, "origin/main", "HEAD")
 	if err != nil {
 		currentPatchID = ""
 	}

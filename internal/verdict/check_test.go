@@ -327,7 +327,7 @@ func TestCheckVerdicts_PostRebase(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	gitInit("init")
+	gitInit("init", "--initial-branch=main")
 	gitInit("config", "user.name", "Test")
 	gitInit("config", "user.email", "test@test.com")
 
@@ -463,7 +463,7 @@ func execOutput(t *testing.T, dir, name string, args ...string) string {
 		"GIT_AUTHOR_NAME=Test",
 		"GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=Test",
-		"GIT_COMMITTER_EMAIL=Test@test.com")
+		"GIT_COMMITTER_EMAIL=test@test.com")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%s %v: %s", name, args, out)
@@ -491,4 +491,95 @@ func computePatchID(t *testing.T, patch string) string {
 	h := sha1.New()
 	h.Write([]byte(strings.Join(content, "\n")))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// TestRevisionIdentitiesMatch_FileIntersection tests the file-intersection branch
+// of RevisionIdentitiesMatch with a real git repo that has origin/main.
+func TestRevisionIdentitiesMatch_FileIntersection(t *testing.T) {
+	tmpDir := t.TempDir()
+	repoDir := filepath.Join(tmpDir, "repo")
+
+	gitInit := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %s", args, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initialize with main branch explicitly
+	gitInit("init", "--initial-branch=main")
+	gitInit("config", "user.name", "Test")
+	gitInit("config", "user.email", "test@test.com")
+
+	// Create base commit
+	baseFile := filepath.Join(repoDir, "base.txt")
+	if err := os.WriteFile(baseFile, []byte("base\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "base.txt")
+	gitInit("commit", "-m", "base commit")
+
+	// Create origin/main ref (required by RevisionIdentitiesMatch)
+	baseSHA := gitInit("rev-parse", "HEAD")
+	gitInit("update-ref", "refs/remotes/origin/main", baseSHA)
+
+	// Create feature branch touching file A
+	gitInit("checkout", "-b", "feature")
+	fileA := filepath.Join(repoDir, "fileA.txt")
+	if err := os.WriteFile(fileA, []byte("feature change\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "fileA.txt")
+	gitInit("commit", "-m", "add fileA")
+	featureSHA := gitInit("rev-parse", "HEAD")
+
+	// Test case 1: Disjoint files - main touches B, feature touched A
+	gitInit("checkout", "main")
+	fileB := filepath.Join(repoDir, "fileB.txt")
+	if err := os.WriteFile(fileB, []byte("main change\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "fileB.txt")
+	gitInit("commit", "-m", "main adds fileB")
+	gitInit("update-ref", "refs/remotes/origin/main", "HEAD")
+
+	// With disjoint files, different patch IDs should still match
+	mrFiles := []string{"fileA.txt"}
+	matches := RevisionIdentitiesMatch("patchid1", "patchid2", repoDir, featureSHA, "HEAD", mrFiles)
+	if !matches {
+		t.Error("RevisionIdentitiesMatch should return true when patch IDs differ but files are disjoint")
+	}
+
+	// Test case 2: Intersecting files - main now touches A too
+	gitInit("checkout", "main")
+	fileAMain := filepath.Join(repoDir, "fileA.txt")
+	if err := os.WriteFile(fileAMain, []byte("main also touches fileA\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	gitInit("add", "fileA.txt")
+	gitInit("commit", "-m", "main modifies fileA")
+	gitInit("update-ref", "refs/remotes/origin/main", "HEAD")
+
+	// With intersecting files, different patch IDs should NOT match
+	matches2 := RevisionIdentitiesMatch("patchid1", "patchid2", repoDir, featureSHA, "HEAD", mrFiles)
+	if matches2 {
+		t.Error("RevisionIdentitiesMatch should return false when patch IDs differ and files intersect")
+	}
+
+	// Test case 3: Same patch IDs always match, regardless of file intersection
+	matches3 := RevisionIdentitiesMatch("samepatch", "samepatch", repoDir, featureSHA, "HEAD", mrFiles)
+	if !matches3 {
+		t.Error("RevisionIdentitiesMatch should return true when patch IDs are equal")
+	}
 }
