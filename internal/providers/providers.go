@@ -86,6 +86,7 @@ func probe(ctx context.Context, name string, p Provider, signals []string, timeo
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, p.Probe[0], p.Probe[1:]...)
+	cmd.WaitDelay = 2 * time.Second // a killed wrapper's children may hold the output pipes; do not wait for them
 	if home, err := os.UserHomeDir(); err == nil {
 		cmd.Dir = home
 	}

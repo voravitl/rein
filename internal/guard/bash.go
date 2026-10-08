@@ -34,16 +34,38 @@ var wrappers = map[string]bool{"env": true, "sudo": true, "nohup": true, "time":
 	"exec": true, "nice": true, "timeout": true, "gtimeout": true, "stdbuf": true, "caffeinate": true}
 
 type ctx struct {
-	c     *contract.Contract
-	top   string // real worktree root
-	cwd   string
-	deep  int
-	ports *regexp.Regexp
+	c          *contract.Contract
+	top        string // real worktree root
+	cwd        string
+	cwdUnknown bool              // a cd we could not follow: relative writes are no longer judgeable
+	vars       map[string]string // simple VAR=literal assignments seen so far
+	deep       int
+	ports      *regexp.Regexp
 }
+
+// valueOpts lists, per wrapper, the options that consume the next argument.
+var valueOpts = map[string]map[string]bool{
+	"env":      {"-u": true, "--unset": true, "-C": true, "--chdir": true},
+	"sudo":     {"-u": true, "-g": true, "-h": true, "-p": true, "-C": true, "-D": true, "-r": true, "-t": true, "-U": true, "-T": true},
+	"timeout":  {"-s": true, "--signal": true, "-k": true, "--kill-after": true},
+	"gtimeout": {"-s": true, "--signal": true, "-k": true, "--kill-after": true},
+	"nice":     {"-n": true, "--adjustment": true},
+	"time":     {"-f": true, "--format": true, "-o": true, "--output": true},
+	"xargs": {"-I": true, "-n": true, "-P": true, "-L": true, "-s": true, "-d": true, "-E": true, "-a": true,
+		"--max-args": true, "--max-procs": true, "--max-lines": true, "--delimiter": true, "--arg-file": true, "--eof": true},
+}
+
+// textOnly commands only print or search text: a port or script name in their arguments is not an action.
+var textOnly = map[string]bool{"git": true, "echo": true, "printf": true, "grep": true, "egrep": true, "fgrep": true,
+	"rg": true, "ag": true, "ack": true, "cat": true, "head": true, "tail": true, "less": true, "wc": true}
 
 // CheckBash returns a non-empty reason when the command must be denied.
 func CheckBash(cmd string, c *contract.Contract, top, cwd string) string {
-	return (&ctx{c: c, top: top, cwd: cwd, ports: portRx(c.Profile.ProtectPorts)}).script(cmd)
+	x := &ctx{c: c, top: top, cwd: cwd, vars: map[string]string{}, ports: portRx(c.Profile.ProtectPorts)}
+	if h, err := os.UserHomeDir(); err == nil {
+		x.vars["HOME"] = h
+	}
+	return x.script(cmd)
 }
 
 func (x *ctx) script(src string) string {
@@ -65,16 +87,26 @@ func (x *ctx) script(src string) string {
 				switch r.Op {
 				case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.ClbOut, syntax.RdrInOut:
 					if r.Word != nil {
-						if t := word(r.Word); t != "" && !strings.HasPrefix(t, "&") {
+						if t := x.word(r.Word); t != "" && !strings.HasPrefix(t, "&") {
 							reason = x.write(t, false)
 						}
 					}
 				}
 			}
+		case *syntax.DeclClause: // export / declare / local / readonly X=literal
+			for _, a := range n.Args {
+				x.assign(a)
+			}
 		case *syntax.CallExpr:
+			if len(n.Args) == 0 { // plain assignments: p=../x
+				for _, a := range n.Assigns {
+					x.assign(a)
+				}
+				return true
+			}
 			args := make([]string, 0, len(n.Args))
 			for _, w := range n.Args {
-				args = append(args, word(w))
+				args = append(args, x.word(w))
 			}
 			reason = x.call(args)
 		}
@@ -83,8 +115,24 @@ func (x *ctx) script(src string) string {
 	return reason
 }
 
-// word returns the literal value of a shell word; parts that expand at run time become "$?".
-func word(w *syntax.Word) string {
+func (x *ctx) assign(a *syntax.Assign) {
+	if a == nil || a.Name == nil {
+		return
+	}
+	if a.Value == nil || a.Append || a.Array != nil || a.Index != nil {
+		delete(x.vars, a.Name.Value)
+		return
+	}
+	if v := x.word(a.Value); !strings.Contains(v, "$?") {
+		x.vars[a.Name.Value] = v
+	} else {
+		delete(x.vars, a.Name.Value)
+	}
+}
+
+// word returns the literal value of a shell word, resolving $VAR / ${VAR} from earlier literal assignments;
+// anything else that expands at run time becomes "$?".
+func (x *ctx) word(w *syntax.Word) string {
 	var b strings.Builder
 	var walk func(parts []syntax.WordPart)
 	walk = func(parts []syntax.WordPart) {
@@ -96,6 +144,20 @@ func word(w *syntax.Word) string {
 				b.WriteString(p.Value)
 			case *syntax.DblQuoted:
 				walk(p.Parts)
+			case *syntax.ParamExp:
+				v, ok := "", false
+				if p.Param != nil && p.Exp == nil && p.Repl == nil && p.Slice == nil && p.Index == nil && !p.Length && !p.Excl && !p.Width {
+					if p.Param.Value == "PWD" && !x.cwdUnknown {
+						v, ok = x.cwd, true
+					} else {
+						v, ok = x.vars[p.Param.Value]
+					}
+				}
+				if ok {
+					b.WriteString(v)
+				} else {
+					b.WriteString("$?")
+				}
 			default:
 				b.WriteString("$?")
 			}
@@ -125,7 +187,12 @@ func (x *ctx) call(args []string) string {
 		return ""
 	}
 	prof := &x.c.Profile
+	name := base(args[0])
+	rest := args[1:]
 	for _, a := range args {
+		if textOnly[name] {
+			break
+		}
 		if x.ports != nil && x.ports.MatchString(a) {
 			return fmt.Sprintf("protected port in %q (profile %s: the live stack is off limits)", a, prof.Name)
 		}
@@ -135,25 +202,63 @@ func (x *ctx) call(args []string) string {
 			}
 		}
 	}
-	name := base(args[0])
-	rest := args[1:]
 	if r := x.deniedByProfile(name, rest); r != "" {
 		return r
 	}
 	switch {
-	case wrappers[name]:
-		// skip the wrapper's own options and VAR=value pairs, then judge the wrapped command
-		i := 0
-		for i < len(rest) && (strings.HasPrefix(rest[i], "-") || strings.Contains(rest[i], "=") ||
-			((name == "timeout" || name == "gtimeout" || name == "nice") && i == 0 && isNumberish(rest[i]))) {
-			i++
+	case name == "cd" || name == "pushd":
+		t := nonFlags(rest)
+		switch {
+		case len(t) == 0:
+			x.cwd = x.vars["HOME"]
+		case strings.Contains(t[0], "$?") || t[0] == "-":
+			x.cwdUnknown = true
+		default:
+			x.cwd = x.abs(t[0])
 		}
-		return x.call(rest[i:])
-	case name == "xargs":
-		for i, a := range rest {
-			if !strings.HasPrefix(a, "-") {
-				return x.call(rest[i:])
+	case name == "popd":
+		x.cwdUnknown = true
+	case wrappers[name] || name == "xargs":
+		// skip the wrapper's options (and the values they take), VAR=value pairs and a duration, then judge the rest
+		vo := valueOpts[name]
+		i, sawDuration := 0, false
+	opts:
+		for i < len(rest) {
+			a := rest[i]
+			switch {
+			case name == "env" && (a == "-S" || a == "--split-string") && i+1 < len(rest):
+				x.deep++
+				r := x.script(rest[i+1])
+				x.deep--
+				if r != "" {
+					return r
+				}
+				i += 2
+				continue
+			case name == "time" && (a == "-o" || a == "--output") && i+1 < len(rest):
+				if r := x.write(rest[i+1], false); r != "" {
+					return r
+				}
+				i += 2
+				continue
+			case vo[a]:
+				i += 2
+				continue
+			case strings.HasPrefix(a, "-"):
+				i++
+				continue
+			case name == "env" && strings.Contains(a, "="):
+				i++
+				continue
+			case (name == "timeout" || name == "gtimeout") && !sawDuration && isNumberish(a):
+				sawDuration = true
+				i++
+				continue
 			}
+			break opts // first positional: the wrapped command starts here
+		}
+		if i < len(rest) {
+			return x.call(rest[i:])
 		}
 	case name == "bash" || name == "sh" || name == "zsh" || name == "dash" || name == "ksh":
 		for i, a := range rest {
@@ -238,9 +343,9 @@ func (x *ctx) call(args []string) string {
 	return ""
 }
 
-func isNumberish(s string) bool {
-	return regexp.MustCompile(`^\d+(\.\d+)?[smhd]?$`).MatchString(s)
-}
+var numberish = regexp.MustCompile(`^\d+(\.\d+)?[smhd]?$`)
+
+func isNumberish(s string) bool { return numberish.MatchString(s) }
 
 var gitValueOpts = map[string]bool{"-C": true, "-c": true, "--git-dir": true, "--work-tree": true, "--namespace": true,
 	"--exec-path": true, "--config-env": true, "--super-prefix": true}
@@ -282,7 +387,30 @@ func (x *ctx) git(args []string) string {
 		}
 		return false
 	}
+	// options that write a file: --output=F / --output F (diff, log, archive), -o F (archive), -o DIR (format-patch)
+	for j, a := range rest {
+		var target string
+		switch {
+		case strings.HasPrefix(a, "--output="), strings.HasPrefix(a, "--output-directory="):
+			target = a[strings.Index(a, "=")+1:]
+		case (a == "--output" || a == "--output-directory" || (a == "-o" && (sub == "archive" || sub == "format-patch"))) && j+1 < len(rest):
+			target = rest[j+1]
+		}
+		if target != "" {
+			if r := x.write(target, false); r != "" {
+				return r
+			}
+		}
+	}
 	switch sub {
+	case "bundle":
+		if len(rest) > 1 && rest[0] == "create" {
+			return x.write(rest[1], false)
+		}
+	case "clone":
+		if t := nonFlags(rest); len(t) >= 2 {
+			return x.write(t[1], false)
+		}
 	case "push":
 		return "workers never push; the coordinator pushes after the gates"
 	case "rebase":
@@ -307,8 +435,8 @@ func (x *ctx) git(args []string) string {
 			return "discarding the working tree (checkout/restore .) loses work"
 		}
 	case "worktree":
-		if len(rest) > 0 && (rest[0] == "remove" || rest[0] == "prune") {
-			return "worktree removal is the steward's job"
+		if len(rest) > 0 && (rest[0] == "remove" || rest[0] == "prune" || rest[0] == "add" || rest[0] == "move") {
+			return "worktree management is the steward's job"
 		}
 	case "filter-branch", "filter-repo", "update-ref", "replace":
 		return "history rewriting is not a worker's job"
@@ -401,11 +529,25 @@ func tempDirs() []string {
 // write judges one write target. Deletions only need to stay inside the worktree and off the never-edit list;
 // writes to an EXISTING file must also be inside the ownership (new scratch files are left to the drift check).
 func (x *ctx) write(target string, deletion bool) string {
-	if target == "" || strings.Contains(target, "$?") || target == "/dev/null" || strings.HasPrefix(target, "/dev/fd/") ||
+	if target == "" || target == "/dev/null" || strings.HasPrefix(target, "/dev/fd/") ||
 		target == "/dev/stdout" || target == "/dev/stderr" {
 		return ""
 	}
+	if strings.Contains(target, "$?") {
+		return fmt.Sprintf("write target %q expands at run time and cannot be checked; use a literal path", target)
+	}
+	if x.cwdUnknown && !filepath.IsAbs(target) && !strings.HasPrefix(target, "~/") {
+		return fmt.Sprintf("relative write %q after a cd the guard could not follow; use an absolute path or cd to a literal path", target)
+	}
 	p := x.abs(target)
+	if p == x.top || inside(x.top, p) {
+		return fmt.Sprintf("%s is the worktree itself (or contains it)", target)
+	}
+	if inside(p, x.top) {
+		if rel := filepath.ToSlash(mustRel(x.top, p)); rel == ".git" || strings.HasPrefix(rel, ".git/") {
+			return "the worktree's .git is off limits"
+		}
+	}
 	if !inside(p, x.top) {
 		return outsideWrite(p, target, x.c, x.top)
 	}

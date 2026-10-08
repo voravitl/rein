@@ -68,3 +68,19 @@ func mustRead(t *testing.T, p string) []byte {
 	}
 	return b
 }
+
+func TestSuggestPrefersApprovedWork(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PIPELINE_LEDGER", filepath.Join(dir, "l.jsonl"))
+	t.Setenv("PIPELINE_PRICES", filepath.Join(dir, "none.json"))
+	for i := 0; i < 3; i++ {
+		_ = Append(Row{Kind: "task", Task: "r", Type: "frontend", Worker: &AgentModel{"opencode2", "cheap"}, ReviewRounds: ip(1), Approved: false})
+		_ = Append(Row{Kind: "task", Task: "a", Type: "frontend", Worker: &AgentModel{"claude", "sonnet"}, ReviewRounds: ip(2), Approved: true})
+	}
+	rows, _ := Load("")
+	var b bytes.Buffer
+	Suggest(&b, rows, 3)
+	if strings.Contains(b.String(), "routing frontend to opencode2:cheap") {
+		t.Errorf("rejected one-round work must not win:\n%s", b.String())
+	}
+}

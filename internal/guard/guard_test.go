@@ -213,3 +213,52 @@ func TestGenericRulesWithoutProfile(t *testing.T) {
 		}
 	}
 }
+
+// Cases from the 2026-10-08 review of the Go port.
+func TestReviewR1Cases(t *testing.T) {
+	wt, c := setup(t)
+	other := filepath.Join(filepath.Dir(wt), "other")
+	deny := []string{
+		`p=../other/report.md; echo overwritten > "$p"`, // 1: expanded write target
+		`echo x > "$(pwd)/../other/f"`,                  // 1: command substitution in target
+		`cd ../other; echo x > src/new.txt`,             // 2: cd changes what a relative path means
+		`cd "$SOMEWHERE" && echo x > a.txt`,             // 2: unresolved cd
+		`env -u FOO git push`,                           // 3: env option with a value
+		`xargs -I {} git push`,                          // 3: xargs option with a value
+		`timeout -s KILL 30 git push`,                   // 3: timeout signal + duration
+		`env -S "git push"`,                             // 3: split-string is a script
+		`rm .git`,                                       // 4: the worktree's .git file
+		`rm -rf .`,                                      // 4: the worktree itself
+		`rm -rf ` + filepath.Dir(wt),                    // 4: an ancestor of the worktree
+		`git diff --output=../other/report.md`,          // 5: git writes a file
+		`git format-patch -o ` + other + ` HEAD~1`,      // 5
+		`git worktree add ../x`,                         // worktree management
+		`p=` + c.ReportPath + `x; echo x > "$p"`,        // literal var resolves to a protected run-dir path
+	}
+	for _, cmd := range deny {
+		if out := bashCase(t, wt, cmd); !strings.Contains(out, `"deny"`) {
+			t.Errorf("expected DENY for %q, got %q", cmd, out)
+		}
+	}
+	allow := []string{
+		`git commit -m "doc: the API listens on localhost:8080"`, // 8: text mentioning a protected port
+		`echo "see localhost:5432 in the docs"`,
+		`grep -rn localhost:8080 docs`,
+		`p=backend/Routing/A.cs; sed -i 's/a/b/' "$p"`, // literal var resolving inside the ownership
+		`cd backend && echo x > Routing/new.txt`,       // cd to a literal path we can follow
+		`echo ok > ` + c.ReportPath,                    // own report, absolute
+		`xargs -n 1 echo`,
+	}
+	for _, cmd := range allow {
+		if out := bashCase(t, wt, cmd); out != "" {
+			t.Errorf("expected allow for %q, got %q", cmd, out)
+		}
+	}
+}
+
+func TestHookNeverPanicsOnHostileInput(t *testing.T) {
+	wt, _ := setup(t)
+	for _, cmd := range []string{strings.Repeat("$(", 2000), strings.Repeat("a", 1<<20), "bash -c 'bash -c \"bash -c \\\"bash -c ls\\\"\"'", "\x00\xff"} {
+		_ = bashCase(t, wt, cmd) // must return, not panic or hang
+	}
+}

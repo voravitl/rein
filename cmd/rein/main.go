@@ -10,9 +10,9 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -198,6 +198,9 @@ func (o optFloat) Set(s string) error {
 	var v float64
 	if _, err := fmt.Sscan(s, &v); err != nil {
 		return err
+	}
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return fmt.Errorf("%q is not a finite non-negative number", s)
 	}
 	*o.p = &v
 	return nil
@@ -410,5 +413,3 @@ func cmdProviders(args []string) int {
 	}
 	return 0
 }
-
-var _ = errors.New

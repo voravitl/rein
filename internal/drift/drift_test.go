@@ -138,3 +138,43 @@ func TestDriftCannotJudge(t *testing.T) {
 		t.Error("a non-repo must be an error, never clean")
 	}
 }
+
+func TestSecretsEveryMatchAndExpressions(t *testing.T) {
+	cases := map[string]bool{
+		`{"password":"${DB_PASSWORD}","api_key":"abcdefghijklmno"}`: true,  // 6: placeholder must not hide the second
+		`const password = process.env.DB_PASSWORD;`:                 false, // 8: an expression, not a literal
+		`password = os.environ["DB_PASSWORD"]`:                      false,
+		`DB_PASSWORD=s3cr3tvalue99`:                                 true,  // env file
+		`password: hunter2hunter2`:                                  true,  // YAML
+		`"password": "<sc>"`:                                        false, // pipeline placeholder
+		`token := ghp_abcdefghijklmnopqrstuvwxyz0123456789`:         true,
+	}
+	for line, want := range cases {
+		if got := hasSecret(line); got != want {
+			t.Errorf("hasSecret(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+func TestNonASCIIPathsAreJudgedAsWritten(t *testing.T) {
+	wt, c := repo(t, "thai")
+	c.Allow = []string{"**"}
+	c.Deny = append(c.Deny, "private/**")
+	write(t, filepath.Join(wt, "private/ไทย.md"), "x\n") // 7: git would quote this name without -z
+	sh(t, wt, "git", "add", "-A")
+	sh(t, wt, "git", "commit", "-qm", "docs #169")
+	write(t, c.ReportPath, "## S1 done\nx\n## S2 done\ny\n")
+	r, err := Check(c, wt, "origin/main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, f := range r.Drift {
+		if f.Kind == "DENIED_PATH" && f.Detail == "private/ไทย.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("non-ASCII denied path not caught: %+v", r.Drift)
+	}
+}

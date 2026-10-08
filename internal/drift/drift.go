@@ -41,9 +41,14 @@ var (
 	fake = regexp.MustCompile(`(TODO|FIXME|\.skip\(|\.only\(|\[Fact\(Skip|\[Ignore|throw new NotImplementedException|it\.todo|xit\(|xdescribe\()`)
 	// Secrets: known token shapes, private keys, and credential-named keys with a literal value in code,
 	// JSON (`"password": "x"`), YAML (`password: x`) or env files (`PASSWORD=x`).
-	secret = regexp.MustCompile(`(AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|glpat-[0-9A-Za-z_-]{20}|ghp_[0-9A-Za-z]{36}|sk-[0-9A-Za-z]{32,}|` +
-		`(?i)["']?\b[a-z0-9_]*(password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)\b["']?\s*[:=]\s*["']?[^"'\s,;}{]{8,})`)
+	// token shapes that are secrets wherever they appear
+	secretToken = regexp.MustCompile(`AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|glpat-[0-9A-Za-z_-]{20}|ghp_[0-9A-Za-z]{36}|sk-[0-9A-Za-z]{32,}`)
+	// credential-named key with a QUOTED literal value: "password": "x", api_key = 'x', password: "x"
+	secretQuoted = regexp.MustCompile(`(?i)\b[a-z0-9_]*(password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)\b["']?\s*[:=]\s*["']([^"'\n]{8,})["']`)
+	// env/YAML line form with an unquoted value: PASSWORD=x / password: x (whole line)
+	secretLine  = regexp.MustCompile(`(?i)^\s*[a-z0-9_]*(password|passwd|secret|api[_-]?key|access[_-]?token|client[_-]?secret)[a-z0-9_]*\s*[:=]\s*([^\s"'#]{8,})\s*$`)
 	placeholder = regexp.MustCompile(`(?i)(\$\{|\{\{|<[a-z_]+>|changeme|example|placeholder|xxx+|\*\*\*|<sc>|redacted|dummy|test[_-]?pass)`)
+	expression  = regexp.MustCompile(`(?i)(\(|process\.env|os\.environ|getenv|environment\.|config\.|settings\.|\$[a-z_{])`)
 	statusWords = regexp.MustCompile(`(?i)\b(done|partly|partial|not done|skipped|blocked)\b`)
 	incomplete  = regexp.MustCompile(`(?i)\b(partly|partial|not done|skipped|blocked)\b`)
 )
@@ -85,17 +90,17 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 	r.Commits = len(commits)
 	// --no-renames: a rename shows as a delete of the source plus an add of the destination, so moving an
 	// out-of-scope file into an allowed directory still shows the out-of-scope path.
-	names, err := git(wt, "diff", "--no-renames", "--name-only", base+"...HEAD")
+	names, err := git(wt, "diff", "--no-renames", "--name-only", "-z", base+"...HEAD")
 	if err != nil {
 		return nil, err
 	}
-	files := lines(names)
+	files := nulSplit(names) // -z: no C-style quoting, so non-ASCII names match the globs as written
 	r.Files = len(files)
-	status, err := git(wt, "status", "--porcelain", "--untracked-files=all")
+	status, err := git(wt, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return nil, err
 	}
-	patch, err := git(wt, "diff", "--no-renames", "-U0", base+"...HEAD")
+	patch, err := git(wt, "-c", "core.quotePath=false", "diff", "--no-renames", "-U0", base+"...HEAD")
 	if err != nil {
 		return nil, err
 	}
@@ -120,8 +125,11 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 	}
 
 	var dirty []string
-	for _, l := range lines(status) {
-		p := strings.TrimSuffix(strings.TrimSpace(l[3:]), "/")
+	for _, l := range nulSplit(status) {
+		if len(l) < 4 {
+			continue
+		}
+		p := strings.TrimSuffix(l[3:], "/")
 		arts := c.Profile.LocalArtifacts
 		if strings.HasPrefix(l, "?? ") && glob.Match(p, append(arts, withChildren(arts)...)) {
 			continue
@@ -154,7 +162,7 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 		if fake.MatchString(line) {
 			d("FAKE_COMPLETION", "%s: %s", cur, trunc(strings.TrimSpace(line), 100))
 		}
-		if m := secret.FindString(line); m != "" && !placeholder.MatchString(m) {
+		if hasSecret(line) {
 			d("SECRET", "%s: <redacted line>", cur)
 		}
 	}
@@ -208,6 +216,24 @@ func Check(c *contract.Contract, wt, base string, claimed []string) (*Result, er
 	return r, nil
 }
 
+// hasSecret checks every candidate on the line independently, so a placeholder cannot hide a later literal.
+func hasSecret(line string) bool {
+	if secretToken.MatchString(line) {
+		return true
+	}
+	for _, m := range secretQuoted.FindAllStringSubmatch(line, -1) {
+		if v := m[2]; !placeholder.MatchString(v) && !expression.MatchString(v) {
+			return true
+		}
+	}
+	if m := secretLine.FindStringSubmatch(line); m != nil {
+		if v := m[2]; !placeholder.MatchString(v) && !expression.MatchString(v) {
+			return true
+		}
+	}
+	return false
+}
+
 // checkScope needs one markdown heading per scope id, and a status word on the heading or in its section.
 func checkScope(report string, ids []string, d, w func(string, string, ...any)) {
 	ls := strings.Split(report, "\n")
@@ -250,6 +276,16 @@ func relTo(base, p string) (string, error) {
 		return "", fmt.Errorf("outside")
 	}
 	return filepath.ToSlash(r), nil
+}
+
+func nulSplit(s string) []string {
+	var out []string
+	for _, x := range strings.Split(s, "\x00") {
+		if x != "" {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func first(s []string, n int) []string {

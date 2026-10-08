@@ -13,7 +13,7 @@ import (
 
 // AlwaysDeny is added to every contract: generic files no worker should edit. Project-specific ones come from
 // the profile's deny_paths.
-var AlwaysDeny = []string{"**/node_modules/**", "**/.git/**"}
+var AlwaysDeny = []string{"**/node_modules/**", ".git", "**/.git/**"}
 
 // Profile holds a project's own rules (its live stack, owner-only scripts, local artifacts). It is copied into
 // each contract at creation, so the hook reads one file. Keep real profiles out of public repos.

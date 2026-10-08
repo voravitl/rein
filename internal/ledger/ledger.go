@@ -100,6 +100,10 @@ func contains(s []string, v string) bool {
 
 func Append(r Row) error {
 	r.RecordedAt = time.Now().Format(time.RFC3339)
+	b, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("not recorded: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(Path()), 0o755); err != nil {
 		return err
 	}
@@ -108,7 +112,6 @@ func Append(r Row) error {
 		return err
 	}
 	defer f.Close()
-	b, _ := json.Marshal(r)
 	_, err = f.Write(append(b, '\n'))
 	return err
 }
@@ -174,6 +177,8 @@ func costOf(prices map[string]price, model string, tokens *int) *float64 {
 }
 
 type Summary struct {
+	Approved                                    int      // tasks that reached APPROVE
+	AvgRoundsApproved                           *float64 // rounds-to-approve over approved tasks only
 	Type, Worker                                string
 	N                                           int
 	ApproveRate                                 float64
@@ -210,7 +215,7 @@ func Summarize(rows []Row) []Summary {
 	var out []Summary
 	for k, rs := range groups {
 		s := Summary{Type: k[0], Worker: k[1], N: len(rs)}
-		var rounds, gates, bh, drift, mins []float64
+		var rounds, roundsOK, gates, bh, drift, mins []float64
 		approved := 0
 		var cost float64
 		haveCost := false
@@ -220,6 +225,9 @@ func Summarize(rows []Row) []Summary {
 			}
 			if r.ReviewRounds != nil {
 				rounds = append(rounds, float64(*r.ReviewRounds))
+				if r.Approved {
+					roundsOK = append(roundsOK, float64(*r.ReviewRounds))
+				}
 			}
 			if r.FirstGatePass != nil {
 				g := 0.0
@@ -272,6 +280,7 @@ func Summarize(rows []Row) []Summary {
 			}
 		}
 		s.ApproveRate = float64(approved) / float64(len(rs))
+		s.Approved, s.AvgRoundsApproved = approved, mean(roundsOK)
 		s.AvgRounds, s.FirstGate, s.BlkHigh, s.DriftPerTask, s.AvgMinutes = mean(rounds), mean(gates), mean(bh), mean(drift), mean(mins)
 		if haveCost {
 			s.CostUSD = &cost
@@ -399,10 +408,11 @@ func Suggest(w io.Writer, rows []Row, minN int) {
 		var cands []Summary
 		var thin []string
 		for _, s := range byType[t] {
-			if s.N >= minN && s.AvgRounds != nil {
+			// compare only observed completions: n approved tasks, rounds measured on them
+			if s.Approved >= minN && s.AvgRoundsApproved != nil {
 				cands = append(cands, s)
 			} else {
-				thin = append(thin, fmt.Sprintf("%s (n=%d)", s.Worker, s.N))
+				thin = append(thin, fmt.Sprintf("%s (approved %d of %d)", s.Worker, s.Approved, s.N))
 			}
 		}
 		if len(cands) < 2 {
@@ -415,15 +425,20 @@ func Suggest(w io.Writer, rows []Row, minN int) {
 			}
 			continue
 		}
+		// approval rate first (a rejected task is the worst outcome), then rounds-to-approve, then blockers+highs
 		sort.Slice(cands, func(i, j int) bool {
-			if *cands[i].AvgRounds != *cands[j].AvgRounds {
-				return *cands[i].AvgRounds < *cands[j].AvgRounds
+			if cands[i].ApproveRate != cands[j].ApproveRate {
+				return cands[i].ApproveRate > cands[j].ApproveRate
+			}
+			if *cands[i].AvgRoundsApproved != *cands[j].AvgRoundsApproved {
+				return *cands[i].AvgRoundsApproved < *cands[j].AvgRoundsApproved
 			}
 			return f(cands[i].BlkHigh) < f(cands[j].BlkHigh)
 		})
 		b, z := cands[0], cands[len(cands)-1]
-		fmt.Fprintf(w, "- %s: %s needs %.1f rounds vs %s %.1f (blk+high %s vs %s) -> consider routing %s to %s\n",
-			t, b.Worker, *b.AvgRounds, z.Worker, *z.AvgRounds, f1(b.BlkHigh, false), f1(z.BlkHigh, false), t, b.Worker)
+		fmt.Fprintf(w, "- %s: %s approves %.0f%% in %.1f rounds vs %s %.0f%% in %.1f (blk+high %s vs %s) -> consider routing %s to %s\n",
+			t, b.Worker, b.ApproveRate*100, *b.AvgRoundsApproved, z.Worker, z.ApproveRate*100, *z.AvgRoundsApproved,
+			f1(b.BlkHigh, false), f1(z.BlkHigh, false), t, b.Worker)
 	}
 	fmt.Fprintln(w, "\nCost is compared only when prices or cost_usd are recorded; fewer review rounds already means fewer strong-model reviews.")
 }
