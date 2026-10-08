@@ -93,6 +93,11 @@ func cmdRun(args []string) int {
 		}
 		fmt.Printf("[run] %s started in %s at %.12s; owner session %s, pid %d\n[run] the coordinator guard is active from the next tool call: writes only to %s\n",
 			m.Run, m.Root, m.StartSHA, m.SessionID, m.PID, strings.Join(m.CoordinatorWritable, ", "))
+	case "tick":
+		if err := run.Tick(repo); err != nil {
+			return fail(err)
+		}
+		// Silent success (single-flight under flock, may skip if another is running)
 	case "resume":
 		sid, p := *session, *pid
 		if sid == "" {

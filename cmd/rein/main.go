@@ -20,12 +20,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/voravitl/rein/internal/budget"
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/drift"
 	"github.com/voravitl/rein/internal/guard"
 	"github.com/voravitl/rein/internal/hooks"
 	"github.com/voravitl/rein/internal/ledger"
 	"github.com/voravitl/rein/internal/providers"
+	"github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/sandbox"
 )
 
@@ -47,6 +49,10 @@ func main() {
 		os.Exit(cmdDrift(os.Args[2:]))
 	case "run":
 		os.Exit(cmdRun(os.Args[2:]))
+	case "budget":
+		os.Exit(cmdBudget(os.Args[2:]))
+	case "task":
+		os.Exit(cmdTask(os.Args[2:]))
 	case "ledger":
 		os.Exit(cmdLedger(os.Args[2:]))
 	case "providers":
@@ -62,7 +68,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|run|ledger|providers|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|run|budget|task|ledger|providers|version> [args]
   rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
   rein hooks install <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
@@ -72,6 +78,10 @@ func usage() {
   rein run end [repo] [--pinned sha,..] | rein run audit [repo] [--pinned sha,..] [--json]   (exit 1 = COORDINATOR_DRIFT)
   rein run resume [repo] [--session S --pid N]
   rein run allow [repo] (--task T | --commit SHA) --reason R | rein run end [repo] --abandon --reason R    (user-only: refused inside Claude Code)
+  rein run tick [repo]    single-flight periodic health check (waiter-driven, flock)
+  rein budget check [--task T] [--run R]    exits 0 (ok), 1 (soft limit), 2 (hard cap or round cap)
+  rein budget raise [--pool P] [--amount N] --reason R    user-only: refused inside Claude Code
+  rein task status <task>    reports HEALTHY / BUSY / SLOW / STUCK / THRASHING / DEAD / UNKNOWN
   rein ledger add --task T --type backend --worker codex:gpt-6.1-sol --rounds 3 [--approved] ...
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
   rein ledger report [--type T] [--since ISO] | suggest [--min-n 3]
@@ -522,5 +532,191 @@ func cmdSandbox(args []string) int {
 	if note != "" {
 		fmt.Println("[sandbox] " + note)
 	}
+	return 0
+}
+
+func cmdBudget(args []string) int {
+	if len(args) == 0 {
+		usage()
+		return 2
+	}
+
+	switch args[0] {
+	case "check":
+		return cmdBudgetCheck(args[1:])
+	case "raise":
+		return cmdBudgetRaise(args[1:])
+	default:
+		usage()
+		return 2
+	}
+}
+
+func cmdBudgetCheck(args []string) int {
+	fs := flag.NewFlagSet("budget check", flag.ExitOnError)
+	task := fs.String("task", "", "task name")
+	_ = fs.String("run", "", "run name") // reserved for future use
+	fs.Parse(args)
+
+	// Get current directory or repo
+	repo, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[budget check]", err)
+		return 2
+	}
+
+	// Locate run marker
+	loc, err := run.Locate(repo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[budget check]", err)
+		return 2
+	}
+
+	markerPath := run.MarkerPath(loc.Common)
+
+	// Load marker to get profile
+	_, err = run.Load(markerPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[budget check]", err)
+		return 2
+	}
+
+	// Load profile (need to figure out where it's stored in the marker)
+	// For now, use a simple profile lookup
+	prof := &contract.Profile{} // TODO: load actual profile from marker or contract
+
+	// Check budget
+	result, err := budget.Check(markerPath, prof, *task)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[budget check]", err)
+		return 2
+	}
+
+	// Print result
+	fmt.Printf("[budget check] %s\n", result.Message)
+	fmt.Printf("  Code: %d\n", result.Code)
+	if len(result.Spend) > 0 {
+		fmt.Println("  Spend:")
+		for pool, spent := range result.Spend {
+			cap := result.Caps[pool]
+			approx := ""
+			if result.Approx[pool] {
+				approx = " (approx)"
+			}
+			fmt.Printf("    %s: %.0f / %.0f%s\n", pool, spent, cap, approx)
+		}
+	}
+	if result.ReviewRounds > 0 {
+		fmt.Printf("  Review rounds: %d / %d\n", result.ReviewRounds, result.MaxReviewRounds)
+	}
+	fmt.Printf("  Time since start: %v\n", result.TimeSinceStart)
+
+	return result.Code
+}
+
+func cmdBudgetRaise(args []string) int {
+	// User-only command: refuse inside Claude Code
+	if run.UnderClaude() {
+		fmt.Fprintln(os.Stderr, "[budget raise] this command must be run by the user in their own terminal, not by Claude Code")
+		return 2
+	}
+
+	fs := flag.NewFlagSet("budget raise", flag.ExitOnError)
+	pool := fs.String("pool", "", "pool name (claude_tokens, codex_tokens, credits, usd)")
+	amount := fs.Float64("amount", 0, "amount to raise")
+	reason := fs.String("reason", "", "reason for raise (required)")
+	fs.Parse(args)
+
+	if *pool == "" || *amount == 0 || *reason == "" {
+		usage()
+		return 2
+	}
+
+	// Get current directory
+	repo, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[budget raise]", err)
+		return 2
+	}
+
+	// Locate run marker
+	loc, err := run.Locate(repo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[budget raise]", err)
+		return 2
+	}
+
+	markerPath := run.MarkerPath(loc.Common)
+
+	// Raise budget
+	if err := budget.Raise(markerPath, *pool, *amount, *reason); err != nil {
+		fmt.Fprintln(os.Stderr, "[budget raise]", err)
+		return 2
+	}
+
+	fmt.Printf("[budget raise] %s cap increased by %.0f (reason: %s)\n", *pool, *amount, *reason)
+	return 0
+}
+
+func cmdTask(args []string) int {
+	if len(args) == 0 {
+		usage()
+		return 2
+	}
+
+	switch args[0] {
+	case "status":
+		return cmdTaskStatus(args[1:])
+	default:
+		usage()
+		return 2
+	}
+}
+
+func cmdTaskStatus(args []string) int {
+	if len(args) != 1 {
+		usage()
+		return 2
+	}
+
+	taskName := args[0]
+
+	// Get current directory
+	repo, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[task status]", err)
+		return 2
+	}
+
+	// Locate repo
+	loc, err := run.Locate(repo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[task status]", err)
+		return 2
+	}
+
+	// Get task status
+	result, err := run.GetTaskStatus(loc.Common, taskName)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[task status]", err)
+		return 2
+	}
+
+	// Print result
+	fmt.Printf("[task status] %s: %s\n", result.Task, result.Status)
+	fmt.Printf("  Message: %s\n", result.Message)
+	if result.LastSeenAt != nil {
+		fmt.Printf("  Last seen: %v ago\n", time.Since(*result.LastSeenAt))
+	}
+	if result.LastCommitAt != nil {
+		fmt.Printf("  Last commit: %v ago\n", time.Since(*result.LastCommitAt))
+	}
+	if result.CPUPercent > 0 {
+		fmt.Printf("  CPU: %.1f%%\n", result.CPUPercent)
+	}
+	if result.Denials > 0 {
+		fmt.Printf("  Denials: %d\n", result.Denials)
+	}
+
 	return 0
 }

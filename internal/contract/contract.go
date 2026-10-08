@@ -15,6 +15,31 @@ import (
 // the profile's deny_paths.
 var AlwaysDeny = []string{"**/node_modules/**", ".git", "**/.git/**"}
 
+// PoolCaps holds task and run caps for a single pool (claude_tokens, codex_tokens, credits, usd).
+type PoolCaps struct {
+	TaskCap float64 `json:"task_cap,omitempty"`
+	RunCap  float64 `json:"run_cap,omitempty"`
+}
+
+// Budget is the profile's budget section (ADR 0002 B1).
+type Budget struct {
+	// Pools: per-pool task and run caps.
+	Pools map[string]PoolCaps `json:"pools,omitempty"`
+	// MaxReviewRounds: ceiling on review loops (default 2).
+	MaxReviewRounds int `json:"max_review_rounds,omitempty"`
+	// TimeboxMinutes: task timebox.
+	TimeboxMinutes int `json:"timebox_minutes,omitempty"`
+	// SoftRatio: spend < soft_ratio * cap is ExitOK (default 0.7).
+	SoftRatio float64 `json:"soft_ratio,omitempty"`
+	// QualityFloor: approval rate, max false claims.
+	QualityFloor struct {
+		MinApprovalRate float64 `json:"min_approval_rate,omitempty"`
+		MaxFalseClaims  int     `json:"max_false_claims,omitempty"`
+	} `json:"quality_floor,omitempty"`
+	// Estimates: cost estimates for unknown spend (all flagged approx).
+	Estimates map[string]float64 `json:"estimates,omitempty"`
+}
+
 // Profile holds a project's own rules (its live stack, owner-only scripts, local artifacts). It is copied into
 // each contract at creation, so the hook reads one file. Keep real profiles out of public repos.
 type Profile struct {
@@ -37,6 +62,8 @@ type Profile struct {
 	CoordinatorWritable []string `json:"coordinator_writable,omitempty"` // globs (repo-relative) the coordinator may write
 	CoordinatorTools    []string `json:"coordinator_tools,omitempty"`    // tool names (globs) allowed besides Bash/write tools/Agent; MCP tools are denied unless listed
 	ReadonlyAgents      []string `json:"readonly_agents,omitempty"`      // Agent subagent types the coordinator may start without `rein run allow`
+	// Budget: cost and quality caps (ADR 0002 B1).
+	Budget *Budget `json:"budget,omitempty"`
 	// Project pack: a local directory with the project's gates, safety notes and rule addenda (PACK.md). rein itself
 	// does not read it; the worktree-pipeline skill does.
 	Pack string `json:"pack,omitempty"`
