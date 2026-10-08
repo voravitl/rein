@@ -15,7 +15,8 @@ import (
 // vendor's hook runner would see: stdout, stderr, exit code.
 func call(t *testing.T, vendor, fixture, wt string) (string, string, int) {
 	t.Helper()
-	in := strings.ReplaceAll(fixture, "@WT@", wt)
+	// @WT@ sits inside JSON strings: insert it JSON-escaped (Windows paths carry backslashes).
+	in := strings.ReplaceAll(fixture, "@WT@", strings.Trim(jstr(wt), `"`))
 	var out, errb bytes.Buffer
 	code := RunVendor(vendor, strings.NewReader(in), &out, &errb)
 	return out.String(), errb.String(), code
