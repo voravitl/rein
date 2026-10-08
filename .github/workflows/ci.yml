@@ -1,0 +1,32 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: gofmt
+        if: runner.os != 'Windows'
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test ./...
+      - name: build and smoke-test the hook
+        shell: bash
+        run: |
+          go build -o bin/rein$([ "$RUNNER_OS" = Windows ] && echo .exe) ./cmd/rein
+          bin/rein version
+          # outside a worker the hook must stay silent and exit 0
+          out=$(echo '{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":".","tool_input":{"command":"git push"}}' | bin/rein hook)
+          test -z "$out"
