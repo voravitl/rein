@@ -17,6 +17,14 @@ type Action struct {
 	Anchor     string   // directory that identifies the worker's worktree; "" means Cwd
 	StopActive bool     // this stop already continued once (let it end)
 	DenyCoord  bool     // PreToolUse(Agent) starting the pipeline coordinator as a Claude subagent: denied in every session, contract or not
+
+	// Claude Code fields the coordinator guard (coordinator.go) reads; empty for the other vendors.
+	Hook      string // hook_event_name as sent: PreToolUse | Stop | SessionStart | SubagentStart | ...
+	SessionID string
+	AgentID   string // set on tool calls made by a subagent
+	Source    string // SessionStart: startup | resume | clear | compact
+	SubType   string // Agent tool: the subagent type
+	Prompt    string // Agent tool: the prompt
 }
 
 // Vendors are the values accepted by `rein hook --vendor`.
@@ -98,11 +106,15 @@ func parseClaude(raw []byte, codex bool) (Action, bool) {
 		Cwd            string          `json:"cwd"`
 		ToolInput      json.RawMessage `json:"tool_input"`
 		StopHookActive bool            `json:"stop_hook_active"`
+		SessionID      string          `json:"session_id"`
+		AgentID        string          `json:"agent_id"`
+		Source         string          `json:"source"`
 	}
 	if json.Unmarshal(raw, &ev) != nil {
 		return Action{}, false
 	}
-	a := Action{Tool: ev.ToolName, Cwd: ev.Cwd, StopActive: ev.StopHookActive, Kind: "other"}
+	a := Action{Tool: ev.ToolName, Cwd: ev.Cwd, StopActive: ev.StopHookActive, Kind: "other",
+		Hook: ev.HookEventName, SessionID: ev.SessionID, AgentID: ev.AgentID, Source: ev.Source}
 	switch ev.HookEventName {
 	case "Stop":
 		a.Event = "stop"
@@ -115,6 +127,9 @@ func parseClaude(raw []byte, codex bool) (Action, bool) {
 	in := object(ev.ToolInput)
 	if codex {
 		withWorkdir(&a, in)
+	}
+	if ev.ToolName == "Agent" || ev.ToolName == "Task" {
+		a.SubType, a.Prompt = str(in, "subagent_type", "agent_type"), str(in, "prompt")
 	}
 	// A PreToolUse(Agent) that starts the pipeline coordinator (or its steward) as a Claude subagent bypasses Orca
 	// orchestration entirely, so it is denied before any contract lookup, in every session (ADR 0002 B0).

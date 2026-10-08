@@ -46,6 +46,7 @@ type ctx struct {
 	stdin      stdinKind             // where the statement being checked reads stdin from
 	hdoc       string                // the heredoc body, when stdin == stdinHeredoc
 	pipeRHS    map[*syntax.Stmt]bool // statements that read a pipe
+	coord      *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
 }
 
 type stdinKind int
@@ -128,9 +129,19 @@ func (x *ctx) script(src string) string {
 			}
 		case *syntax.DeclClause: // export / declare / local / readonly X=literal
 			for _, a := range n.Args {
+				if r := x.coordAssign(a); r != "" {
+					reason = r
+					return false
+				}
 				x.assign(a)
 			}
 		case *syntax.CallExpr:
+			for _, a := range n.Assigns {
+				if r := x.coordAssign(a); r != "" {
+					reason = r
+					return false
+				}
+			}
 			if len(n.Args) == 0 { // plain assignments: p=../x
 				for _, a := range n.Assigns {
 					x.assign(a)
@@ -235,21 +246,27 @@ func (x *ctx) call(args []string) string {
 	prof := &x.c.Profile
 	name := base(args[0])
 	rest := args[1:]
-	for _, a := range args {
-		if textOnly[name] {
-			break
+	if x.coord != nil { // the coordinator pushes, merges and drives gh/glab: only its own rules apply
+		if r := x.coordCall(args[0], name, rest); r != "" {
+			return r
 		}
-		if x.ports != nil && x.ports.MatchString(a) {
-			return fmt.Sprintf("protected port in %q (profile %s: the live stack is off limits)", a, prof.Name)
-		}
-		for _, s := range prof.OwnerScripts {
-			if strings.HasSuffix(filepath.ToSlash(a), s) {
-				return fmt.Sprintf("%s belongs to the owner (profile %s)", s, prof.Name)
+	} else {
+		for _, a := range args {
+			if textOnly[name] {
+				break
+			}
+			if x.ports != nil && x.ports.MatchString(a) {
+				return fmt.Sprintf("protected port in %q (profile %s: the live stack is off limits)", a, prof.Name)
+			}
+			for _, s := range prof.OwnerScripts {
+				if strings.HasSuffix(filepath.ToSlash(a), s) {
+					return fmt.Sprintf("%s belongs to the owner (profile %s)", s, prof.Name)
+				}
 			}
 		}
-	}
-	if r := x.deniedByProfile(name, rest); r != "" {
-		return r
+		if r := x.deniedByProfile(name, rest); r != "" {
+			return r
+		}
 	}
 	switch {
 	case name == "cd" || name == "pushd":
@@ -294,6 +311,9 @@ func (x *ctx) call(args []string) string {
 				i++
 				continue
 			case name == "env" && strings.Contains(a, "="):
+				if r := x.coordEnvPair(a); r != "" {
+					return r
+				}
 				i++
 				continue
 			case (name == "timeout" || name == "gtimeout") && !sawDuration && isNumberish(a):
@@ -316,11 +336,11 @@ func (x *ctx) call(args []string) string {
 		return x.script(strings.Join(rest, " "))
 	case name == "git":
 		return x.git(rest)
-	case name == "glab" || name == "gh":
+	case (name == "glab" || name == "gh") && x.coord == nil:
 		return "no GitLab/GitHub actions from a worker (no MR, comment or API call)"
-	case name == "docker" || name == "podman":
+	case (name == "docker" || name == "podman") && x.coord == nil:
 		return x.docker(rest)
-	case name == "npm" || name == "pnpm" || name == "yarn" || name == "bun":
+	case (name == "npm" || name == "pnpm" || name == "yarn" || name == "bun") && x.coord == nil:
 		if len(rest) > 0 {
 			switch rest[0] {
 			case "install", "i", "add", "ci", "update", "upgrade", "remove", "uninstall":
@@ -397,18 +417,21 @@ var gitReadOnly = map[string]bool{"log": true, "show": true, "diff": true, "stat
 
 func (x *ctx) git(args []string) string {
 	repo := ""
+	redirect := false // --git-dir / --work-tree: git is pointed away from the directory the guard looks at
 	i := 0
 	for i < len(args) && strings.HasPrefix(args[i], "-") {
 		a := args[i]
 		if gitValueOpts[a] && i+1 < len(args) {
 			if a == "-C" || a == "--work-tree" || a == "--git-dir" {
 				repo = args[i+1]
+				redirect = redirect || a != "-C"
 			}
 			i += 2
 			continue
 		}
 		if strings.HasPrefix(a, "--git-dir=") || strings.HasPrefix(a, "--work-tree=") {
 			repo = a[strings.Index(a, "=")+1:]
+			redirect = true
 		}
 		i++
 	}
@@ -416,6 +439,9 @@ func (x *ctx) git(args []string) string {
 		return ""
 	}
 	sub, rest := args[i], args[i+1:]
+	if x.coord != nil {
+		return x.coordGit(repo, redirect, sub, rest)
+	}
 	if repo == "" && !x.cwdUnknown && !inside(x.cwd, x.top) && outsideWrite(x.cwd, x.cwd, x.c, x.top) != "" {
 		repo = x.cwd // git runs in whatever directory the tool (or an earlier cd) put it in; scratch dirs in temp are fine
 	}
@@ -432,20 +458,8 @@ func (x *ctx) git(args []string) string {
 		}
 		return false
 	}
-	// options that write a file: --output=F / --output F (diff, log, archive), -o F (archive), -o DIR (format-patch)
-	for j, a := range rest {
-		var target string
-		switch {
-		case strings.HasPrefix(a, "--output="), strings.HasPrefix(a, "--output-directory="):
-			target = a[strings.Index(a, "=")+1:]
-		case (a == "--output" || a == "--output-directory" || (a == "-o" && (sub == "archive" || sub == "format-patch"))) && j+1 < len(rest):
-			target = rest[j+1]
-		}
-		if target != "" {
-			if r := x.write(target, false); r != "" {
-				return r
-			}
-		}
+	if r := x.gitOutputs(sub, rest); r != "" {
+		return r
 	}
 	switch sub {
 	case "bundle":
@@ -491,6 +505,26 @@ func (x *ctx) git(args []string) string {
 		}
 	case "filter-branch", "filter-repo", "update-ref", "replace":
 		return "history rewriting is not a worker's job"
+	}
+	return ""
+}
+
+// gitOutputs judges the options that write a file: --output=F / --output F (diff, log, archive), -o F (archive),
+// -o DIR (format-patch).
+func (x *ctx) gitOutputs(sub string, rest []string) string {
+	for j, a := range rest {
+		var target string
+		switch {
+		case strings.HasPrefix(a, "--output="), strings.HasPrefix(a, "--output-directory="):
+			target = a[strings.Index(a, "=")+1:]
+		case (a == "--output" || a == "--output-directory" || (a == "-o" && (sub == "archive" || sub == "format-patch"))) && j+1 < len(rest):
+			target = rest[j+1]
+		}
+		if target != "" {
+			if r := x.write(target, false); r != "" {
+				return r
+			}
+		}
 	}
 	return ""
 }
@@ -612,6 +646,9 @@ func (x *ctx) write(target string, deletion bool) string {
 	}
 	if x.cwdUnknown && !filepath.IsAbs(target) && !strings.HasPrefix(target, "~/") {
 		return fmt.Sprintf("relative write %q after a cd the guard could not follow; use an absolute path or cd to a literal path", target)
+	}
+	if x.coord != nil {
+		return x.coord.judgePath(x.abs(target), target)
 	}
 	if x.globHitsHook(target) {
 		return fmt.Sprintf("%s could match the rein guard files of task %s; workers never change them", target, x.c.Name)
@@ -785,6 +822,9 @@ func (x *ctx) find(args []string) string {
 		if !rootsDone {
 			roots = append(roots, a)
 		}
+	}
+	if x.coord != nil {
+		return x.coordFind(args, roots)
 	}
 	if !acts {
 		return ""

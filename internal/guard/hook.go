@@ -153,7 +153,7 @@ func RunTask(vendor, task string, r io.Reader, w, stderr io.Writer) int {
 		return emit(vendor, w, stderr, a.Event, name, fmt.Sprintf("task contract unreadable (%v); ask the coordinator", err))
 	}
 	if !found {
-		return 0 // not a pipeline worker
+		return coordinate(vendor, a, cwd, w, stderr) // not a worker: silent unless it is a coordinator session of an active run
 	}
 	return judge(vendor, a, c, top, cwd, w, stderr)
 }
