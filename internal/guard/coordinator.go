@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/voravitl/rein/internal/budget"
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/glob"
 	"github.com/voravitl/rein/internal/run"
@@ -142,6 +143,11 @@ var taskRx = regexp.MustCompile(`rein-task:[ \t]*([A-Za-z0-9][A-Za-z0-9._-]*)`)
 
 // agent judges an Agent call and records the pending binding SubagentStart will pair with.
 func (p *coordPolicy) agent(a Action) string {
+	// Check tick staleness before allowing agent spawn
+	if reason := p.checkTickAndBudget(); reason != "" {
+		return reason
+	}
+
 	task := ""
 	switch {
 	case a.SubType != "" && contains(p.m.ReadonlyAgents, a.SubType):
@@ -178,6 +184,40 @@ type coordPolicy struct {
 	loc   run.Loc
 	trees []string
 	got   bool
+}
+
+// checkTickAndBudget enforces tick staleness and budget caps before worker spawns or agent calls.
+func (p *coordPolicy) checkTickAndBudget() string {
+	// Check tick staleness - only deny if tick exists and is stale (not missing)
+	tickPath := run.TickPath(p.loc.Common)
+	tick, err := run.LoadTick(tickPath)
+	if err == nil { // tick exists
+		if run.IsTickStale(tick) {
+			return "the run tick is stale (> 2m): start the waiter (ocloop2.py) or run rein run tick"
+		}
+	}
+	// If tick doesn't exist, don't deny - it's optional
+
+	// Check budget caps - try to load profile from REIN_PROFILE or default
+	prof, err := contract.LoadProfile("")
+	if err != nil || prof.Budget == nil {
+		// No profile or budget configured - skip budget check
+		return ""
+	}
+
+	// Run budget check
+	result, err := budget.Check(p.loc.Marker, prof, "")
+	if err != nil {
+		// Budget check failed - but don't block on errors, just on hard limits
+		return ""
+	}
+
+	// Deny on hard limit (exit code 2)
+	if result.Code == budget.ExitHard {
+		return "budget cap or review round limit exceeded for run/task: run rein budget raise --reason <text> in your own terminal"
+	}
+
+	return ""
 }
 
 // allTrees lists every worktree of the repo: the main checkout, the one the event runs in and the linked ones.

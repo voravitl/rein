@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/voravitl/rein/internal/contract"
 )
 
 // TaskStatus represents the health state of a worker.
@@ -54,8 +56,8 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 	// Check if worker exists in tick
 	worker, ok := tick.Workers[task]
 	if !ok {
-		// Worker not in tick - check if task exists
-		contractPath := filepath.Join(common, "contracts", task+".json")
+		// Worker not in tick - check if task exists using contract index
+		contractPath := contract.PathOf(task)
 		if _, err := os.Stat(contractPath); os.IsNotExist(err) {
 			result.Message = "task not found"
 			return result, nil
@@ -76,15 +78,15 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 		}
 	}
 
-	// Check seen log for recent activity
-	seenPath := filepath.Join(common, "seen", task+".log")
+	// Check seen log for recent activity using contract.SeenPath
+	seenPath := contract.SeenPath(task)
 	seenAge, inFlight := checkSeenLog(seenPath)
 
 	// Determine status based on signals
 	now := time.Now()
 
-	// BUSY: seen log shows in-flight tool call
-	if inFlight {
+	// BUSY: seen log shows in-flight tool call, but only if not too old (< 15m ceiling)
+	if inFlight && seenAge < 15*time.Minute {
 		result.Status = StatusBusy
 		result.Message = "tool call in progress"
 		return result, nil
@@ -149,9 +151,14 @@ func checkSeenLog(path string) (time.Duration, bool) {
 	}
 
 	// parts[0] is timestamp, parts[2] is event type
+	// Support both RFC3339 and the format guard/hook.go writes: 2006-01-02T15:04:05
 	ts, err := time.Parse(time.RFC3339, parts[0])
 	if err != nil {
-		return 24 * time.Hour, false
+		// Try the format without timezone (guard/hook.go:60 format)
+		ts, err = time.Parse("2006-01-02T15:04:05", parts[0])
+		if err != nil {
+			return 24 * time.Hour, false
+		}
 	}
 
 	age := time.Since(ts)
@@ -188,10 +195,13 @@ func countDenials(common, task string, since time.Duration) int {
 		// Try to parse timestamp from line (format varies, so this is best-effort)
 		parts := splitFields(line)
 		if len(parts) > 0 {
-			if ts, err := time.Parse(time.RFC3339, parts[0]); err == nil {
-				if ts.After(cutoff) {
-					count++
-				}
+			// Support both RFC3339 and 2006-01-02T15:04:05 formats
+			ts, err := time.Parse(time.RFC3339, parts[0])
+			if err != nil {
+				ts, err = time.Parse("2006-01-02T15:04:05", parts[0])
+			}
+			if err == nil && ts.After(cutoff) {
+				count++
 			}
 		}
 	}

@@ -246,7 +246,7 @@ func TestRaise(t *testing.T) {
 	}
 
 	// Verify raise was recorded
-	raises := loadRaises("test-run")
+	raises := loadRaises("test-run", markerPath)
 	if len(raises) != 1 {
 		t.Fatalf("expected 1 raise, got %d", len(raises))
 	}

@@ -11,6 +11,7 @@ import (
 func TestGetTaskStatusHealthy(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
+	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
 
 	// Create tick with healthy worker
 	tick := &TickState{
@@ -51,6 +52,7 @@ func TestGetTaskStatusHealthy(t *testing.T) {
 func TestGetTaskStatusBusy(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
+	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
 
 	// Create tick
 	tick := &TickState{
@@ -91,6 +93,7 @@ func TestGetTaskStatusBusy(t *testing.T) {
 func TestGetTaskStatusStuck(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
+	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
 
 	// Create tick
 	tick := &TickState{
@@ -131,6 +134,7 @@ func TestGetTaskStatusStuck(t *testing.T) {
 func TestGetTaskStatusDead(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
+	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
 
 	// Create tick without the worker
 	tick := &TickState{
@@ -144,10 +148,8 @@ func TestGetTaskStatusDead(t *testing.T) {
 	data, _ := json.MarshalIndent(tick, "", "  ")
 	os.WriteFile(tickPath, data, 0644)
 
-	// Create contract to show task exists
-	contractsDir := filepath.Join(tmpDir, "contracts")
-	os.MkdirAll(contractsDir, 0755)
-	contractPath := filepath.Join(contractsDir, "test-task.json")
+	// Create contract to show task exists (use contract.PathOf location)
+	contractPath := filepath.Join(tmpDir, "test-task.json")
 	os.WriteFile(contractPath, []byte("{}"), 0644)
 
 	result, err := GetTaskStatus(tmpDir, "test-task")
@@ -163,6 +165,7 @@ func TestGetTaskStatusDead(t *testing.T) {
 func TestGetTaskStatusSlow(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
+	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
 
 	// Create tick
 	tick := &TickState{
@@ -203,6 +206,7 @@ func TestGetTaskStatusSlow(t *testing.T) {
 func TestGetTaskStatusUnknown(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
+	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
 
 	// No tick file
 	result, err := GetTaskStatus(tmpDir, "test-task")
@@ -219,6 +223,7 @@ func TestGetTaskStatusUnknown(t *testing.T) {
 func TestGetTaskStatusStuckRedCheck(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
+	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
 
 	// Create tick with worker that has been inactive for exactly 15 minutes (boundary)
 	tick := &TickState{

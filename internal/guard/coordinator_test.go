@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/run"
@@ -75,6 +76,17 @@ func newCoordEnv(t *testing.T) *coordEnv {
 		CoordinatorWritable: run.DefaultWritable, CoordinatorTools: run.DefaultTools, ReadonlyAgents: []string{"Explore"}}
 	e.marker = filepath.Join(e.root, ".git", run.MarkerFile)
 	e.save()
+
+	// Create a fresh tick by default so tests don't get denied for stale tick
+	tick := run.TickState{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		PID:       os.Getpid(),
+		Status:    "ok",
+		Workers:   map[string]run.Worker{},
+	}
+	tickData, _ := json.Marshal(tick)
+	writeFile(t, filepath.Join(e.root, ".git", "rein-tick.json"), string(tickData))
+
 	return e
 }
 
@@ -502,5 +514,56 @@ func TestCoordOtherVendorsAreNotJudged(t *testing.T) {
 	var out bytes.Buffer
 	if code := RunTask("kiro", "", bytes.NewReader(in), &out, io.Discard); code != 0 || out.Len() != 0 {
 		t.Fatalf("kiro in the coordinator's repo: code %d out %q", code, out.String())
+	}
+}
+
+func TestCoordTickStalenessDeniesWorkerSpawn(t *testing.T) {
+	e := newCoordEnv(t)
+
+	// Write a stale tick (> 2 minutes old)
+	tick := run.TickState{
+		Timestamp: "2020-01-01T00:00:00Z",
+		PID:       os.Getpid(),
+		Status:    "ok",
+		Workers:   map[string]run.Worker{},
+	}
+	tickData, _ := json.Marshal(tick)
+	writeFile(t, filepath.Join(e.root, ".git", "rein-tick.json"), string(tickData))
+
+	// Try to spawn a worker via orca worker-start - should be denied
+	out := e.bash("orca orchestration worker-start --worktree path:" + e.side)
+	if !strings.Contains(out, "run tick is stale") {
+		t.Errorf("stale tick should deny worker spawn, got: %q", out)
+	}
+
+	// Try agent call - should also be denied
+	out = e.tool("Agent", map[string]any{"prompt": "rein-task: mytask"}, nil)
+	if !strings.Contains(out, "run tick is stale") {
+		t.Errorf("stale tick should deny agent call, got: %q", out)
+	}
+}
+
+func TestCoordTickFreshAllowsWorkerSpawn(t *testing.T) {
+	e := newCoordEnv(t)
+
+	// Allow task mytask
+	e.m.Allowed = append(e.m.Allowed, run.Allowance{Kind: "task", Ref: "mytask", Reason: "test"})
+	e.save()
+
+	// Write a fresh tick (< 2 minutes old)
+	tick := run.TickState{
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		PID:       os.Getpid(),
+		Status:    "ok",
+		Workers:   map[string]run.Worker{},
+	}
+	tickData, _ := json.Marshal(tick)
+	writeFile(t, filepath.Join(e.root, ".git", "rein-tick.json"), string(tickData))
+
+	// Agent call with fresh tick - check it's NOT denied for tick reasons
+	// (it may still be denied for contract reasons, but not tick)
+	out := e.tool("Agent", map[string]any{"prompt": "rein-task: mytask"}, nil)
+	if strings.Contains(out, "run tick is stale") {
+		t.Errorf("fresh tick should not deny for staleness, got: %q", out)
 	}
 }

@@ -581,9 +581,31 @@ func cmdBudgetCheck(args []string) int {
 		return 2
 	}
 
-	// Load profile (need to figure out where it's stored in the marker)
-	// For now, use a simple profile lookup
-	prof := &contract.Profile{} // TODO: load actual profile from marker or contract
+	// Load profile from contract if task is specified, otherwise from marker or default profile
+	var prof *contract.Profile
+	if *task != "" {
+		// Load from task contract
+		c, err := contract.Load(*task)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[budget check] cannot load contract:", err)
+			return 2
+		}
+		prof = &c.Profile
+	} else {
+		// Load from active run marker or default profile
+		if loc, ok := run.Find("."); ok {
+			if m, err := run.Load(loc.Marker); err == nil && m.StartedAt != "" {
+				markerPath = loc.Marker
+			}
+		}
+		// Try to load profile from REIN_PROFILE or empty (default)
+		p, err := contract.LoadProfile("")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[budget check] cannot load profile:", err)
+			return 2
+		}
+		prof = p
+	}
 
 	// Check budget
 	result, err := budget.Check(markerPath, prof, *task)

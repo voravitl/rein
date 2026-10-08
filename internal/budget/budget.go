@@ -107,7 +107,7 @@ func Check(markerPath string, p *contract.Profile, task string) (CheckResult, er
 	caps := getEffectiveCaps(budget, task != "")
 
 	// Apply any raises
-	raises := loadRaises(m.Run)
+	raises := loadRaises(m.Run, markerPath)
 	for _, r := range raises {
 		if c, ok := caps[r.Pool]; ok {
 			caps[r.Pool] = c + r.Amount
@@ -149,12 +149,29 @@ func Check(markerPath string, p *contract.Profile, task string) (CheckResult, er
 		}
 	}
 
+	// Track which pools have approximated spend (rows with no exact token count)
+	approx := make(map[string]bool)
+	for _, row := range rows {
+		// If a row has neither WorkerTokens/ReviewerTokens nor Tokens, it's an estimate
+		hasTokens := (row.Tokens != nil && *row.Tokens > 0) ||
+			(row.WorkerTokens != nil && *row.WorkerTokens > 0) ||
+			(row.ReviewerTokens != nil && *row.ReviewerTokens > 0)
+		if !hasTokens {
+			// Determine which pool this row contributes to
+			poolName := "claude_tokens"
+			if row.Provider == "codex" {
+				poolName = "codex_tokens"
+			}
+			approx[poolName] = true
+		}
+	}
+
 	return CheckResult{
 		Code:            code,
 		Message:         message,
 		Spend:           spend,
 		Caps:            caps,
-		Approx:          make(map[string]bool), // TODO: track approximations
+		Approx:          approx,
 		ReviewRounds:    reviewRounds,
 		MaxReviewRounds: maxReviewRounds,
 		TimeSinceStart:  time.Since(startTime),
@@ -179,7 +196,7 @@ func Raise(markerPath string, pool string, amount float64, reason string) error 
 		At:     time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// Append to raises log
+	// Append to raises log in the same directory as the marker
 	raisesPath := filepath.Join(filepath.Dir(markerPath), fmt.Sprintf("raises-%s.jsonl", m.Run))
 	f, err := os.OpenFile(raisesPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
@@ -203,7 +220,27 @@ func SaveCooldown(runName string, c Cooldown) error {
 	}
 
 	path := filepath.Join(dir, fmt.Sprintf("%s.json", runName))
-	data, err := json.MarshalIndent([]Cooldown{c}, "", "  ")
+
+	// Load existing cooldowns
+	existing, err := LoadCooldowns(runName)
+	if err != nil {
+		return fmt.Errorf("load existing cooldowns: %w", err)
+	}
+
+	// Update or append the cooldown for this provider
+	found := false
+	for i, cd := range existing {
+		if cd.Provider == c.Provider {
+			existing[i] = c
+			found = true
+			break
+		}
+	}
+	if !found {
+		existing = append(existing, c)
+	}
+
+	data, err := json.MarshalIndent(existing, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal cooldown: %w", err)
 	}
@@ -309,9 +346,19 @@ func getEffectiveCaps(budget *contract.Budget, isTask bool) map[string]float64 {
 	caps := make(map[string]float64)
 
 	for pool, pc := range budget.Pools {
-		if isTask && pc.TaskCap > 0 {
-			caps[pool] = pc.TaskCap
-		} else if !isTask && pc.RunCap > 0 {
+		if isTask {
+			// For task checks, use TaskCap but also consider RunCap as a ceiling
+			if pc.TaskCap > 0 {
+				caps[pool] = pc.TaskCap
+				// If RunCap exists and is lower, use it as the ceiling
+				if pc.RunCap > 0 && pc.RunCap < pc.TaskCap {
+					caps[pool] = pc.RunCap
+				}
+			} else if pc.RunCap > 0 {
+				// No TaskCap, so RunCap is the limit
+				caps[pool] = pc.RunCap
+			}
+		} else if pc.RunCap > 0 {
 			caps[pool] = pc.RunCap
 		}
 	}
@@ -319,15 +366,9 @@ func getEffectiveCaps(budget *contract.Budget, isTask bool) map[string]float64 {
 	return caps
 }
 
-func loadRaises(runName string) []BudgetRaise {
-	// Determine raises path from run name
-	runDir := os.Getenv("REIN_RUN_DIR")
-	if runDir == "" {
-		home, _ := os.UserHomeDir()
-		runDir = filepath.Join(home, ".cache", "worktree-pipeline", "runs")
-	}
-
-	raisesPath := filepath.Join(runDir, fmt.Sprintf("raises-%s.jsonl", runName))
+func loadRaises(runName string, markerPath string) []BudgetRaise {
+	// Read from the same directory as the marker (git common dir)
+	raisesPath := filepath.Join(filepath.Dir(markerPath), fmt.Sprintf("raises-%s.jsonl", runName))
 	f, err := os.Open(raisesPath)
 	if err != nil {
 		return nil

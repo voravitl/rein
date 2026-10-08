@@ -107,6 +107,11 @@ func flagValue(args []string, name string) (string, bool) {
 // contract: its worker would run without a contract or guard. `terminal send` names only a terminal handle, which
 // says nothing about a worktree, so it cannot be judged here.
 func (x *ctx) coordWorkerStart(rest []string) string {
+	// Check tick staleness and budget before allowing worker spawn
+	if reason := x.coord.checkTickAndBudget(); reason != "" {
+		return reason
+	}
+
 	wt, has := flagValue(rest, "--worktree")
 	if !has || strings.HasPrefix(wt, "new-") {
 		return "" // a new worktree is created by Orca; the contract and hooks come with the spec flow
