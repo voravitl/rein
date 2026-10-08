@@ -1,0 +1,10 @@
+{
+  "name": "myapp",
+  "worktree_root": "~/worktrees/myapp",
+  "protect_container_prefixes": ["myapp-"],
+  "protect_ports": [8080, 5432],
+  "owner_scripts": ["scripts/release.sh"],
+  "deny_commands": ["docker compose", "docker-compose", "psql", "playwright test"],
+  "deny_paths": ["VERSION", "scripts/release.sh", "**/dist/**"],
+  "local_artifacts": ["node_modules", "tsconfig.tsbuildinfo"]
+}

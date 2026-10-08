@@ -1,0 +1,10 @@
+{
+  "name": "rein",
+  "version": "0.1.0",
+  "description": "Keeps cheap and fallback worker models on task: a task contract, a Claude Code guard hook that parses shell commands, and a vendor-neutral drift check.",
+  "author": { "name": "P' Tik", "url": "https://github.com/voravitl" },
+  "homepage": "https://github.com/voravitl/rein",
+  "repository": "https://github.com/voravitl/rein",
+  "license": "MIT",
+  "keywords": ["claude-code", "hooks", "guardrails", "multi-agent", "worktree", "supervisor"]
+}

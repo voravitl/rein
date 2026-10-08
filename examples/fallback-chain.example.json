@@ -1,0 +1,253 @@
+{
+  "_doc": "Example fallback chains for `rein providers`. Copy to ~/.config/rein/fallback-chain.json (or set PIPELINE_FALLBACK) and edit providers, models and costs to your own accounts. Review chains should list strong models only.",
+  "providers": {
+    "claude-sonnet": {
+      "agent": "claude",
+      "model": "claude-sonnet-5-5",
+      "launch": "orca",
+      "cost": "Claude quota",
+      "probe": [
+        "claude",
+        "-p",
+        "--model",
+        "claude-sonnet-5-5",
+        "Reply with exactly: OK"
+      ]
+    },
+    "claude-opus": {
+      "agent": "claude",
+      "model": "claude-opus-5-5",
+      "launch": "orca",
+      "cost": "Claude quota",
+      "probe": [
+        "claude",
+        "-p",
+        "--model",
+        "claude-opus-5-5",
+        "Reply with exactly: OK"
+      ]
+    },
+    "claude-haiku": {
+      "agent": "claude",
+      "model": "claude-haiku-5-5",
+      "launch": "orca",
+      "cost": "Claude quota",
+      "probe": [
+        "claude",
+        "-p",
+        "--model",
+        "claude-haiku-5-5",
+        "Reply with exactly: OK"
+      ]
+    },
+    "codex": {
+      "agent": "codex",
+      "model": "gpt-6.1-sol",
+      "launch": "orca",
+      "cost": "codex quota",
+      "probe": [
+        "codex",
+        "exec",
+        "-s",
+        "read-only",
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "-m",
+        "gpt-6.1-sol",
+        "Reply with exactly: OK"
+      ]
+    },
+    "antigravity": {
+      "agent": "antigravity",
+      "model": "gemini-3.8-flash-high",
+      "launch": "shell",
+      "cost": "Antigravity credits",
+      "probe": [
+        "agy",
+        "--print",
+        "Reply with exactly: OK",
+        "--model",
+        "gemini-3.8-flash-high",
+        "--output-format",
+        "text"
+      ]
+    },
+    "kiro-sonnet": {
+      "agent": "kiro",
+      "model": "claude-sonnet-5.5",
+      "launch": "shell",
+      "cost": "Kiro credits",
+      "probe": [
+        "kiro-cli",
+        "chat",
+        "--no-interactive",
+        "--model",
+        "claude-sonnet-5.5",
+        "--trust-tools=",
+        "Reply with exactly: OK"
+      ]
+    },
+    "kiro-opus": {
+      "agent": "kiro",
+      "model": "claude-opus-5.5",
+      "launch": "shell",
+      "cost": "Kiro credits",
+      "probe": [
+        "kiro-cli",
+        "chat",
+        "--no-interactive",
+        "--model",
+        "claude-opus-5.5",
+        "--trust-tools=",
+        "Reply with exactly: OK"
+      ]
+    },
+    "opencode-glm": {
+      "agent": "opencode2",
+      "model": "opencode-go/glm-5.3-flash",
+      "launch": "shell",
+      "cost": "opencode provider quota",
+      "probe": [
+        "opencode2",
+        "run",
+        "-m",
+        "opencode-go/glm-5.3-flash",
+        "Reply with exactly: OK"
+      ]
+    },
+    "opencode-haiku": {
+      "agent": "opencode2",
+      "model": "opencode-go/claude-haiku-5-5",
+      "launch": "shell",
+      "cost": "opencode provider quota",
+      "probe": [
+        "opencode2",
+        "run",
+        "-m",
+        "opencode-go/claude-haiku-5-5",
+        "Reply with exactly: OK"
+      ]
+    },
+    "opencode-deepseek": {
+      "agent": "opencode2",
+      "model": "opencode-go/deepseek-v4.1-flash",
+      "launch": "shell",
+      "cost": "opencode provider quota",
+      "probe": [
+        "opencode2",
+        "run",
+        "-m",
+        "opencode-go/deepseek-v4.1-flash",
+        "Reply with exactly: OK"
+      ]
+    },
+    "opencode-free": {
+      "agent": "opencode2",
+      "model": "opencode/muse-spark-1.3-contributor-free",
+      "launch": "shell",
+      "cost": "free tier",
+      "probe": [
+        "opencode2",
+        "run",
+        "-m",
+        "opencode/muse-spark-1.3-contributor-free",
+        "Reply with exactly: OK"
+      ]
+    }
+  },
+  "worker_chains": {
+    "high-risk": [
+      "codex",
+      "claude-sonnet",
+      "kiro-sonnet"
+    ],
+    "backend": [
+      "codex",
+      "claude-sonnet",
+      "kiro-sonnet",
+      "opencode-deepseek",
+      "opencode-glm"
+    ],
+    "frontend": [
+      "antigravity",
+      "codex",
+      "claude-sonnet",
+      "kiro-sonnet",
+      "opencode-glm",
+      "opencode-deepseek"
+    ],
+    "ordinary": [
+      "claude-sonnet",
+      "codex",
+      "kiro-sonnet",
+      "opencode-haiku",
+      "opencode-glm",
+      "opencode-deepseek",
+      "opencode-free"
+    ],
+    "mechanical": [
+      "claude-haiku",
+      "claude-sonnet",
+      "opencode-haiku",
+      "opencode-glm",
+      "opencode-deepseek",
+      "opencode-free",
+      "kiro-sonnet"
+    ],
+    "docs": [
+      "claude-sonnet",
+      "opencode-haiku",
+      "opencode-glm",
+      "opencode-deepseek",
+      "opencode-free",
+      "kiro-sonnet"
+    ]
+  },
+  "review_chains": {
+    "for-claude-or-agy-or-opencode-work": [
+      "codex",
+      "kiro-opus",
+      "claude-opus"
+    ],
+    "for-codex-work": [
+      "claude-opus",
+      "kiro-opus"
+    ],
+    "for-kiro-work": [
+      "codex",
+      "claude-opus"
+    ]
+  },
+  "quota_signals": {
+    "claude": [
+      "usage limit",
+      "rate_limit",
+      "429",
+      "session limit",
+      "Claude AI usage limit reached"
+    ],
+    "codex": [
+      "usage limit",
+      "rate limit",
+      "429",
+      "quota"
+    ],
+    "antigravity": [
+      "exit 3",
+      "RESOURCE_EXHAUSTED",
+      "429"
+    ],
+    "kiro": [
+      "credit",
+      "limit",
+      "throttl",
+      "429"
+    ],
+    "opencode2": [
+      "Upstream request failed",
+      "insufficient",
+      "429",
+      "User not found"
+    ]
+  }
+}
