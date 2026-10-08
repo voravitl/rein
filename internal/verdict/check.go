@@ -152,9 +152,14 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 			workerMaker = NormalizeModelMaker(v.WorkerModel)
 		}
 
-		// Reviewer maker must not equal worker maker
+		// Reviewer maker must not equal worker maker, except when an escalated model
+		// (e.g. Claude Opus) reviews a lower-tier worker (Claude Sonnet or Haiku).
 		if reviewerMaker == workerMaker {
-			continue
+			if IsEscalatedReviewer(v.WorkerModel, v.ReviewerModel) {
+				reviewerMaker = reviewerMaker + ":escalated"
+			} else {
+				continue
+			}
 		}
 
 		makers[reviewerMaker] = true

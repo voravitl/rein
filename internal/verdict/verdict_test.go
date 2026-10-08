@@ -34,6 +34,30 @@ func TestNormalizeModelMaker(t *testing.T) {
 	}
 }
 
+func TestIsEscalatedReviewer(t *testing.T) {
+	tests := []struct {
+		worker   string
+		reviewer string
+		want     bool
+	}{
+		{"claude-sonnet-4.5", "claude-opus-4.8", true},
+		{"claude-haiku", "claude-opus-3.7", true},
+		{"claude-opus-4.8", "claude-sonnet-4.5", false},
+		{"claude-sonnet-4.5", "claude-sonnet-4.5", false},
+		{"gpt-4o-mini", "o1", true},
+		{"gpt-4o", "o3-mini", true},
+		{"gpt-4o", "gpt-4o", false},
+		{"deepseek-coder", "claude-opus", false}, // different makers, handled by maker check
+	}
+
+	for _, tt := range tests {
+		got := IsEscalatedReviewer(tt.worker, tt.reviewer)
+		if got != tt.want {
+			t.Errorf("IsEscalatedReviewer(%q, %q) = %v, want %v", tt.worker, tt.reviewer, got, tt.want)
+		}
+	}
+}
+
 func TestComputeRevisionID(t *testing.T) {
 	// Create a temporary git repo
 	tmpDir := t.TempDir()

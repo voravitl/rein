@@ -206,8 +206,8 @@ func TestCheckVerdicts_ReviewerSameAsWorker(t *testing.T) {
 	sha := "abc123"
 	patchID := "patch123"
 
-	// Record verdict where reviewer is same maker as worker (should be ignored)
-	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "claude-sonnet-4.5", "")
+	// Record verdict where reviewer is same model as worker (should be ignored)
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-sonnet-4.5", "claude-sonnet-4.5", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,10 +224,101 @@ func TestCheckVerdicts_ReviewerSameAsWorker(t *testing.T) {
 	}
 
 	if result.Passed {
-		t.Error("CheckVerdicts should fail when reviewer maker equals worker maker")
+		t.Error("CheckVerdicts should fail when reviewer model equals worker model")
 	}
 	if result.MakerCount != 0 {
 		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
+	}
+}
+
+func TestCheckVerdicts_OpusReviewingSonnet(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 42
+	sha := "abc123"
+	patchID := "patch123"
+
+	// Record verdict where reviewer is Opus and worker is Sonnet (escalated review: allowed)
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "claude-sonnet-4.5", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Record human approval
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("CheckVerdicts should pass when Opus reviews Sonnet, got missing reasons: %v", result.MissingReasons)
+	}
+	if result.MakerCount != 1 {
+		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	}
+}
+
+func TestCheckVerdicts_OpusReviewingHaiku(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 43
+	sha := "def456"
+	patchID := "patch456"
+
+	// Record verdict where reviewer is Opus and worker is Haiku (escalated review: allowed)
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-3.7", "claude-haiku", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+
+	if !result.Passed {
+		t.Errorf("CheckVerdicts should pass when Opus reviews Haiku, got missing reasons: %v", result.MissingReasons)
+	}
+}
+
+func TestCheckVerdicts_SonnetReviewingOpus(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 44
+	sha := "ghi789"
+	patchID := "patch789"
+
+	// Record verdict where reviewer is Sonnet and worker is Opus (lower tier reviewing higher: disallowed)
+	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-sonnet-4.5", "claude-opus-4.8", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+
+	if result.Passed {
+		t.Error("CheckVerdicts should fail when Sonnet reviews Opus")
 	}
 }
 

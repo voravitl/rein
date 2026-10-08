@@ -176,6 +176,26 @@ func NormalizeModelMaker(model string) string {
 	return "unknown"
 }
 
+// IsEscalatedReviewer reports whether a reviewer within the same provider family
+// has a distinctly higher capability tier (e.g. Claude Opus reviewing Claude Sonnet or Haiku).
+func IsEscalatedReviewer(workerModel, reviewerModel string) bool {
+	w := strings.ToLower(workerModel)
+	r := strings.ToLower(reviewerModel)
+
+	// Anthropic: Opus reviewing Sonnet or Haiku
+	if strings.Contains(r, "opus") && (strings.Contains(w, "sonnet") || strings.Contains(w, "haiku")) {
+		return true
+	}
+
+	// OpenAI: o-series / reasoning models reviewing gpt-4o / mini
+	if (strings.HasPrefix(r, "o1") || strings.HasPrefix(r, "o3") || strings.HasPrefix(r, "o4")) &&
+		(strings.Contains(w, "mini") || strings.Contains(w, "gpt-4") || strings.Contains(w, "gpt-3")) {
+		return true
+	}
+
+	return false
+}
+
 // StorageDir returns the directory where verdicts and approvals are stored.
 // Uses run dir if provided, otherwise falls back to repo gate directory.
 func StorageDir(runDir, repoPath string) string {
