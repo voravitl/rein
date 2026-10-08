@@ -52,7 +52,7 @@ install: [`docs/SETUP.md`](docs/SETUP.md).
 |---|---|
 | Guard hooks | SessionStart (install binary), PreToolUse + Stop (`rein hook`, exec form, silent outside a contracted worktree) |
 | Skills | `rein:setup`, `rein:worktree-pipeline` (coordinator playbook for Orca, with templates and scripts) |
-| Agents | `rein:orca-swarm` (Opus coordinator), `rein:orca-steward` (Sonnet/Haiku mechanical jobs) |
+| Agents | `rein:orca-swarm` (Opus coordinator, main session only), `rein:orca-steward` (Sonnet/Haiku mechanical jobs, started as an Orca worker) |
 
 Without the plugin (guard only), build it yourself (Go 1.26+; one static binary, no runtime):
 

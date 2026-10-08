@@ -7,6 +7,11 @@ description: "Run a batch of issues as parallel worker worktrees under Orca orch
 
 You are the **coordinator**. Workers build; reviewers judge; you gate, decide routing and keep resources lean. You never self-approve and never merge, release or deploy without the user's word in chat.
 
+**The coordinator is the session the user talks to.** It runs this playbook itself and drives every worker, helper
+and steward job through Orca orchestration (`orca orchestration run-create` → `worker-start` → `check --wait`). Never
+start the coordinator or a steward job through the `Agent` tool (`rein:orca-swarm`, `rein:orca-steward` as Claude
+subagents): that bypasses Orca, its supervision and the worker contracts. The rein hook denies those calls.
+
 **Paths in this playbook:**
 - `<skill>` = `${CLAUDE_PLUGIN_ROOT}/skills/worktree-pipeline` (scripts in `<skill>/scripts`, templates in `<skill>/templates`).
 - `rein` = `${CLAUDE_PLUGIN_DATA}/bin/rein` (installed by the plugin's SessionStart hook; `/rein:setup` can also link it onto `PATH`). Pass `REIN=${CLAUDE_PLUGIN_DATA}/bin/rein` to `advise.sh` when `rein` is not on `PATH`.
@@ -117,5 +122,5 @@ Update memory with the run state (ids, worktrees, MRs, decisions, incidents). Lo
 
 ## Agents
 - **`rein:orca-swarm`** (Opus): the coordinator that runs this whole playbook for a batch. It returns a `DECISIONS NEEDED` block whenever the user must decide (owner decisions, merges, deploys); resume it with the answers.
-- **`rein:orca-steward`** (Sonnet; Haiku for cleanup and rebase-regate): the mechanical jobs (rebase and proof, re-gates, pushes, pinned merges of MRs the user approved, the isolated stack test, cleanup). `orca-swarm` calls it as a subagent, or starts it as an Orca Sonnet worker when nesting is not possible.
+- **`rein:orca-steward`** (Sonnet; Haiku for cleanup and rebase-regate): the mechanical jobs (rebase and proof, re-gates, pushes, pinned merges of MRs the user approved, the isolated stack test, cleanup). The coordinator starts it as an Orca Sonnet worker (never as a Claude subagent).
 - When the main session coordinates by itself, it follows the same rules: decisions stay with the coordinator and the user, and mechanical work goes to `orca-steward`.

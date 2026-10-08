@@ -23,7 +23,9 @@ its spike → B3, B4.
 ### B0. Coordinator guard
 **Problem.** rein guards workers, but the coordinator is guarded by prose only. Observed: a coordinator that was told
 to split work into Orca workers implemented it through its own subagents instead, spending the wrong quota and
-skipping the worker contract, guard and ledger.
+skipping the worker contract, guard and ledger. Observed again on 2026-10-08: asked to build PRD #1 with opencode
+workers, the main session spawned `rein:orca-swarm` itself as a Claude subagent instead of driving Orca. Interim fix
+(#3): the hook denies `rein:orca-swarm` / `rein:orca-steward` as `Agent` subagents in every session.
 
 **Design.**
 - `rein run start <repo> --run <name>` writes a run marker under the git common dir (found without exec'ing git);
