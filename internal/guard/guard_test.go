@@ -368,3 +368,88 @@ func TestGitBashToNative(t *testing.T) {
 		}
 	}
 }
+
+// nestedWrite runs a Write hook event with the session in cwd.
+func nestedWrite(cwd, fp string) string {
+	in, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": cwd,
+		"tool_input": map[string]string{"file_path": fp}})
+	var out bytes.Buffer
+	Run(bytes.NewReader(in), &out)
+	return out.String()
+}
+
+// A submodule (".git" is a file) and a nested clone (".git" is a directory) inside a contracted worktree must be
+// judged by the parent's contract: their own folder name has no contract, which used to leave the hook silent.
+func TestNestedRepoInsideWorkerIsJudgedByParentContract(t *testing.T) {
+	wt, _ := setup(t)
+	nested := map[string]string{
+		"submodule":    "gitdir: ../.git/modules/sub\n", // a submodule's .git is a file
+		"nested-clone": "",                              // a nested clone's .git is a directory
+	}
+	for kind, gitfile := range nested {
+		dir := filepath.Join(wt, "vendor", kind)
+		if gitfile == "" {
+			if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, ".git"), []byte(gitfile), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, cwd := range []string{dir, filepath.Join(dir, "src")} {
+			_ = os.MkdirAll(cwd, 0o755)
+			for _, fp := range []string{filepath.Join(dir, "x.go"), "x.go", filepath.Join(cwd, "y.go")} {
+				if out := nestedWrite(cwd, fp); !strings.Contains(out, `"deny"`) || !strings.Contains(out, "outside the ownership") {
+					t.Errorf("%s: write %s from %s must be denied by the parent contract, got %q", kind, fp, cwd, out)
+				}
+			}
+			// other rules of the parent contract apply from inside the nested repo too
+			if out := bashCase(t, cwd, "git push origin HEAD"); !strings.Contains(out, `"deny"`) {
+				t.Errorf("%s: git push from %s not denied: %q", kind, cwd, out)
+			}
+			// the parent's owned files stay writable from a session that sits in the nested repo
+			if out := nestedWrite(cwd, filepath.Join(wt, "backend/Routing/A.cs")); out != "" {
+				t.Errorf("%s: owned file denied from %s: %q", kind, cwd, out)
+			}
+		}
+	}
+}
+
+// A nested repo outside any worker stays unguarded, and a contract whose worktree is a different tree with the same
+// directory name as an ancestor does not capture the session.
+func TestNestedRepoOutsideWorkerIsSilent(t *testing.T) {
+	wt, _ := setup(t)
+	other := filepath.Join(t.TempDir(), "good") // same name as the contracted worktree, different tree
+	inner := filepath.Join(other, "vendor", "lib")
+	for _, d := range []string{filepath.Join(other, ".git"), filepath.Join(inner, ".git")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if out := nestedWrite(inner, filepath.Join(inner, "x.go")); out != "" {
+		t.Errorf("session in an unrelated nested repo got output: %q", out)
+	}
+	if out := bashCase(t, inner, "git push"); out != "" {
+		t.Errorf("unrelated nested repo got output for git push: %q", out)
+	}
+	_ = wt
+}
+
+// A broken contract on an ancestor worktree fails closed even when the session sits in a nested repo.
+func TestNestedRepoWithBrokenParentContractFailsClosed(t *testing.T) {
+	wt, c := setup(t)
+	inner := filepath.Join(wt, "vendor", "lib")
+	if err := os.MkdirAll(filepath.Join(inner, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(contract.PathOf(c.Name), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := nestedWrite(inner, filepath.Join(inner, "x.go")); !strings.Contains(out, `"deny"`) {
+		t.Errorf("broken parent contract must fail closed, got %q", out)
+	}
+}

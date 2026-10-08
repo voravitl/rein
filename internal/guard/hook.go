@@ -17,16 +17,29 @@ import (
 	"github.com/voravitl/rein/internal/glob"
 )
 
-// toplevel walks up from dir to the first directory that holds .git (a dir, or a file for linked worktrees).
-func toplevel(dir string) string {
+// workerRoot walks up from dir past every directory that holds .git (a dir, or a file for linked worktrees and
+// submodules) and returns the first one that is a contracted worktree: its contract's worktree is that directory.
+// Walking past the innermost root matters: a submodule or nested clone inside a worker worktree has its own .git, and
+// stopping there would look up a contract by the nested folder's name, find none, and leave the write unguarded.
+// found is false when no ancestor is a worker (an ordinary session); err is a contract that exists but cannot be read.
+func workerRoot(dir string) (top string, c *contract.Contract, found bool, name string, err error) {
 	d := contract.Real(dir)
 	for {
-		if _, err := os.Stat(filepath.Join(d, ".git")); err == nil {
-			return d
+		if _, serr := os.Stat(filepath.Join(d, ".git")); serr == nil {
+			name = filepath.Base(d)
+			c, err = contract.Load(name)
+			switch {
+			case err == nil:
+				if contract.Real(c.Worktree) == d {
+					return d, c, true, name, nil
+				} // same directory name, different tree: keep walking
+			case !errors.Is(err, contract.ErrNone):
+				return d, nil, false, name, err // a worker whose contract is broken: the caller fails closed
+			}
 		}
 		parent := filepath.Dir(d)
 		if parent == d {
-			return ""
+			return "", nil, false, "", nil
 		}
 		d = parent
 	}
@@ -135,20 +148,12 @@ func RunTask(vendor, task string, r io.Reader, w, stderr io.Writer) int {
 	if anchor == "" {
 		anchor = cwd
 	}
-	top := toplevel(anchor)
-	if top == "" {
-		return 0
-	}
-	name := filepath.Base(top)
-	c, err := contract.Load(name)
-	if errors.Is(err, contract.ErrNone) {
-		return 0 // not a pipeline worker
-	}
+	top, c, found, name, err := workerRoot(anchor)
 	if err != nil { // a worker whose contract is broken: fail closed
 		return emit(vendor, w, stderr, a.Event, name, fmt.Sprintf("task contract unreadable (%v); ask the coordinator", err))
 	}
-	if contract.Real(c.Worktree) != top {
-		return 0 // same directory name, different tree
+	if !found {
+		return 0 // not a pipeline worker
 	}
 	return judge(vendor, a, c, top, cwd, w, stderr)
 }
