@@ -21,10 +21,15 @@ skipping the worker contract, guard and ledger.
 - `rein run start <repo> --run <name>` writes a run marker (and `rein run end`).
 - While a run is active, the Claude hook in the coordinator session (cwd inside that repo's main checkout) denies:
   - `Edit`/`Write` to source files of the repo (run dir, specs, memory and docs paths stay writable per profile);
-  - the `Agent` tool with a writing subagent type (implementers), with the reason naming the Orca path:
-    `rein contract new` → `orca worktree create` → `rein hooks install` → `worker-start`.
+  - the `Agent` tool with a writing subagent type (implementers) unless that call names a task contract and an
+    exception was recorded with `rein run allow --task <t> --reason "<text>"`; the deny reason names the default
+    path: `rein contract new` → `orca worktree create` → `rein hooks install` → `worker-start`.
   - Read-only subagents (explore, review, critique) and `advise.sh` stay allowed.
-- `rein run allow --reason "<text>"` grants a one-shot exception and records it.
+- The rule is about the pipeline, not the tool: a Claude subagent is just the Claude model and is a valid worker
+  when routing picks Claude, has a contract and is recorded. The default worker is an Orca worker (visible in the
+  Orca UI, guard and sandbox bound by cwd). Open design point: bind the guard to a subagent's tool calls (they run
+  with the session's cwd, not the worktree's).
+- `rein run allow` exceptions are listed by `rein run audit`.
 - `rein run audit <run>` reports `COORDINATOR_DRIFT`: commits in the run that did not come from a contracted
   worktree, exceptions used, subagent token use versus Orca workers.
 - Optional `UserPromptSubmit` reminder while a run is active (a nudge, not the enforcement).

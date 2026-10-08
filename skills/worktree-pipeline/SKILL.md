@@ -104,6 +104,17 @@ Short status per task: what was merged and pushed; the numbers; the open decisio
 
 Update memory with the run state (ids, worktrees, MRs, decisions, incidents). Log the run to the OMC wiki (`wiki_add`, category `session-log`) and, when nothing is left running, remove the notepad run pointer and restore any priority note the user had.
 
+## Who implements (applies to every coordinator, agent or main session)
+- The coordinator never implements. Every implementation unit is a **worker**: it has a rein contract, a model
+  chosen by the routing table and ledger, and a ledger record when it settles.
+- **Default worker: an Orca worker** in its own worktree (visible in the Orca UI; guard, sandbox and drift bound to
+  that worktree). When routing picks Claude, start it with `--agent claude`.
+- **Exception: a Claude subagent as the worker.** Allowed when routing picks Claude, the task has a contract, and the
+  exception is recorded (`rein run allow --task <t> --reason "<why not an Orca worker>"`, once B0 ships; until
+  then, say it in the report). A subagent is the Claude model like any other; what is never allowed is skipping
+  routing, the contract or the ledger.
+- Subagents without a contract are for read-only work only: code facts, review, critique.
+
 ## Agents
 - **`rein:orca-swarm`** (Opus): the coordinator that runs this whole playbook for a batch. It returns a `DECISIONS NEEDED` block whenever the user must decide (owner decisions, merges, deploys); resume it with the answers.
 - **`rein:orca-steward`** (Sonnet; Haiku for cleanup and rebase-regate): the mechanical jobs (rebase and proof, re-gates, pushes, pinned merges of MRs the user approved, the isolated stack test, cleanup). `orca-swarm` calls it as a subagent, or starts it as an Orca Sonnet worker when nesting is not possible.
