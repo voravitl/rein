@@ -204,6 +204,22 @@ func Load(name string) (*Contract, error) {
 	return &c, nil
 }
 
+// LoadFile loads a contract from the given file path (not a task name).
+func LoadFile(path string) (*Contract, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var c Contract
+	if err := json.Unmarshal(b, &c); err != nil {
+		return nil, fmt.Errorf("contract %s: %w", path, err)
+	}
+	if c.Name == "" || c.Worktree == "" || len(c.Allow) == 0 || len(c.Scope) == 0 || c.ReportPath == "" {
+		return nil, fmt.Errorf("contract %s: name, worktree, allow, scope and report_path are required", path)
+	}
+	return &c, nil
+}
+
 // Writable reports whether abs (an absolute, cleaned path outside the worktree) is a file the worker may write.
 func (c *Contract) Writable(abs string) bool {
 	for _, p := range append([]string{c.ReportPath}, c.WorkerWritable...) {

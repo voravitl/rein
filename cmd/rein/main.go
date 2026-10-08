@@ -45,6 +45,8 @@ func main() {
 		os.Exit(cmdHooks(os.Args[2:]))
 	case "contract":
 		os.Exit(cmdContract(os.Args[2:]))
+	case "spec":
+		os.Exit(cmdSpec(os.Args[2:]))
 	case "drift":
 		os.Exit(cmdDrift(os.Args[2:]))
 	case "run":
@@ -72,11 +74,12 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|version> [args]
   rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
   rein hooks install <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
   rein contract show|path <name>
+  rein spec check <spec> <contract> [--standing PATH] [--repo PATH]    exits 0 (pass), 1 (lint failures), 2 (file/arg error)
   rein drift <name> [--worktree P] [--base origin/main] [--claimed-files a,b] [--expect-guard codex|agy|kiro|opencode|claude] [--json]
   rein run start [repo] --run NAME [--profile P] [--session S --pid N]    (coordinator guard on; owner from CLAUDE_CODE_SESSION_ID / CLAUDE_PID)
   rein run end [repo] [--pinned sha,..] | rein run audit [repo] [--pinned sha,..] [--json]   (exit 1 = COORDINATOR_DRIFT)

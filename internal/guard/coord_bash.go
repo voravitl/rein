@@ -7,11 +7,48 @@ import (
 	"strings"
 
 	"github.com/voravitl/rein/internal/contract"
+	"github.com/voravitl/rein/internal/spec"
 	"mvdan.cc/sh/v3/syntax"
 )
 
 // The coordinator's Bash rules, on top of the worker's shell parser (bash.go): the parser finds the writes, these
 // methods decide them under the coordinator's rules (ctx.coord != nil).
+
+// checkSpec runs spec lint on the given spec file against the task's contract (ADR 0002 B3).
+// Returns denial reason if lint fails, "" if passes.
+func (p *coordPolicy) checkSpec(specPath, taskName string) string {
+	c, err := contract.Load(taskName)
+	if err != nil {
+		return fmt.Sprintf("cannot load contract for task %q: %v", taskName, err)
+	}
+	return p.runSpecLint(specPath, c)
+}
+
+// checkSpecWithContract runs spec lint using a contract path instead of task name.
+func (p *coordPolicy) checkSpecWithContract(specPath, contractPath string) string {
+	c, err := contract.LoadFile(contractPath)
+	if err != nil {
+		return fmt.Sprintf("cannot load contract from %q: %v", contractPath, err)
+	}
+	return p.runSpecLint(specPath, c)
+}
+
+// runSpecLint performs the actual spec lint check.
+func (p *coordPolicy) runSpecLint(specPath string, c *contract.Contract) string {
+	result, _ := spec.Check(specPath, c, "")
+
+	if len(result.Violations) == 0 {
+		return "" // All checks passed
+	}
+
+	// Build denial message with all violations
+	violations := make([]string, len(result.Violations))
+	for i, v := range result.Violations {
+		violations[i] = v
+	}
+	return fmt.Sprintf("spec lint failed with %d violation(s): %s",
+		len(result.Violations), strings.Join(violations, "; "))
+}
 
 // bash judges a coordinator Bash command.
 func (p *coordPolicy) bash(cmd, cwd string) string {
@@ -106,10 +143,27 @@ func flagValue(args []string, name string) (string, bool) {
 // coordWorkerStart denies `orca orchestration worker-start` into an existing worktree of the repo that has no task
 // contract: its worker would run without a contract or guard. `terminal send` names only a terminal handle, which
 // says nothing about a worktree, so it cannot be judged here.
+// Also runs spec lint if --spec is provided (ADR 0002 B3).
 func (x *ctx) coordWorkerStart(rest []string) string {
 	// Check tick staleness and budget before allowing worker spawn
 	if reason := x.coord.checkTickAndBudget(); reason != "" {
 		return reason
+	}
+
+	// Check for spec lint if --spec flag is present
+	if specPath, hasSpec := flagValue(rest, "--spec"); hasSpec {
+		if taskName, hasTask := flagValue(rest, "--task"); hasTask {
+			if reason := x.coord.checkSpec(specPath, taskName); reason != "" {
+				return fmt.Sprintf("SPEC_LINT_FAILED: %s", reason)
+			}
+		} else if contractPath, hasContract := flagValue(rest, "--contract"); hasContract {
+			// Try to extract task name from contract path
+			if reason := x.coord.checkSpecWithContract(specPath, contractPath); reason != "" {
+				return fmt.Sprintf("SPEC_LINT_FAILED: %s", reason)
+			}
+		}
+		// If --spec is provided but no --task or --contract, we can't lint
+		// (this is okay - the spec might be checked later)
 	}
 
 	wt, has := flagValue(rest, "--worktree")
