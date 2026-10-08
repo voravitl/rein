@@ -130,11 +130,17 @@ each chain is printed. Review chains should only list strong models: when none i
 
 ## Status
 
-- macOS (arm64): built, tested, measured.
-- Linux and Windows: cross-compiled, **not yet run on a real machine**. On Windows, `hooks/hooks.json` relies on
-  `bin/rein` resolving to `bin\rein.exe` (`scripts/install.ps1`); this is unverified, and no Windows support is
-  claimed until it runs there.
-- Design and the reasons for Go: [`docs/adr/0001-rein-supervisor.md`](docs/adr/0001-rein-supervisor.md).
+| | macOS | Linux | Windows |
+|---|---|---|---|
+| Unit tests + hook smoke test (CI on every push) | ✅ | ✅ | ✅ |
+| Real Claude Code session: guard hook (exec form) | ✅ verified | not yet | not yet |
+| Real Claude Code session: `rein sandbox` | ✅ verified | not yet | n/a (no native sandbox; use WSL2) |
+
+On Windows, `hooks/hooks.json` relies on `bin/rein` resolving to `bin\rein.exe` (`scripts/install.ps1`); that
+resolution has not been seen in a real Claude Code session yet. Git Bash paths (`/c/...`, `/tmp/...`) are mapped
+to native paths before they are judged (found by the Windows CI leg).
+
+Design and the reasons for Go: [`docs/adr/0001-rein-supervisor.md`](docs/adr/0001-rein-supervisor.md).
 
 ## Development
 
