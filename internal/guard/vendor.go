@@ -16,10 +16,19 @@ type Action struct {
 	Cwd        string   // directory the tool runs in
 	Anchor     string   // directory that identifies the worker's worktree; "" means Cwd
 	StopActive bool     // this stop already continued once (let it end)
+	DenyCoord  bool     // PreToolUse(Agent) starting the pipeline coordinator as a Claude subagent: denied in every session, contract or not
 }
 
 // Vendors are the values accepted by `rein hook --vendor`.
 var Vendors = []string{"claude", "codex", "agy", "kiro", "opencode"}
+
+// coordAgents are the coordinator agents the plugin must never start as Claude subagents: the coordinator runs in
+// the main session through Orca orchestration, and steward jobs start as Orca workers (ADR 0002 B0).
+var coordAgents = map[string]bool{"rein:orca-swarm": true, "rein:orca-steward": true}
+
+const coordAgentReject = "rein:orca-swarm / rein:orca-steward must not run as Claude subagents: run the coordinator " +
+	"in the main session with Orca orchestration (orca orchestration run-create -> worker-start -> check --wait) " +
+	"and start steward jobs as Orca workers"
 
 // editTools are Claude Code's file-writing tools; codex uses the same names for its Edit/Write aliases.
 var editTools = map[string]bool{"Edit": true, "Write": true, "MultiEdit": true, "NotebookEdit": true}
@@ -106,6 +115,11 @@ func parseClaude(raw []byte, codex bool) (Action, bool) {
 	in := object(ev.ToolInput)
 	if codex {
 		withWorkdir(&a, in)
+	}
+	// A PreToolUse(Agent) that starts the pipeline coordinator (or its steward) as a Claude subagent bypasses Orca
+	// orchestration entirely, so it is denied before any contract lookup, in every session (ADR 0002 B0).
+	if !codex && ev.ToolName == "Agent" && coordAgents[str(in, "subagent_type")] {
+		a.DenyCoord = true
 	}
 	switch {
 	case ev.ToolName == "Bash":

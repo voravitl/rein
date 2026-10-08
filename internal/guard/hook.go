@@ -116,6 +116,11 @@ func RunTask(vendor, task string, r io.Reader, w, stderr io.Writer) int {
 	if derr == nil {
 		a, ok = parse(vendor, raw)
 	}
+	// The coordinator-subagent deny is unconditional (every session, bound or not) and must not need a contract:
+	// judge it on the parsed action before any directory walk or contract lookup (ADR 0002 B0).
+	if a.DenyCoord {
+		return emit(vendor, w, stderr, a.Event, "agent", coordAgentReject)
+	}
 	if task != "" {
 		return runBound(vendor, task, a, ok, w, stderr)
 	}

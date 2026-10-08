@@ -165,6 +165,28 @@ func TestOpencode(t *testing.T) {
 	}
 }
 
+// The coordinator-subagent deny is Claude-only: an Agent call with subagent_type rein:orca-swarm/steward from any
+// other vendor must be judged exactly as before (parseClaude also serves codex, so that is the leak to watch).
+func TestAgentDenyIsClaudeOnly(t *testing.T) {
+	wt, _ := setup(t)
+	outside := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(outside, ".git"), 0o755)
+	denied, silent := `"Agent"`, `{"subagent_type":"rein:orca-swarm","prompt":"p"}`
+	for vendor, ev := range map[string]string{
+		"codex":    f2(codexPre, denied, silent),
+		"kiro":     f2(kiroPre, denied, silent),
+		"opencode": f2(opencodeP, denied, silent),
+		"agy":      f2(agyPre, silent, denied),
+	} {
+		if out, errb, code := call(t, vendor, ev, wt); out != "" || errb != "" || code != 0 {
+			t.Errorf("%s Agent with subagent_type rein:orca-swarm inside a worker must stay allowed, got %q %q (exit %d)", vendor, out, errb, code)
+		}
+	}
+	if out, errb, code := call(t, "codex", f2(codexPre, denied, silent), outside); out != "" || errb != "" || code != 0 {
+		t.Errorf("codex Agent with subagent_type rein:orca-swarm outside a worker must stay silent, got %q %q (exit %d)", out, errb, code)
+	}
+}
+
 func TestSeenLog(t *testing.T) {
 	wt, c := setup(t)
 	call(t, "codex", f2(codexPre, `"Bash"`, `{"command":"ls"}`), wt)

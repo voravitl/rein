@@ -165,6 +165,96 @@ func TestOutsideWorkerIsSilent(t *testing.T) {
 	}
 }
 
+// The pipeline coordinator (and its steward) must never run as a Claude subagent: that bypasses Orca orchestration.
+// The guard denies it in every session, worker or not, before any contract lookup (ADR 0002 B0, interim rule #3).
+func TestCoordinatorSubagentDenied(t *testing.T) {
+	wt, c := setup(t)
+	plain := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(plain, ".git"), 0o755) // a git repo with no contract: the hook is silent there today
+	run := func(ev map[string]any, cwd string) string {
+		ev["hook_event_name"], ev["cwd"] = "PreToolUse", cwd
+		in, _ := json.Marshal(ev)
+		var out bytes.Buffer
+		Run(bytes.NewReader(in), &out)
+		return out.String()
+	}
+	agent := func(cwd, subagentType string) string {
+		ti := map[string]string{"prompt": "spread the work"}
+		if subagentType != "" {
+			ti["subagent_type"] = subagentType
+		}
+		return run(map[string]any{"tool_name": "Agent", "tool_input": ti}, cwd)
+	}
+	for _, st := range []string{"rein:orca-swarm", "rein:orca-steward"} { // denied in every session, no contract needed
+		for _, cwd := range []string{plain, wt} {
+			if out := agent(cwd, st); !strings.Contains(out, "must not run as Claude subagents") ||
+				!strings.Contains(out, `"permissionDecision":"deny"`) {
+				t.Errorf("subagent_type %q in %s must be denied, got %q", st, cwd, out)
+			}
+		}
+	}
+	// every other Agent call, in every session, behaves exactly as today: silent
+	for _, ev := range []map[string]any{
+		{"tool_name": "Agent", "tool_input": map[string]string{"subagent_type": "Explore", "prompt": "look"}},
+		{"tool_name": "Agent", "tool_input": map[string]string{"prompt": "work"}}, // no subagent_type
+		{"tool_name": "Bash", "tool_input": map[string]string{"command": "git status"}},
+	} {
+		for _, cwd := range []string{plain, wt} {
+			if out := run(ev, cwd); out != "" {
+				t.Errorf("event %v in %s must stay silent, got %q", ev["tool_name"], cwd, out)
+			}
+		}
+	}
+	// the deny even wins over a broken contract, and over a bound hook, because it is judged before both
+	if err := os.WriteFile(contract.PathOf(c.Name), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := agent(wt, "rein:orca-swarm"); !strings.Contains(out, "must not run as Claude subagents") || strings.Contains(out, "unreadable") {
+		t.Errorf("the deny must precede the contract lookup, got %q", out)
+	}
+	bound, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Agent", "cwd": plain,
+		"tool_input": map[string]string{"subagent_type": "rein:orca-steward"}})
+	var out, errb bytes.Buffer
+	if code := RunTask("claude", c.Name, bytes.NewReader(bound), &out, &errb); code != 0 ||
+		!strings.Contains(out.String(), "must not run as Claude subagents") {
+		t.Errorf("a bound hook must deny the coordinator subagent, got %q (exit %d)", out.String(), code)
+	}
+}
+
+// hooks/hooks.json must send Agent tool calls to the guard, or the deny in RunTask can never fire in a real session.
+func TestPluginMatcherSendsAgentToTheGuard(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Hooks struct {
+			PreToolUse []struct {
+				Matcher string `json:"matcher"`
+				Hooks   []struct {
+					Command string   `json:"command"`
+					Args    []string `json:"args"`
+				} `json:"hooks"`
+			} `json:"PreToolUse"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Hooks.PreToolUse) != 1 || len(doc.Hooks.PreToolUse[0].Hooks) != 1 {
+		t.Fatalf("want one PreToolUse group with one hook, got %+v", doc.Hooks.PreToolUse)
+	}
+	g := doc.Hooks.PreToolUse[0]
+	for _, tool := range []string{"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", "Agent"} {
+		if !strings.Contains(g.Matcher, tool) {
+			t.Errorf("the PreToolUse matcher must cover %s, got %q", tool, g.Matcher)
+		}
+	}
+	if g.Hooks[0].Command != "${CLAUDE_PLUGIN_DATA}/bin/rein" || len(g.Hooks[0].Args) != 1 || g.Hooks[0].Args[0] != "hook" {
+		t.Errorf("the PreToolUse hook must stay the rein binary with `hook`, got %+v", g.Hooks[0])
+	}
+}
+
 func TestBrokenContractFailsClosed(t *testing.T) {
 	wt, _ := setup(t)
 	if err := os.WriteFile(contract.PathOf("good"), []byte("{not json"), 0o644); err != nil {

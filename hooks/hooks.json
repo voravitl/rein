@@ -8,7 +8,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Agent",
         "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_DATA}/bin/rein", "args": ["hook"], "timeout": 10 }]
       }
     ],
