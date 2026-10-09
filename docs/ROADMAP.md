@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of v0.5.0. Each item names the problem it closes, the design, and how it is enforced. rein's rule: a
+Status as of v0.6.0. Each item names the problem it closes, the design, and how it is enforced. rein's rule: a
 safety property lives in code that decides (hook, drift, script exit code), not in prose a model may skip.
 
 ## Done
@@ -12,6 +12,7 @@ safety property lives in code that decides (hook, drift, script exit code), not 
 | 0.3.0 | B0: Coordinator guard (`rein run start/end/resume/allow/audit`, run marker under git common dir, process liveness, tool/write/agent allowlists, subagent binding, `COORDINATOR_DRIFT` audit) |
 | 0.4.0 | B1: Budget and tick waiter (per-pool cost caps, timebox, `max_review_rounds`, single-flight tick under flock, tick staleness guard, model ledger effective costs) |
 | 0.5.0 | B2, B3, B4: Revision-bound verdicts and approvals (`git patch-id --verbatim`, multi-model review, AskUserQuestion approval prompt & PostToolUse recording), B3 spec lint (`rein spec check`, pre-start tier, coordinator spawn enforcement), B4 standing orders & decision trail (`<run>/decisions.tsv` with secret scan, user-only `standing.md` write denial, SessionStart injection, scope ruling approval), Orca IDE task/model display, and universal subagent collaboration & anti-drift engine (`rein advise`, depth limit cap = 1, default readonly whitelist) |
+| 0.6.0 | Orca Browser E2E test engine (`rein e2e test/run/check`), Board-PDF executive reporting matching `/board-pdf` design system, skill `rein:orca-e2e`, mandatory AI code review & MR report policy (`AGENTS.md`, `templates/review-policy.md`, Head SHA bound), and `rein verdict template` |
 
 ## Next, in order
 
