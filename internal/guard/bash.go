@@ -118,7 +118,7 @@ func (x *ctx) script(src string) string {
 				case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.ClbOut, syntax.RdrInOut:
 					if r.Word != nil {
 						if t := x.word(r.Word); t != "" && !strings.HasPrefix(t, "&") {
-							reason = x.write(t, false)
+							reason = x.write(t)
 						}
 					}
 				}
@@ -299,7 +299,7 @@ func (x *ctx) call(args []string) string {
 				i += 2
 				continue
 			case name == "time" && (a == "-o" || a == "--output") && i+1 < len(rest):
-				if r := x.write(rest[i+1], false); r != "" {
+				if r := x.write(rest[i+1]); r != "" {
 					return r
 				}
 				i += 2
@@ -356,23 +356,23 @@ func (x *ctx) call(args []string) string {
 		return x.call(rest)
 	case name == "tee" || name == "touch" || name == "truncate":
 		for _, t := range nonFlags(rest) {
-			if r := x.write(t, false); r != "" {
+			if r := x.write(t); r != "" {
 				return r
 			}
 		}
 	case name == "rm" || name == "rmdir" || name == "unlink":
 		for _, t := range nonFlags(rest) {
-			if r := x.write(t, true); r != "" {
+			if r := x.write(t); r != "" {
 				return r
 			}
 		}
 	case name == "cp" || name == "ln" || name == "install":
 		if t := nonFlags(rest); len(t) >= 2 {
-			return x.write(t[len(t)-1], false)
+			return x.write(t[len(t)-1])
 		}
 	case name == "mv":
 		for _, t := range nonFlags(rest) { // the source disappears too
-			if r := x.write(t, false); r != "" {
+			if r := x.write(t); r != "" {
 				return r
 			}
 		}
@@ -396,7 +396,7 @@ func (x *ctx) call(args []string) string {
 				files = files[1:] // first non-flag is the script
 			}
 			for _, t := range files {
-				if r := x.write(t, false); r != "" {
+				if r := x.write(t); r != "" {
 					return r
 				}
 			}
@@ -462,13 +462,24 @@ func (x *ctx) git(args []string) string {
 		return r
 	}
 	switch sub {
+	case "rm", "mv":
+		saved := x.cwd
+		if repo != "" {
+			x.cwd = x.abs(repo)
+		}
+		defer func() { x.cwd = saved }()
+		for _, t := range nonFlags(rest) {
+			if r := x.write(t); r != "" {
+				return r
+			}
+		}
 	case "bundle":
 		if len(rest) > 1 && rest[0] == "create" {
-			return x.write(rest[1], false)
+			return x.write(rest[1])
 		}
 	case "clone":
 		if t := nonFlags(rest); len(t) >= 2 {
-			return x.write(t[1], false)
+			return x.write(t[1])
 		}
 	case "push":
 		return "workers never push; the coordinator pushes after the gates"
@@ -521,7 +532,7 @@ func (x *ctx) gitOutputs(sub string, rest []string) string {
 			target = rest[j+1]
 		}
 		if target != "" {
-			if r := x.write(target, false); r != "" {
+			if r := x.write(target); r != "" {
 				return r
 			}
 		}
@@ -634,9 +645,8 @@ func tempDirs() []string {
 	return ds
 }
 
-// write judges one write target. Deletions only need to stay inside the worktree and off the never-edit list;
-// writes to an EXISTING file must also be inside the ownership (new scratch files are left to the drift check).
-func (x *ctx) write(target string, deletion bool) string {
+// write judges every shell write target, including new paths and deletions.
+func (x *ctx) write(target string) string {
 	if target == "" || target == "/dev/null" || strings.HasPrefix(target, "/dev/fd/") ||
 		target == "/dev/stdout" || target == "/dev/stderr" {
 		return ""
@@ -672,10 +682,12 @@ func (x *ctx) write(target string, deletion bool) string {
 	if protectedHook(x.top, rel) {
 		return fmt.Sprintf("%s belongs to the rein guard installed for task %s; workers never change it", rel, x.c.Name)
 	}
-	if !deletion {
-		if _, err := os.Stat(p); err == nil && !glob.Match(rel, x.c.Allow) {
-			return fmt.Sprintf("%s is outside the ownership of task %s (%s); ask the coordinator if the task needs it", rel, x.c.Name, strings.Join(x.c.Allow, ", "))
-		}
+	owned := glob.Match(rel, x.c.Allow)
+	if info, err := os.Stat(p); err == nil && info.IsDir() {
+		owned = owned || glob.Match(rel+"/", x.c.Allow)
+	}
+	if !owned {
+		return fmt.Sprintf("%s is outside the ownership of task %s (%s); ask the coordinator if the task needs it", rel, x.c.Name, strings.Join(x.c.Allow, ", "))
 	}
 	return ""
 }
@@ -832,9 +844,25 @@ func (x *ctx) find(args []string) string {
 	if len(roots) == 0 {
 		roots = []string{"."}
 	}
-	for _, r := range roots {
-		if x.holdsHook(x.abs(r)) {
+	for _, root := range roots {
+		if x.holdsHook(x.abs(root)) {
 			return "find with -delete/-exec over the rein guard files is denied; the installed hook files are not yours to change"
+		}
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "-delete":
+				if r := x.write(root); r != "" {
+					return r
+				}
+			case "-exec", "-execdir", "-ok", "-okdir":
+				var cmd []string
+				for i++; i < len(args) && args[i] != ";" && args[i] != `\;` && args[i] != "+"; i++ {
+					cmd = append(cmd, strings.ReplaceAll(args[i], "{}", x.abs(root)))
+				}
+				if r := x.call(cmd); r != "" {
+					return r
+				}
+			}
 		}
 	}
 	return ""

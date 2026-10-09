@@ -222,7 +222,7 @@ func (x *ctx) coordFind(args, roots []string) string {
 		roots = []string{"."}
 	}
 	for _, r := range roots {
-		if reason := x.write(r, true); reason != "" {
+		if reason := x.write(r); reason != "" {
 			return reason
 		}
 	}
@@ -250,7 +250,7 @@ func (x *ctx) coordGit(repo string, redirect bool, sub string, rest []string) st
 		x.cwd = dir
 		defer func() { x.cwd = saved }()
 		for _, t := range nonFlags(rest) {
-			if r := x.write(t, true); r != "" {
+			if r := x.write(t); r != "" {
 				return r
 			}
 		}

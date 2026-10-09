@@ -456,6 +456,7 @@ Some content but missing required sections
 		}
 
 		worktreePath := filepath.Join(tmpDir, "worktrees/test-task-invalid")
+		t.Setenv("PIPELINE_CONTRACTS", contractsDir)
 
 		// Create and save the contract using standard Save() to register it
 		c := &contract.Contract{
