@@ -269,13 +269,21 @@ func BuildBoardPDF(spec *Spec, report *TestReport, evidenceDir string) (string, 
 }
 
 func findBoardPdfAssets() (string, string) {
-	candidates := []string{
-		// In repo vendored assets
-		filepath.Join(".", "skills", "worktree-pipeline", "assets", "board-pdf"),
-		// Under Claude plugin root
-		filepath.Join(os.Getenv("CLAUDE_PLUGIN_ROOT"), "skills", "worktree-pipeline", "assets", "board-pdf"),
-		// User installed board-pdf skill
-		filepath.Join(os.Getenv("HOME"), ".claude", "skills", "board-pdf", "assets"),
+	var candidates []string
+	if root := os.Getenv("CLAUDE_PLUGIN_ROOT"); root != "" {
+		candidates = append(candidates, filepath.Join(root, "skills", "worktree-pipeline", "assets", "board-pdf"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		candidates = append(candidates, filepath.Join(cwd, "skills", "worktree-pipeline", "assets", "board-pdf"))
+	}
+	if exe, err := os.Executable(); err == nil {
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "skills", "worktree-pipeline", "assets", "board-pdf"))
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "assets", "board-pdf"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, "dev", "rein", "skills", "worktree-pipeline", "assets", "board-pdf"))
+		candidates = append(candidates, filepath.Join(home, ".local", "share", "rein", "skills", "worktree-pipeline", "assets", "board-pdf"))
+		candidates = append(candidates, filepath.Join(home, ".claude", "skills", "board-pdf", "assets"))
 	}
 
 	var foundAssets string
@@ -286,10 +294,19 @@ func findBoardPdfAssets() (string, string) {
 		}
 	}
 
-	scriptCandidates := []string{
-		filepath.Join(foundAssets, "build_pdf.py"),
-		filepath.Join(".", "skills", "worktree-pipeline", "assets", "board-pdf", "build_pdf.py"),
-		filepath.Join(os.Getenv("HOME"), ".claude", "skills", "board-pdf", "scripts", "build_pdf.py"),
+	var scriptCandidates []string
+	if foundAssets != "" {
+		scriptCandidates = append(scriptCandidates, filepath.Join(foundAssets, "build_pdf.py"))
+	}
+	if root := os.Getenv("CLAUDE_PLUGIN_ROOT"); root != "" {
+		scriptCandidates = append(scriptCandidates, filepath.Join(root, "skills", "worktree-pipeline", "assets", "board-pdf", "build_pdf.py"))
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		scriptCandidates = append(scriptCandidates, filepath.Join(cwd, "skills", "worktree-pipeline", "assets", "board-pdf", "build_pdf.py"))
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		scriptCandidates = append(scriptCandidates, filepath.Join(home, "dev", "rein", "skills", "worktree-pipeline", "assets", "board-pdf", "build_pdf.py"))
+		scriptCandidates = append(scriptCandidates, filepath.Join(home, ".claude", "skills", "board-pdf", "scripts", "build_pdf.py"))
 	}
 
 	var foundScript string
