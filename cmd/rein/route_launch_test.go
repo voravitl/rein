@@ -141,6 +141,10 @@ func TestRouteLaunchExecutesOnlyPreparedWorker(t *testing.T) {
 		}
 		if row.Kind == "routing_launch" {
 			launches++
+			var note map[string]any
+			if err := json.Unmarshal([]byte(row.Notes), &note); err != nil || note["launch"] != "shell" {
+				t.Fatalf("incorrect actual launch: %s", row.Notes)
+			}
 		}
 		if row.Kind == "routing_exit" {
 			exits++

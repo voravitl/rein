@@ -77,7 +77,11 @@ func cmdRouteLaunch(args []string) int {
 		}
 	}
 	// Record before starting: a missing ledger must never leave an untracked model call.
-	note, _ := json.Marshal(map[string]any{"provider": d.Provider, "chain": d.Chain, "launch": d.Launch})
+	launch := "shell"
+	if isOrcaLaunch(argv) {
+		launch = "orca"
+	}
+	note, _ := json.Marshal(map[string]any{"provider": d.Provider, "chain": d.Chain, "launch": launch, "configured_launch": d.Launch})
 	row := ledger.Row{Kind: "routing_launch", Task: c.Name, Run: *runID, Provider: d.Provider,
 		Model: model, Role: d.Chain, Notes: string(note)}
 	if err := ledger.Append(row); err != nil {
