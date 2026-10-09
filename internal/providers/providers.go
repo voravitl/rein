@@ -24,8 +24,36 @@ type Provider struct {
 	Agent  string   `json:"agent"`
 	Model  string   `json:"model"`
 	Launch string   `json:"launch"`
-	Cost   string   `json:"cost"`
+	Cost   string   `json:"cost"` // descriptive text only; scored selection reads Billing
 	Probe  []string `json:"probe"`
+
+	// Automatic selection (docs/ROUTING_SELECTION_DESIGN.md). All optional: ordered chains ignore them.
+	Effort        string   `json:"effort,omitempty"`         // reasoning-effort variant this provider is launched with
+	Capabilities  []string `json:"capabilities,omitempty"`   // e.g. repository-edit, tests, browser, image-input
+	ContextTokens int      `json:"context_tokens,omitempty"` // usable context window; 0 = unknown
+	Billing       *Billing `json:"billing,omitempty"`
+	ProbeBound    *Bound   `json:"probe_bound,omitempty"`
+}
+
+// Billing keeps monetary marginal cost, subscription allocation and native quota consumption separate. USD, Kiro
+// credits, agy credits and subscription-limit percentages are different units and are never added together.
+type Billing struct {
+	Mode     string `json:"mode"`                // api | subscription | credits | free
+	Unit     string `json:"unit"`                // native unit of Pool: usd | kiro_credits | agy_credits | subscription_percent
+	Pool     string `json:"pool"`                // provider/account/pool/window qualifier shared by every provider drawing on it
+	PriceKey string `json:"price_key,omitempty"` // key in prices.json for api billing; default: the provider model
+}
+
+// Bound is the declared worst case of one availability probe in Billing.Unit. The probe command is single-shot
+// and its whole process group is killed at the timeout, so Calls is enforced by rein; Amount is the owner's declared cap per call.
+type Bound struct {
+	Calls  int     `json:"calls"`
+	Amount float64 `json:"amount"`
+}
+
+// DiscoverySpec pins the executable used for catalog discovery of one harness (argv prefix; adapter flags are appended).
+type DiscoverySpec struct {
+	Command []string `json:"command"`
 }
 
 type Config struct {
@@ -33,6 +61,8 @@ type Config struct {
 	WorkerChains map[string][]string `json:"worker_chains"`
 	ReviewChains map[string][]string `json:"review_chains"`
 	QuotaSignals map[string][]string `json:"quota_signals"`
+	// Discovery optionally overrides the executable per harness (codex, kiro, antigravity, opencode, opencode2, claude).
+	Discovery map[string]DiscoverySpec `json:"discovery,omitempty"`
 }
 
 type Result struct {
@@ -88,11 +118,14 @@ func probe(ctx context.Context, name string, p Provider, signals []string, timeo
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(cctx, p.Probe[0], p.Probe[1:]...)
+	setGroup(cmd) // a wrapper (sh -c, npx, uv run, timeout) must not leave a descendant spending after the bound has expired
+	cmd.Cancel = func() error { killGroup(cmd); return nil }
 	cmd.WaitDelay = 2 * time.Second // a killed wrapper's children may hold the output pipes; do not wait for them
 	if home, err := os.UserHomeDir(); err == nil {
 		cmd.Dir = home
 	}
 	out, err := cmd.CombinedOutput()
+	killGroup(cmd) // descendants that outlived a probe which already answered
 	secs := time.Since(start).Seconds()
 	text := ansi.ReplaceAllString(string(out), "")
 	var execErr *exec.Error

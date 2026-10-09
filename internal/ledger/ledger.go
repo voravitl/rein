@@ -58,6 +58,35 @@ type Row struct {
 	Tokens     *int   `json:"tokens,omitempty"`
 	OK         *bool  `json:"ok,omitempty"`
 	RecordedAt string `json:"recorded_at,omitempty"`
+
+	// Strict attributable evidence for automatic selection (docs/ROUTING_SELECTION_DESIGN.md). All optional so
+	// legacy rows still load; scored selection counts only rows that carry the fields it needs. A nil pointer or an
+	// empty string means "unknown", never "false" or "zero".
+	Attempt       string `json:"attempt,omitempty"`        // root decision ID: groups the launch, outcome and charge rows of one attempt
+	Decision      string `json:"decision,omitempty"`       // ID of the decision that produced this row
+	ResolvedModel string `json:"resolved_model,omitempty"` // exact model the harness reports it actually ran
+	Effort        string `json:"effort,omitempty"`
+	Config        string `json:"config,omitempty"` // fingerprint of harness configuration, tools and context regime
+	Suite         string `json:"suite,omitempty"`  // evaluation-suite version in force at launch
+	Tier          string `json:"tier,omitempty"`   // T1|T2|T3 at launch
+	GatesPassed   *bool  `json:"gates_passed,omitempty"`
+	ReviewSHA     string `json:"review_sha,omitempty"` // exact revision the independent review judged
+	Pid           *int   `json:"pid,omitempty"`        // launcher process, to tell an in-flight attempt from a crashed one
+	PidStart      *int64 `json:"pid_start,omitempty"`
+
+	// Charge rows (kind "cost"): one amount in one native unit and one pool. Units and pools are never merged.
+	Component string   `json:"component,omitempty"` // worker|review|repair|probe|fallback|shared|calibration
+	ChargeID  string   `json:"charge_id,omitempty"` // idempotency key: duplicates count once
+	Pool      string   `json:"pool,omitempty"`      // provider/account/pool/window qualifier
+	Unit      string   `json:"unit,omitempty"`      // usd|kiro_credits|agy_credits|subscription_percent|tokens
+	Amount    *float64 `json:"amount,omitempty"`
+
+	// Reviewer calibration (kind "fixture"): one frozen red or clean fixture judged by Reviewer.
+	Fixture       string `json:"fixture,omitempty"`
+	FixtureClass  string `json:"fixture_class,omitempty"`  // defect|clean
+	Detected      *bool  `json:"detected,omitempty"`       // defect fixture: the known defect was reported
+	FalsePositive *bool  `json:"false_positive,omitempty"` // clean fixture: a reported finding was adjudicated false
+	Adjudicated   *bool  `json:"adjudicated,omitempty"`    // a human or objective check settled the outcome
 }
 
 func Path() string {
@@ -150,12 +179,23 @@ func load(since string, strict bool) ([]Row, error) {
 			fmt.Fprintf(os.Stderr, "[ledger] skipping bad line %d\n", n)
 			continue
 		}
-		if since != "" && r.RecordedAt < since {
+		if since != "" && !recordedSince(r.RecordedAt, since) {
 			continue
 		}
 		rows = append(rows, r)
 	}
 	return rows, sc.Err()
+}
+
+// recordedSince reports whether a row stamped at is not before since. Append stamps local time and run markers hold UTC, so
+// two RFC 3339 values are compared as instants; anything else (a bare date from --since) keeps the plain string comparison.
+func recordedSince(at, since string) bool {
+	a, errA := time.Parse(time.RFC3339, at)
+	s, errS := time.Parse(time.RFC3339, since)
+	if errA == nil && errS == nil {
+		return !a.Before(s)
+	}
+	return at >= since
 }
 
 type price struct {

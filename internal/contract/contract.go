@@ -31,11 +31,9 @@ type Budget struct {
 	TimeboxMinutes int `json:"timebox_minutes,omitempty"`
 	// SoftRatio: spend < soft_ratio * cap is ExitOK (default 0.7).
 	SoftRatio float64 `json:"soft_ratio,omitempty"`
-	// QualityFloor: approval rate, max false claims.
-	QualityFloor struct {
-		MinApprovalRate float64 `json:"min_approval_rate,omitempty"`
-		MaxFalseClaims  int     `json:"max_false_claims,omitempty"`
-	} `json:"quality_floor,omitempty"`
+	// QualityFloor: approval rate, max false claims. Automatic selection reads the same shape from
+	// Profile.Selection, so quality gates do not depend on a budget being configured.
+	QualityFloor QualityFloor `json:"quality_floor,omitempty"`
 	// Estimates: cost estimates for unknown spend (all flagged approx).
 	Estimates map[string]float64 `json:"estimates,omitempty"`
 }
@@ -69,6 +67,9 @@ type Profile struct {
 	Pack string `json:"pack,omitempty"`
 	// Sensitive paths: globs that force tier T3 when matched by contract allow globs (ADR 0002 B2.1).
 	SensitivePaths []string `json:"sensitive_paths,omitempty"`
+	// Selection: policy for automatic task and model selection (docs/ROUTING_SELECTION_DESIGN.md). It is owner
+	// configuration; the coordinator cannot supply or weaken it per task.
+	Selection *Selection `json:"selection,omitempty"`
 }
 
 // LoadProfile reads a profile file; "" means $REIN_PROFILE, then no profile (generic rules only).

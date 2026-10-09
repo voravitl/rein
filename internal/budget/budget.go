@@ -285,6 +285,7 @@ func getBudget(p *contract.Profile) *contract.Budget {
 
 func tallySpend(rows []ledger.Row, runName, task string) map[string]float64 {
 	spend := make(map[string]float64)
+	seen := make(map[[2]string]bool)
 
 	for _, r := range rows {
 		// Filter by run
@@ -294,6 +295,15 @@ func tallySpend(rows []ledger.Row, runName, task string) map[string]float64 {
 
 		// Filter by task if specified
 		if task != "" && r.Task != task {
+			continue
+		}
+
+		// A cost row is one charge in one native unit of one pool: its amount counts once per (Attempt, ChargeID), and a
+		// negative amount never lowers spend.
+		if r.Kind == "cost" && r.Pool != "" && r.Amount != nil {
+			if newCharge(seen, r) {
+				spend[r.Pool] += max(*r.Amount, 0)
+			}
 			continue
 		}
 
