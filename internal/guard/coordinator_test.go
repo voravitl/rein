@@ -251,6 +251,7 @@ func TestCoordUserOnlyCommands(t *testing.T) {
 		"rein run allow --task t --reason r", "rein run allow . --commit abc1234 --reason r", "/usr/local/bin/rein run allow --task t --reason r",
 		"./bin/rein.exe run allow --task t --reason r", "rein run end --abandon", "rein run end --abandon --reason x", "rein run end . -abandon", "rein run end --abandon=true",
 		"rein run end --reason x --abandon", "rein budget raise --reason x", "rein approve --mr 4", "rein approve prompt --mr 4",
+		"rein route reconcile --hold h-1 --reason r", "timeout 5 rein route reconcile --hold h-1 --reason r",
 		"env -u CLAUDE_PID rein run allow --task t --reason r", "env -u CLAUDE_CODE_SESSION_ID -u CLAUDE_PID rein approve --mr 4",
 		"r=rein; $r run allow --task t --reason r", "R=/opt/rein; $R/../rein approve", "bash -c 'rein run allow --task t'", "sh -c \"echo hi && rein run end --abandon\"",
 		"echo hi && rein run end --abandon", "nohup rein approve &", "timeout 5 rein budget raise", "sudo rein run allow --task t", "xargs rein approve",
@@ -267,6 +268,37 @@ func TestCoordUserOnlyCommands(t *testing.T) {
 		"rein run start . --run x", "rein run end", "rein run end .", "rein run audit", "rein run resume", "rein contract new --name x --run-dir d",
 		"rein drift x", "rein hooks install x", "rein version", "git commit -m 'rein run allow'", "echo rein run allow", "grep -rn 'rein approve' docs",
 		"cat docs/rein-run-allow.md", "rein budget check", "rein run end --reason 'no abandon here'",
+		"rein route auto --task x --run r --profile-file p.json", "rein route settle --attempt a", "rein route holds", "rein contract hash x",
+	}
+	for _, c := range allow {
+		e.expect(false, e.bash(c), c)
+	}
+}
+
+// The policy, the evidence and the state rein judges by are the owner's: a coordinator command must not set, replace or unset the
+// variables that point at them, nor hand `rein route` a providers file of its own.
+func TestCoordCannotRedirectThePolicyOrEvidenceItIsJudgedBy(t *testing.T) {
+	e := newCoordEnv(t)
+	deny := []string{
+		"REIN_PROFILE=/tmp/mine.json rein route auto --task t --run r --profile-file p.json",
+		"export REIN_PROFILE=/tmp/mine.json", "declare -x PIPELINE_LEDGER=/tmp/l.jsonl", "PIPELINE_PRICES=/tmp/p.json rein ledger charge --attempt a",
+		"PIPELINE_CONTRACTS=/tmp/c rein route settle --attempt a", "PIPELINE_FALLBACK=/tmp/f.json rein route auto --task t --run r --profile-file p", "REIN_RUN_DIR=/tmp/x rein budget check",
+		"env REIN_PROFILE=/tmp/mine.json rein route prepare --task t --run r --chain worker:backend", "env -u REIN_PROFILE rein route prepare --task t --run r --chain worker:backend",
+		"env --unset=REIN_PROFILE rein route auto --task t", "env -uPIPELINE_LEDGER rein ledger add --attempt a", "env -u HOME -u PIPELINE_CONTRACTS rein route holds",
+		"env -i /usr/local/bin/rein route auto --task t", "env --ignore-environment rein route prepare", "env - rein route prepare", "env -iC /tmp rein route holds",
+		"unset REIN_PROFILE", "unset -v PIPELINE_LEDGER", "unset FOO REIN_RUN_DIR", "timeout 5 env -u REIN_PROFILE rein route prepare",
+		"bash -c 'REIN_PROFILE=/tmp/x rein route auto --task t'", "echo hi && REIN_PROFILE=/tmp/x rein route holds",
+		"rein route auto --task t --run r --profile-file p --config /tmp/mine.json", "rein route prepare --task t --run r --chain worker:x --config=/tmp/mine.json",
+		"rein route discover --config /tmp/mine.json", "rein route settle --attempt a --config /tmp/m.json",
+	}
+	for _, c := range deny {
+		e.expect(true, e.bash(c), c)
+	}
+	allow := []string{
+		"rein route auto --task t --run r --profile-file p.json", "rein route holds", "rein route settle --attempt a", "rein route status",
+		"env FOO=1 rein route holds", "env -u HOME ls", "env -C /tmp ls", "env -S 'ls -la'", "unset FOO", "FOO=1 rein route holds",
+		"export PIPELINE_LOGDIR=/tmp/logs", "rein providers --config /tmp/f.json", "rein contract new --name x --run-dir d --profile /tmp/p.json",
+		"echo REIN_PROFILE=x", "grep -rn REIN_PROFILE docs",
 	}
 	for _, c := range allow {
 		e.expect(false, e.bash(c), c)

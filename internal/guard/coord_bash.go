@@ -121,21 +121,61 @@ var gitEnvNames = map[string]bool{"GIT_DIR": true, "GIT_COMMON_DIR": true, "GIT_
 
 const gitEnvReason = "GIT_DIR / GIT_COMMON_DIR / GIT_WORK_TREE / GIT_INDEX_FILE point git away from the repository the guard watches; use `git -C <dir>`"
 
-func (x *ctx) coordAssign(a *syntax.Assign) string {
-	if x.coord != nil && a != nil && a.Name != nil && gitEnvNames[a.Name.Value] {
+// stateEnvNames redirect where rein reads the owner's policy, evidence, prices, providers, contracts and run marker. They are the
+// owner's configuration: a coordinator that sets, replaces or unsets them in a command could make rein judge its own work by a
+// different policy or a different ledger.
+var stateEnvNames = map[string]bool{"REIN_PROFILE": true, "PIPELINE_LEDGER": true, "PIPELINE_PRICES": true, "PIPELINE_CONTRACTS": true,
+	"PIPELINE_FALLBACK": true, "REIN_RUN_DIR": true}
+
+const stateEnvReason = "REIN_PROFILE / PIPELINE_LEDGER / PIPELINE_PRICES / PIPELINE_CONTRACTS / PIPELINE_FALLBACK / REIN_RUN_DIR (and env -i) change which policy, evidence and state rein uses: they are the owner's configuration, set in the user's environment before the session, never by the coordinator"
+
+// coordEnvName says why a coordinator command may not set, replace or unset an environment variable ("" = it may).
+func (x *ctx) coordEnvName(name string) string {
+	switch {
+	case x.coord == nil:
+		return ""
+	case gitEnvNames[name]:
 		return gitEnvReason
+	case stateEnvNames[name]:
+		return stateEnvReason
 	}
 	return ""
 }
 
-func (x *ctx) coordEnvPair(pair string) string {
-	if x.coord == nil {
+func (x *ctx) coordAssign(a *syntax.Assign) string {
+	if a == nil || a.Name == nil {
 		return ""
 	}
-	if name, _, ok := strings.Cut(pair, "="); ok && gitEnvNames[name] {
-		return gitEnvReason
+	return x.coordEnvName(a.Name.Value)
+}
+
+func (x *ctx) coordEnvPair(pair string) string {
+	if name, _, ok := strings.Cut(pair, "="); ok {
+		return x.coordEnvName(name)
 	}
 	return ""
+}
+
+// coordEnvOption judges an option of `env`: -u NAME / --unset=NAME / -uNAME remove a variable, -i / --ignore-environment remove all.
+// It reports how many arguments the option takes (0 = not an env-clearing option) and the denial, if any.
+func (x *ctx) coordEnvOption(rest []string, i int) (take int, reason string) {
+	if x.coord == nil {
+		return 0, ""
+	}
+	a := rest[i]
+	switch {
+	case (a == "-u" || a == "--unset") && i+1 < len(rest):
+		return 2, x.coordEnvName(rest[i+1])
+	case strings.HasPrefix(a, "--unset="):
+		return 1, x.coordEnvName(strings.TrimPrefix(a, "--unset="))
+	case a == "--ignore-environment" || a == "-":
+		return 1, stateEnvReason
+	case strings.HasPrefix(a, "-u") && len(a) > 2 && !strings.HasPrefix(a, "--"):
+		return 1, x.coordEnvName(a[2:])
+	case strings.HasPrefix(a, "-") && !strings.HasPrefix(a, "--") && strings.Contains(a, "i"):
+		return 1, stateEnvReason
+	}
+	return 0, ""
 }
 
 // hasFlag reports whether args hold -name / --name / -name=v / --name=v.
@@ -161,6 +201,8 @@ func userOnly(name string, rest []string) string {
 		return "rein run end --abandon"
 	case len(nf) >= 2 && nf[0] == "budget" && nf[1] == "raise":
 		return "rein budget raise"
+	case len(nf) >= 2 && nf[0] == "route" && nf[1] == "reconcile":
+		return "rein route reconcile"
 	case len(nf) >= 1 && nf[0] == "approve":
 		return "rein approve"
 	}
@@ -177,6 +219,16 @@ func (x *ctx) coordCall(raw, name string, rest []string) string {
 	}
 	if cmd != "" {
 		return fmt.Sprintf("`%s` is for the user%s: run it in your own terminal; the coordinator never authorizes itself", cmd, via)
+	}
+	if name == "unset" {
+		for _, a := range rest {
+			if r := x.coordEnvName(a); r != "" {
+				return r
+			}
+		}
+	}
+	if name == "rein" && len(rest) >= 1 && rest[0] == "route" && hasFlag(rest[1:], "config") {
+		return "ROUTE_CONFIG: the approved providers are the owner's configuration (PIPELINE_FALLBACK or ~/.config/rein/fallback-chain.json), not a per-call choice: leave --config out"
 	}
 	if name == "rein" && len(rest) >= 2 && rest[0] == "route" && rest[1] == "launch" {
 		return x.coordRouteLaunch(rest[2:])

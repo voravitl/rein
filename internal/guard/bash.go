@@ -320,6 +320,16 @@ func (x *ctx) call(args []string) string {
 	opts:
 		for i < len(rest) {
 			a := rest[i]
+			if name == "env" {
+				take, why := x.coordEnvOption(rest, i)
+				if why != "" {
+					return why
+				}
+				if take > 0 {
+					i += take
+					continue
+				}
+			}
 			switch {
 			case name == "env" && (a == "-S" || a == "--split-string") && i+1 < len(rest):
 				x.deep++
