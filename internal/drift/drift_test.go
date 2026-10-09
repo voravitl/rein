@@ -270,6 +270,10 @@ func gitOut(t *testing.T, dir string, args ...string) string {
 func TestDriftErrorExitIsNotSkippedTest(t *testing.T) {
 	wt, c := repo(t, "error-exit")
 	path := filepath.Join(wt, "backend/Routing/cleanup.py")
+	c.Allow = append(c.Allow, "internal/drift/**")
+	scanner := filepath.Join(wt, "internal/drift/drift.go")
+	declaration := "fake = regexp.MustCompile(`" + fake.String() + "`)"
+	write(t, scanner, declaration+"\n")
 	write(t, path, "raise SystemExit('invalid payload')\n")
 	write(t, c.ReportPath, "# Report\n## S1 done\nError handler implemented.\n## S2 done\nChecks passed.\n")
 	sh(t, wt, "git", "add", ".")
@@ -281,7 +285,7 @@ func TestDriftErrorExitIsNotSkippedTest(t *testing.T) {
 	if strings.Contains(kinds(r.Drift), "FAKE_COMPLETION") {
 		t.Fatalf("error handler reported as skipped test: %+v", r.Drift)
 	}
-	write(t, path, "x"+"it('unfinished', function() {});\n")
+	write(t, scanner, declaration+"\n"+"x"+"it('unfinished', function() {});\n")
 	sh(t, wt, "git", "add", ".")
 	sh(t, wt, "git", "commit", "-qm", "test: skip unfinished case")
 	r, err = Check(c, wt, "origin/main", nil)
