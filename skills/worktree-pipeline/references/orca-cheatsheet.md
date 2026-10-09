@@ -24,10 +24,9 @@ orca orchestration check --run R [--peek] [--types worker_done,escalation,questi
 orca orchestration check --run R --ack <deliveryId> --peek --json   # ack by DELIVERY id, not message id
 orca orchestration reply --run R --id <msg> --body "..." --json      # answer a worker's ask
 orca orchestration send --run R --to dispatch:<ctx> --type status --subject S --body B --json  # follow-up note
-orca orchestration worker-list --run R --json        # workers[].dispatchStatus / terminalState / resource
-orca orchestration worker-stop --dispatch <ctx> --json      # (no --run flag)
+orca orchestration worker-list --run R --include-remote --json  # projection.liveness / nextAction; follow page.nextCursor until !page.hasMore
+orca orchestration worker-stop --dispatch <ctx> --json      # only positive exited proof + exact nextAction; no --run flag
 orca orchestration worker-release --dispatch <ctx> --json
-orca terminal close --terminal <term> --json          # "terminal_handle_stale" = already closed
 orca worktree rm --worktree path:/abs/path --force --json
 ```
 Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`.
@@ -56,9 +55,10 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
     `codex exec <hook flags from rein hooks install> --dangerously-bypass-approvals-and-sandbox --ephemeral --color never -m gpt-6.1-sol -c model_reasoning_effort=high -C <worktree> -o <final.txt> - < prompt.md > log 2>&1`
     It can run docker, vitest and e2e. Tell it: "Orca is unavailable, do NOT run any orca command; end with a 3-sentence summary, files and commits".
   - agy has a direct form too: `agy --print "$(cat prompt)" --mode accept-edits --dangerously-skip-permissions --model gemini-3.8-flash-high --output-format text`.
-  - When Orca comes back, settle the lost dispatches with `orca_cleanup.py --stop`.
-- **Too many open terminals slow the Orca renderer.** Close finished ones promptly (`orca_cleanup.py`).
-- **The worker-list `terminalState` stays `retained`** after a release. Closing the terminal is what frees it.
+  - When Orca comes back, enumerate every worker page and inspect positive liveness evidence. Timeout, lost `worker_done`, missing state and `unverifiable` never authorize cleanup. `orca_cleanup.py --stop` refuses unless the dispatch has positively exited and its exact `projection.nextAction.argv` recommends `worker-stop`; a `worker-read` or `worker-show` recommendation requires inspection first.
+- **Cleanup follows Orca ownership receipts.** `python3 -B scripts/orca_cleanup.py <run> [--dry-run]` resolves `ORCA_CLI_COMMAND`, then `ORCA_DEV_REPO_ROOT` → `orca-dev`, then Linux `orca-ide`, otherwise `orca`, once per invocation. It reads all pages before mutation and requires an exact release recommendation plus `dispatchStatus` or authoritative `projection.outcome` of `succeeded`/`failed`. Accepted settled workers may be released while the TUI is live; exited liveness alone never authorizes release.
+- **Retained/reused terminals remain preserved.** `worker-release` archives output and closes only the terminal owned by the settled dispatch; reused, setup, coordinator, active and unproven terminals are retained. For `release_pending` or `release_unknown`, inspect the receipt and follow its exact recovery action. Never substitute `terminal close`.
+- **Current recovery authority:** load `orca skills get orchestration --reference references/recovery-and-cleanup.md` and `orca skills get orchestration --reference references/messaging-and-gates.md`; a listing argument is never proof of exit.
 
 ## opencode / kiro (verified 2026-10-08)
 - **opencode2 (v2.0.20)** is a native Orca agent: `worker-start ... --agent opencode2` (or `opencode`). `--model` is ignored for it; the model comes from `~/.config/opencode/opencode.jsonc` (`model`). For a different model per task use the shell route: `opencode2 run -m <provider/model> "$(cat preamble)"`. List models: `opencode2 models`. Headless probe answered in seconds.

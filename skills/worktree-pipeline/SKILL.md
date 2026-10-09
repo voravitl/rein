@@ -117,7 +117,7 @@ Never release or deploy as part of the train unless the user said so. Version nu
 
 ## 8. Close what is finished (memory and disk)
 Clean up after every settled task, not only at the end:
-- `python3 <skill>/scripts/orca_cleanup.py <run> [--stop ctx_…]`: releases settled workers, stops the listed finished-but-unsettled ones and closes their terminals.
+- `python3 -B <skill>/scripts/orca_cleanup.py <run> [--stop ctx_…] [--dry-run]`: enumerates every worker page (including remote observations) before acting, using one resolved Orca binary. Releases only workers whose exact `projection.nextAction.argv` recommends release and whose `dispatchStatus` or authoritative `projection.outcome` is `succeeded`/`failed`, even when the TUI is live; `--stop` requires positively exited liveness and the exact stop recommendation, otherwise it refuses. Unsettled active, unverifiable and missing-state workers remain preserved; retained/reused terminals follow Orca ownership receipts. Read release receipts and follow their exact recovery recommendations; never substitute `terminal close`.
 - `python3 <skill>/scripts/cleanup_worktrees.py <main checkout> --keep <running tasks | none> --root <worktree_root> [--ignore <the profile's local_artifacts, repo-relative, e.g. frontend/node_modules>] [--prune-images <test image repo>]` (`--keep` is required: a worker that has not committed yet looks merged): removes clean worktrees whose head is in `origin/main` or whose commits are patch-equivalent, deletes their branches, and removes old test images that no running container uses.
 - **Keep:** the worktrees of running tasks, and review worktrees until their MR merges. **Never** run `docker volume prune` or `docker system prune`.
 
