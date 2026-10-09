@@ -253,8 +253,13 @@ func base(a string) string {
 
 func nonFlags(args []string) []string {
 	var out []string
+	options := true
 	for _, a := range args {
-		if a != "" && !strings.HasPrefix(a, "-") {
+		if options && a == "--" {
+			options = false
+			continue
+		}
+		if a != "" && (!options || !strings.HasPrefix(a, "-")) {
 			out = append(out, a)
 		}
 	}
@@ -501,6 +506,9 @@ func (x *ctx) git(args []string) string {
 	switch sub {
 	case "rm", "mv":
 		for _, arg := range rest {
+			if arg == "--" {
+				break
+			}
 			// Git accepts unambiguous abbreviations of long options.
 			option := strings.SplitN(arg, "=", 2)[0]
 			if strings.HasPrefix(option, "--") && len(option) > 2 && strings.HasPrefix("--pathspec-from-file", option) {
