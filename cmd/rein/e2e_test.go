@@ -48,3 +48,35 @@ func TestCmdE2E_SpecParsingAndRunValidation(t *testing.T) {
 		t.Fatalf("expected code 2 on empty steps spec, got %d", code)
 	}
 }
+
+func TestReorderFlagsFirst(t *testing.T) {
+	cases := []struct {
+		input    []string
+		expected []string
+	}{
+		{
+			input:    []string{"target.json", "-out", "evidence", "-json"},
+			expected: []string{"-out", "evidence", "-json", "target.json"},
+		},
+		{
+			input:    []string{"-json", "target.json"},
+			expected: []string{"-json", "target.json"},
+		},
+		{
+			input:    []string{"--base-url=http://localhost", "spec.json", "--out", "out"},
+			expected: []string{"--base-url=http://localhost", "--out", "out", "spec.json"},
+		},
+	}
+
+	for _, c := range cases {
+		got := reorderFlagsFirst(c.input)
+		if len(got) != len(c.expected) {
+			t.Fatalf("for %v, expected %v, got %v", c.input, c.expected, got)
+		}
+		for i := range got {
+			if got[i] != c.expected[i] {
+				t.Fatalf("for %v at index %d: expected %s, got %s", c.input, i, c.expected[i], got[i])
+			}
+		}
+	}
+}

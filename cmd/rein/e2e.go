@@ -41,9 +41,7 @@ func cmdE2ECheck(args []string) int {
 	err := client.CheckStatus()
 
 	if *asJSON {
-		res := map[string]any{
-			"ok": err == nil,
-		}
+		res := map[string]any{"ok": err == nil}
 		if err != nil {
 			res["error"] = err.Error()
 		} else {
@@ -51,17 +49,17 @@ func cmdE2ECheck(args []string) int {
 		}
 		data, _ := json.MarshalIndent(res, "", "  ")
 		fmt.Println(string(data))
-	} else {
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "rein e2e check: failed: %v\n", err)
 			return 1
 		}
-		fmt.Println("rein e2e check: Orca browser runtime is ready and reachable")
+		return 0
 	}
 
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "rein e2e check: failed: %v\n", err)
 		return 1
 	}
+	fmt.Println("rein e2e check: Orca browser runtime is ready and reachable")
 	return 0
 }
 
@@ -81,11 +79,13 @@ func cmdE2ETest(args []string) int {
 	}
 
 	target := posArgs[0]
-	var spec *e2e.Spec
-	var err error
+	isURL := strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://")
 
-	if strings.HasPrefix(target, "http://") || strings.HasPrefix(target, "https://") {
-		// Generate an automated smoke test spec
+	var (
+		spec *e2e.Spec
+		err  error
+	)
+	if isURL {
 		spec = &e2e.Spec{
 			Name:           "smoke-browser-test",
 			Description:    fmt.Sprintf("Automated smoke verification for %s", target),
@@ -110,10 +110,10 @@ func cmdE2ETest(args []string) int {
 
 	evidenceDir := *outDir
 	if evidenceDir == "" {
-		if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-			evidenceDir = filepath.Join(filepath.Dir(target), "evidence")
-		} else {
+		if isURL {
 			evidenceDir = filepath.Join("report", "e2e")
+		} else {
+			evidenceDir = filepath.Join(filepath.Dir(target), "evidence")
 		}
 	}
 
@@ -186,9 +186,9 @@ func runSpec(spec *e2e.Spec, evidenceDir string, asJSON bool) int {
 		}
 		if !report.Success {
 			fmt.Fprintf(os.Stderr, "FAILURE: %s\n", report.FailureMessage)
-			return 1
+		} else {
+			fmt.Println("SUCCESS: All steps passed.")
 		}
-		fmt.Println("SUCCESS: All steps passed.")
 	}
 
 	if !report.Success {
@@ -198,13 +198,12 @@ func runSpec(spec *e2e.Spec, evidenceDir string, asJSON bool) int {
 }
 
 func reorderFlagsFirst(args []string) []string {
-	var flags []string
-	var posArgs []string
+	var flags, posArgs []string
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			flags = append(flags, arg)
-			if !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if arg != "-json" && arg != "--json" && !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
 				flags = append(flags, args[i])
 			}

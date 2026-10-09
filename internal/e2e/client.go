@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -63,9 +64,19 @@ type orcaGenericResponse struct {
 }
 
 func (c *RealOrcaClient) execOrca(args ...string) ([]byte, error) {
-	cmd := exec.Command(c.BinaryPath, args...)
+	timeout := c.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, c.BinaryPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("orca command %v timed out after %v", args, timeout)
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			return nil, fmt.Errorf("orca command %v failed (exit %d): %s", args, exitErr.ExitCode(), string(exitErr.Stderr))
@@ -75,20 +86,24 @@ func (c *RealOrcaClient) execOrca(args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// CheckStatus verifies that Orca runtime is alive and reachable.
-func (c *RealOrcaClient) CheckStatus() error {
-	out, err := c.execOrca("status", "--json")
+func (c *RealOrcaClient) execOrcaGeneric(op string, args ...string) error {
+	out, err := c.execOrca(args...)
 	if err != nil {
-		return fmt.Errorf("orca runtime check failed: %w", err)
+		return err
 	}
 	var resp orcaGenericResponse
 	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("parse orca status: %w", err)
+		return fmt.Errorf("parse %s: %w", op, err)
 	}
 	if !resp.OK {
-		return fmt.Errorf("orca runtime not ok: %s", resp.Error)
+		return fmt.Errorf("%s failed: %s", op, resp.Error)
 	}
 	return nil
+}
+
+// CheckStatus verifies that Orca runtime is alive and reachable.
+func (c *RealOrcaClient) CheckStatus() error {
+	return c.execOrcaGeneric("orca status", "status", "--json")
 }
 
 // TabCreate opens a new browser tab navigating to the given URL.
@@ -119,28 +134,12 @@ func (c *RealOrcaClient) TabCreate(url string) (string, error) {
 
 // TabClose closes the specified tab.
 func (c *RealOrcaClient) TabClose(pageID string) error {
-	out, err := c.execOrca("tab", "close", "--page", pageID, "--json")
-	if err != nil {
-		return err
-	}
-	var resp orcaGenericResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("parse tab close: %w", err)
-	}
-	return nil
+	return c.execOrcaGeneric("tab close", "tab", "close", "--page", pageID, "--json")
 }
 
 // Goto navigates the specified tab to the URL.
 func (c *RealOrcaClient) Goto(pageID, url string) error {
-	out, err := c.execOrca("goto", "--url", url, "--page", pageID, "--json")
-	if err != nil {
-		return err
-	}
-	var resp orcaGenericResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("parse goto: %w", err)
-	}
-	return nil
+	return c.execOrcaGeneric("goto", "goto", "--url", url, "--page", pageID, "--json")
 }
 
 // Snapshot takes an accessibility tree snapshot with interactive refs.
@@ -166,42 +165,18 @@ func (c *RealOrcaClient) Snapshot(pageID string) (*SnapshotResult, error) {
 // Click clicks an element by ref (e.g. e1, e2).
 func (c *RealOrcaClient) Click(pageID, element string) error {
 	element = strings.TrimPrefix(element, "@")
-	out, err := c.execOrca("click", "--element", element, "--page", pageID, "--json")
-	if err != nil {
-		return err
-	}
-	var resp orcaGenericResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("parse click: %w", err)
-	}
-	return nil
+	return c.execOrcaGeneric("click", "click", "--element", element, "--page", pageID, "--json")
 }
 
 // Fill clears and fills an element by ref with the given value.
 func (c *RealOrcaClient) Fill(pageID, element, value string) error {
 	element = strings.TrimPrefix(element, "@")
-	out, err := c.execOrca("fill", "--element", element, "--value", value, "--page", pageID, "--json")
-	if err != nil {
-		return err
-	}
-	var resp orcaGenericResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("parse fill: %w", err)
-	}
-	return nil
+	return c.execOrcaGeneric("fill", "fill", "--element", element, "--value", value, "--page", pageID, "--json")
 }
 
 // Keypress triggers a key press event in the tab.
 func (c *RealOrcaClient) Keypress(pageID, key string) error {
-	out, err := c.execOrca("keypress", "--key", key, "--page", pageID, "--json")
-	if err != nil {
-		return err
-	}
-	var resp orcaGenericResponse
-	if err := json.Unmarshal(out, &resp); err != nil {
-		return fmt.Errorf("parse keypress: %w", err)
-	}
-	return nil
+	return c.execOrcaGeneric("keypress", "keypress", "--key", key, "--page", pageID, "--json")
 }
 
 // Eval evaluates a JavaScript expression and returns the stringified result.

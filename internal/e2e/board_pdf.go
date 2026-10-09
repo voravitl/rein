@@ -24,8 +24,7 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
 	sb.WriteString("<link rel=\"stylesheet\" href=\"board.css\">\n")
 	sb.WriteString("</head>\n<body>\n\n")
 
-	// ==================== COVER BOARD ====================
-	sb.WriteString("<!-- ===================== COVER ===================== -->\n")
+	// Cover board
 	sb.WriteString("<section class=\"board cover\">\n")
 	sb.WriteString(fmt.Sprintf("  <div class=\"kicker\">E2E TEST REPORT · ORCA BROWSER · %s</div>\n", dateStr))
 
@@ -36,7 +35,6 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
 	sb.WriteString(fmt.Sprintf("  <h1>%s</h1>\n", html.EscapeString(headline)))
 	sb.WriteString(fmt.Sprintf("  <p class=\"lede\">ทดสอบจริงผ่าน Orca Browser (Accessibility Tree & Screenshots) บน %s — บันทึกหลักฐานระดับพิกเซลและ DOM state ยืนยันผล</p>\n", html.EscapeString(spec.BaseURL)))
 
-	// Banner
 	bannerClass := "box-ok"
 	chipClass := "done"
 	verdictLabel := "PASS: พร้อมผ่าน Gate"
@@ -54,7 +52,6 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
   </div>
 `, bannerClass, chipClass, timeStr, html.EscapeString(verdictLabel), html.EscapeString(verdictDesc)))
 
-	// Cards 3
 	sb.WriteString("  <div class=\"cards3\">\n")
 	sb.WriteString(fmt.Sprintf(`    <div class="card"><h3>ผลลัพธ์การทดสอบ (KPIs)</h3>
       <ul>
@@ -84,7 +81,6 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
   </div>
 `)
 
-	// Legend
 	sb.WriteString(fmt.Sprintf(`  <div class="legend-title">สถานะที่ใช้ในเอกสารนี้ (ตรวจล่าสุด %s %s)</div>
   <div class="legend">
     <div><span class="chip done">ผ่าน</span><span>การทำงานถูกต้องตรงตามเงื่อนไข</span></div>
@@ -96,9 +92,8 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
 </section>
 `, dateStr, timeStr))
 
-	// ==================== FLOW TIMELINE BOARD ====================
-	sb.WriteString("\n<!-- ===================== FLOW TIMELINE ===================== -->\n")
-	sb.WriteString("<section class=\"board\">\n")
+	// Execution flow timeline
+	sb.WriteString("\n<section class=\"board\">\n")
 	sb.WriteString("  <div class=\"kicker\">01 · EXECUTION FLOW TIMELINE</div>\n")
 	sb.WriteString("  <h1>ลำดับขั้นตอนการทดสอบ (Step-by-Step Timeline)</h1>\n")
 	sb.WriteString("  <p class=\"lede\">แสดงผลการรันตามลำดับขั้นตอน พร้อมเวลาที่ใช้และสถานะการตรวจสอบของแต่ละ Step</p>\n\n")
@@ -120,7 +115,6 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
 	}
 	sb.WriteString("  </div>\n\n")
 
-	// Summary Table
 	sb.WriteString("  <h3 style=\"margin-top: 36px;\">ตารางสรุปรายละเอียดทุกขั้นตอน</h3>\n")
 	sb.WriteString("  <table>\n")
 	sb.WriteString("    <thead><tr><th>#</th><th>Action</th><th>รายละเอียด</th><th>เวลา</th><th>สถานะ</th></tr></thead>\n")
@@ -139,8 +133,7 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
 	}
 	sb.WriteString("    </tbody>\n  </table>\n</section>\n")
 
-	// ==================== SCREENSHOT EVIDENCE BOARDS ====================
-	// Find screenshot steps
+	// Screenshot evidence boards
 	screenshotIdx := 0
 	for _, step := range spec.Steps {
 		if strings.ToLower(step.Action) == "screenshot" {
@@ -154,20 +147,17 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
 				desc = "จับภาพหน้าจอระหว่างการทดสอบ"
 			}
 
-			sb.WriteString("\n<!-- ===================== SCREENSHOT BOARD ===================== -->\n")
-			sb.WriteString("<section class=\"board\">\n")
+			sb.WriteString("\n<section class=\"board\">\n")
 			sb.WriteString(fmt.Sprintf("  <div class=\"kicker\">0%d · VISUAL EVIDENCE CAPTURE</div>\n", screenshotIdx+1))
 			sb.WriteString(fmt.Sprintf("  <h1>หลักฐานหน้าจอจริง: %s</h1>\n", html.EscapeString(filename)))
 			sb.WriteString(fmt.Sprintf("  <p class=\"lede\">บันทึกภาพหน้าจอจริงแบบ 1:1 จาก Orca Browser เพื่อใช้เป็นหลักฐานยืนยันใน Pull Request และ Contract Audit</p>\n\n"))
 
 			sb.WriteString("  <div class=\"cols\">\n")
-			// Left column: screenshot
 			sb.WriteString("    <div>\n")
 			sb.WriteString(fmt.Sprintf("      <div class=\"shot\"><img src=\"%s\" alt=\"%s\"></div>\n", html.EscapeString(filename), html.EscapeString(filename)))
 			sb.WriteString(fmt.Sprintf("      <div class=\"cap\">รูปภาพ: <code>%s</code> · บันทึกเมื่อ %s %s</div>\n", html.EscapeString(filename), dateStr, timeStr))
 			sb.WriteString("    </div>\n")
 
-			// Right column: details cards
 			sb.WriteString("    <div class=\"stack\">\n")
 			sb.WriteString(fmt.Sprintf(`      <div class="card">
         <h3>คำอธิบายภาพหน้าจอ</h3>
@@ -191,10 +181,9 @@ func GenerateBoardHTML(spec *Spec, report *TestReport) string {
 		}
 	}
 
-	// ==================== FAILURE DIAGNOSTIC BOARD (IF FAILED) ====================
+	// Failure diagnostic board
 	if !report.Success {
-		sb.WriteString("\n<!-- ===================== FAILURE BOARD ===================== -->\n")
-		sb.WriteString("<section class=\"board\">\n")
+		sb.WriteString("\n<section class=\"board\">\n")
 		sb.WriteString("  <div class=\"kicker\">09 · FAILURE DIAGNOSTICS & ROOT CAUSE</div>\n")
 		sb.WriteString("  <h1>การวิเคราะห์จุดที่ล้มเหลว (Root Cause Analysis)</h1>\n")
 		sb.WriteString("  <p class=\"lede\">ข้อมูลเชิงลึก ณ จุดที่การทดสอบสะดุด เพื่อให้ทีมงานสามารถแก้ไขได้อย่างแม่นยำ</p>\n\n")
@@ -227,45 +216,39 @@ func BuildBoardPDF(spec *Spec, report *TestReport, evidenceDir string) (string, 
 		return "", fmt.Errorf("evidenceDir is empty")
 	}
 
-	// 1. Locate board-pdf assets
 	assetsDir, buildScript := findBoardPdfAssets()
 	if assetsDir == "" {
 		return "", fmt.Errorf("could not locate board-pdf assets directory")
 	}
+	if buildScript == "" {
+		return "", fmt.Errorf("build_pdf.py script not found")
+	}
 
-	// 2. Copy assets (board.css, fonts.css, fonts/) into evidenceDir
 	if err := copyBoardAssets(assetsDir, evidenceDir); err != nil {
 		return "", fmt.Errorf("copy board assets: %w", err)
 	}
 
-	// 3. Write doc.html
 	htmlContent := GenerateBoardHTML(spec, report)
 	htmlPath := filepath.Join(evidenceDir, "doc.html")
 	if err := os.WriteFile(htmlPath, []byte(htmlContent), 0o644); err != nil {
 		return "", fmt.Errorf("write doc.html: %w", err)
 	}
 
-	// 4. Run build_pdf.py if available
-	absDir, err := filepath.Abs(evidenceDir)
-	if err == nil {
+	if absDir, err := filepath.Abs(evidenceDir); err == nil {
 		evidenceDir = absDir
 	}
-	pdfPath := filepath.Join(evidenceDir, "report.pdf")
-	if buildScript != "" {
-		absScript, err := filepath.Abs(buildScript)
-		if err == nil {
-			buildScript = absScript
-		}
-		cmd := exec.Command("python3", absScript, "doc.html", "--out", "report.pdf")
-		cmd.Dir = evidenceDir
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return "", fmt.Errorf("compile board pdf failed: %v\noutput: %s", err, string(out))
-		}
-		return pdfPath, nil
+	if absScript, err := filepath.Abs(buildScript); err == nil {
+		buildScript = absScript
 	}
 
-	return "", fmt.Errorf("build_pdf.py script not found")
+	cmd := exec.Command("python3", buildScript, "doc.html", "--out", "report.pdf")
+	cmd.Dir = evidenceDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("compile board pdf failed: %v\noutput: %s", err, string(out))
+	}
+
+	return filepath.Join(evidenceDir, "report.pdf"), nil
 }
 
 func findBoardPdfAssets() (string, string) {
@@ -277,42 +260,32 @@ func findBoardPdfAssets() (string, string) {
 		candidates = append(candidates, filepath.Join(cwd, "skills", "worktree-pipeline", "assets", "board-pdf"))
 	}
 	if exe, err := os.Executable(); err == nil {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "skills", "worktree-pipeline", "assets", "board-pdf"))
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "assets", "board-pdf"))
+		candidates = append(candidates,
+			filepath.Join(filepath.Dir(exe), "..", "skills", "worktree-pipeline", "assets", "board-pdf"),
+			filepath.Join(filepath.Dir(exe), "assets", "board-pdf"),
+		)
 	}
 	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates, filepath.Join(home, "dev", "rein", "skills", "worktree-pipeline", "assets", "board-pdf"))
-		candidates = append(candidates, filepath.Join(home, ".local", "share", "rein", "skills", "worktree-pipeline", "assets", "board-pdf"))
-		candidates = append(candidates, filepath.Join(home, ".claude", "skills", "board-pdf", "assets"))
+		candidates = append(candidates,
+			filepath.Join(home, "dev", "rein", "skills", "worktree-pipeline", "assets", "board-pdf"),
+			filepath.Join(home, ".local", "share", "rein", "skills", "worktree-pipeline", "assets", "board-pdf"),
+			filepath.Join(home, ".claude", "skills", "board-pdf", "assets"),
+		)
 	}
 
-	var foundAssets string
+	var foundAssets, foundScript string
 	for _, c := range candidates {
 		if fi, err := os.Stat(filepath.Join(c, "board.css")); err == nil && !fi.IsDir() {
 			foundAssets = c
-			break
-		}
-	}
-
-	var scriptCandidates []string
-	if foundAssets != "" {
-		scriptCandidates = append(scriptCandidates, filepath.Join(foundAssets, "build_pdf.py"))
-	}
-	if root := os.Getenv("CLAUDE_PLUGIN_ROOT"); root != "" {
-		scriptCandidates = append(scriptCandidates, filepath.Join(root, "skills", "worktree-pipeline", "assets", "board-pdf", "build_pdf.py"))
-	}
-	if cwd, err := os.Getwd(); err == nil {
-		scriptCandidates = append(scriptCandidates, filepath.Join(cwd, "skills", "worktree-pipeline", "assets", "board-pdf", "build_pdf.py"))
-	}
-	if home, err := os.UserHomeDir(); err == nil {
-		scriptCandidates = append(scriptCandidates, filepath.Join(home, "dev", "rein", "skills", "worktree-pipeline", "assets", "board-pdf", "build_pdf.py"))
-		scriptCandidates = append(scriptCandidates, filepath.Join(home, ".claude", "skills", "board-pdf", "scripts", "build_pdf.py"))
-	}
-
-	var foundScript string
-	for _, sc := range scriptCandidates {
-		if fi, err := os.Stat(sc); err == nil && !fi.IsDir() {
-			foundScript = sc
+			for _, scriptPath := range []string{
+				filepath.Join(c, "build_pdf.py"),
+				filepath.Join(filepath.Dir(c), "scripts", "build_pdf.py"),
+			} {
+				if sfi, err := os.Stat(scriptPath); err == nil && !sfi.IsDir() {
+					foundScript = scriptPath
+					break
+				}
+			}
 			break
 		}
 	}

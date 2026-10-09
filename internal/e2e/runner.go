@@ -55,19 +55,16 @@ func (r *Runner) Run(spec *Spec) (*TestReport, error) {
 		return report, fmt.Errorf("create browser tab: %w", err)
 	}
 
-	// Guarantee cleanup of the browser tab
 	defer func() {
 		_ = r.client.TabClose(pageID)
 	}()
 
-	// If initial URL was loaded, update initial snapshot
 	if startURL != "about:blank" {
 		r.cachedSnapshot, _ = r.client.Snapshot(pageID)
 	}
 
 	allPassed := true
 	for i, step := range spec.Steps {
-		// If step 0 was already handled via TabCreate URL, record it and continue
 		if i == 0 && step.Action == "goto" && startURL != "about:blank" {
 			stepRep := StepReport{
 				Index:       1,
@@ -341,13 +338,15 @@ func (r *Runner) writeReports(spec *Spec, report *TestReport) {
 	if r.evidenceDir == "" {
 		return
 	}
-	// Write report.json
-	data, err := json.MarshalIndent(report, "", "  ")
-	if err == nil {
+
+	if pdfPath, err := BuildBoardPDF(spec, report, r.evidenceDir); err == nil && pdfPath != "" {
+		report.PDFPath = pdfPath
+	}
+
+	if data, err := json.MarshalIndent(report, "", "  "); err == nil {
 		_ = os.WriteFile(filepath.Join(r.evidenceDir, "report.json"), data, 0o644)
 	}
 
-	// Write report.md
 	var sb strings.Builder
 	statusBadge := "PASSED"
 	if !report.Success {
@@ -378,13 +377,4 @@ func (r *Runner) writeReports(spec *Spec, report *TestReport) {
 		sb.WriteString(fmt.Sprintf("| %d | `%s` | %s | %s | %d ms |\n", st.Index, st.Action, desc, res, st.DurationMS))
 	}
 	_ = os.WriteFile(filepath.Join(r.evidenceDir, "report.md"), []byte(sb.String()), 0o644)
-
-	// Automatically build Board-PDF report
-	pdfPath, err := BuildBoardPDF(spec, report, r.evidenceDir)
-	if err == nil && pdfPath != "" {
-		report.PDFPath = pdfPath
-		if data, err := json.MarshalIndent(report, "", "  "); err == nil {
-			_ = os.WriteFile(filepath.Join(r.evidenceDir, "report.json"), data, 0o644)
-		}
-	}
 }
