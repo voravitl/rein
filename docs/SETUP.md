@@ -87,9 +87,9 @@ to link `rein` onto your `PATH`, and helps you write a profile and pack.
 
 | File | Purpose | Start from |
 |---|---|---|
-| `~/.config/rein/profiles/<project>.json` | machine-checked project rules: worktree root, protected containers/ports/commands/scripts, never-edit paths, local artifacts, sandbox exclusions, `pack` | `examples/profile.example.json` |
+| `~/.config/rein/profiles/<project>.json` | machine-checked project rules: worktree root, protected containers/ports/commands/scripts, never-edit paths, local artifacts, sandbox exclusions, `pack`, sensitive paths, and the owner's `selection` policy for automatic model selection (`rein route auto`; nothing in it is defaulted, and `sensitive_paths` must be declared). Export `REIN_PROFILE` in the environment the coordinator session starts from, so the policy is the owner's and not the contract's copy | `examples/profile.example.json` |
 | `~/.config/rein/packs/<project>/` | the project's gates, safety notes, isolated-stack recipe, deploy notes, rule addenda for workers/reviewers/advisors | `examples/pack/` and `skills/worktree-pipeline/references/project-pack.md` |
-| `~/.config/rein/fallback-chain.json` | providers, worker chains per task type, review chains, quota signals (`rein providers`) | `examples/fallback-chain.example.json` |
+| `~/.config/rein/fallback-chain.json` | providers, worker chains per task type, review chains, quota signals (`rein providers`); for `rein route auto` also each provider's `billing` pool, `probe_bound`, `capabilities` and `context_tokens` | `examples/fallback-chain.example.json` |
 | `~/.claude/omc/worktree-pipeline/model-ledger.jsonl` | model ledger (written by `rein ledger add/call`) | created on first write |
 
 Profiles and packs hold internal names, hosts and ports: keep them local, never in a public repository.

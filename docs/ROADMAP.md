@@ -102,6 +102,14 @@ Every `AskUserQuestion` answered in the run's owner session is appended to `<run
 injected by SessionStart on resume and compaction and checked by spec lint. Tasks outside the recorded scope ruling
 need approval before spawn. The trail is audited by a different vendor at the end of the run.
 
+### Automatic task and model selection
+`rein route auto` classifies the task from a coordinator's description, refreshes every harness catalog on every decision,
+qualifies models on task-specific evidence (95% Wilson lower bound for workers, frozen fixtures for reviewers), ranks them by
+cost per independently verified task under a declared cost basis, reserves the probe and funding plan atomically and writes a
+receipt bound to its evidence. Implemented; the design, the exact boundary and what is not delivered (Claude Code catalog
+adapter, `remote_verified` freshness, agy quota refresh, the calibration runner) are in
+[ROUTING_SELECTION_DESIGN.md](ROUTING_SELECTION_DESIGN.md) and `docs/CLI_REFERENCE.md` section 15.
+
 ### Later
 Trunk regression lane and feature maps in packs; cleanup holds for
 locked worktrees, open MRs and unpushed commits (`git rev-list <b> --not --remotes`); assert the main
