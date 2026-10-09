@@ -6,11 +6,17 @@ orca status --json                                   # runtime.state must be "re
 orca orchestration run-create / run-use / run-show
 # Claude workers and unguarded read-only reviewers. A GUARDED worker of another vendor is NOT started like this:
 # create the worktree, run `rein hooks install <task>`, then start it on `--worktree path:<wt>` (codex: shell terminal, see below).
-orca orchestration worker-start --run R --spec "$(cat s.md)" --task-title T --display-name D \
+# Mandatory: specify --task-title, --display-name, and --comment to display what is being done and with what model in Orca IDE.
+orca orchestration worker-start --run R --spec "$(cat s.md)" \
+  --task-title "<task>: <what it is doing>" \
+  --display-name "<task> [<agent>/<model>]" \
+  --comment "Working on <task> with <model>" \
   --worktree new-top-level --name NAME --repo id:<repo-id> --base-branch origin/main --setup skip \
   --agent codex|claude|antigravity --model <id> [--effort max] --json
 orca orchestration worker-start ... --worktree path:/abs/existing/worktree   # reuse an Orca-known worktree
-orca orchestration task-create --run R --task-title T --display-name D --spec "$(cat s.md)" --json
+orca orchestration task-create --run R --task-title "<task>: <what>" --display-name "<task> [<agent>/<model>]" --spec "$(cat s.md)" --json
+orca terminal create --worktree path:<wt> --title "<task> [<agent>/<model>]" --command "..." --json
+orca worktree set --worktree <wt> --display-name "<task> [<agent>/<model>]" --comment "<what> using <model>" --json
 orca orchestration dispatch --run R --task <task> --to <terminal> --return-preamble --json   # preamble route
 orca terminal send --terminal <term> --text "read the file <preamble> and do the TASK" --enter --json
 orca terminal read --terminal <term> --json          # last screen lines
