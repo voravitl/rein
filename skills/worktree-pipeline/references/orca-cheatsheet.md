@@ -77,3 +77,10 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 
 ## Keep sessions visible in Orca
 The user watches the team in the Orca UI. Every worker and reviewer starts through `worker-start`, with two carve-outs: a guarded **codex** worker starts in a shell terminal (preamble route) because `worker-start` cannot pass the hook flags, and every non-Claude worker needs its worktree created first and `rein hooks install <task>` run before it starts (`--worktree path:<wt>`; `new-top-level` creates the worktree at start, so no hooks exist). On a start failure, retry inside Orca first (`--retry-of`, or a fresh worker on the same worktree). Use a direct CLI (`codex exec`, `claude -p`) only when Orca is down or keeps failing, and tell the user in one line before switching.
+
+## Orca Browser E2E Testing
+Orca provides native browser automation (`orca tab`, `orca goto`, `orca snapshot`, `orca click`, `orca fill`, `orca keypress`, `orca eval`, `orca screenshot`).
+- **Check readiness:** `rein e2e check [--json]`
+- **Execute scenario:** `rein e2e run <spec.json|spec.md> [--out <dir>] [--base-url <url>]`
+- **Evidence:** Automatically captures pass/fail screenshots, accessibility tree snapshots, and `report.md` for `rein contract` audits.
+- Full reference: [`skills/worktree-pipeline/references/orca-browser-e2e.md`](orca-browser-e2e.md).

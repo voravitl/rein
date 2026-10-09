@@ -1,0 +1,49 @@
+{
+  "name": "sample-e2e-scenario",
+  "description": "Standard E2E verification scenario executed against Orca Browser",
+  "base_url": "http://localhost:3000",
+  "timeout_seconds": 30,
+  "steps": [
+    {
+      "action": "goto",
+      "url": "/",
+      "description": "Navigate to home page"
+    },
+    {
+      "action": "assert_title",
+      "value": "App Title",
+      "description": "Verify document title"
+    },
+    {
+      "action": "snapshot",
+      "description": "Take fresh accessibility snapshot"
+    },
+    {
+      "action": "assert_text",
+      "value": "Welcome",
+      "description": "Verify hero heading is visible"
+    },
+    {
+      "action": "fill",
+      "target": "Search",
+      "value": "Query",
+      "description": "Fill search input"
+    },
+    {
+      "action": "keypress",
+      "key": "Enter",
+      "description": "Submit search"
+    },
+    {
+      "action": "wait",
+      "value": "Search Results",
+      "timeout_ms": 5000,
+      "description": "Wait for results to populate"
+    },
+    {
+      "action": "screenshot",
+      "filename": "results-verified.png",
+      "description": "Capture visual evidence for contract report"
+    }
+  ]
+}
