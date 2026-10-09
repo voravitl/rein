@@ -17,9 +17,12 @@ func TestShellWriteOwnership(t *testing.T) {
 		"mv backend/Routing/A.cs frontend/src/new.ts",
 		"cp backend/Routing/A.cs frontend/src/new.ts",
 		"cp backend/Routing/A.cs frontend/src/x.ts",
+		"touch -- -t frontend/src/new.ts", "truncate -- -s frontend/src/new.ts",
 		"tee frontend/src/new.ts", "truncate -s 0 frontend/src/new.ts",
 		"git rm frontend/src/x.ts", "git mv frontend/src/x.ts backend/Routing/moved.ts",
 		"git -C frontend rm src/x.ts",
+		"git rm --pathspec-from-file=/tmp/rein-paths",
+		"git rm --pathspec-from-file /tmp/rein-paths", "git rm --pathspec-from-file=-",
 		"find frontend/src -delete", "find backend -delete",
 		"find frontend/src -exec rm {} +",
 		"find frontend/src -exec touch backend/Routing/new.cs {} +",
@@ -30,6 +33,9 @@ func TestShellWriteOwnership(t *testing.T) {
 		"echo x > " + filepath.Join(filepath.Dir(c.ReportPath), "other.md"),
 	}
 	allow := []string{
+		"truncate -s 0 backend/Routing/A.cs", "truncate --size 0 backend/Routing/A.cs",
+		"truncate --size=0 backend/Routing/A.cs", "truncate -r frontend/src/x.ts backend/Routing/A.cs",
+		"touch -t 202610091200 backend/Routing/A.cs", "touch -r frontend/src/x.ts backend/Routing/new.cs",
 		"touch backend/Routing/new.cs", "echo changed > backend/Routing/new.cs",
 		"sed -i 's/x/y/' backend/Routing/A.cs", "rm backend/Routing/A.cs",
 		"rm -rf backend/Routing", "rm backend/Routing/*.tmp",

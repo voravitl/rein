@@ -72,19 +72,11 @@ func (p *coordPolicy) bash(cmd, cwd string) string {
 	if h, err := os.UserHomeDir(); err == nil {
 		x.vars["HOME"] = h
 	}
-	if reason := x.script(cmd); reason != "" {
-		return reason
-	}
-	return x.taskSpecPreflight(cmd)
+	return x.script(cmd)
 }
 
-// Opaque Orca IDs have no local source spec. Require an explicit, successful source
-// preflight in the same shell call; this is not durable Orca Task-spec attestation.
-func (x *ctx) taskSpecPreflight(cmd string) string {
-	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(cmd), "")
-	if err != nil {
-		return err.Error()
-	}
+// sourcePreflight checks the supported adjacent source-check/launch pair in its current shell state.
+func (x *ctx) sourcePreflight(left, right *syntax.Stmt) bool {
 	argsOf := func(s *syntax.Stmt) []string {
 		call, ok := s.Cmd.(*syntax.CallExpr)
 		if !ok || s.Negated || s.Background || len(call.Assigns) != 0 || len(s.Redirs) != 0 {
@@ -96,102 +88,22 @@ func (x *ctx) taskSpecPreflight(cmd string) string {
 		}
 		return args
 	}
-	checked := map[*syntax.CallExpr]bool{}
-	asynchronous := map[*syntax.CallExpr]bool{}
-	syntax.Walk(f, func(n syntax.Node) bool {
-		if stmt, ok := n.(*syntax.Stmt); ok && (stmt.Background || stmt.Negated) {
-			syntax.Walk(stmt, func(child syntax.Node) bool {
-				if call, ok := child.(*syntax.CallExpr); ok {
-					asynchronous[call] = true
-				}
-				return true
-			})
-		}
-		return true
-	})
-	syntax.Walk(f, func(n syntax.Node) bool {
-		b, ok := n.(*syntax.BinaryCmd)
-		if !ok || b.Op != syntax.AndStmt {
-			return true
-		}
-		left, right := argsOf(b.X), argsOf(b.Y)
-		if len(left) != 5 || base(left[0]) != "rein" || left[1] != "spec" || left[2] != "check" || !filepath.IsAbs(left[3]) || len(right) == 0 || !isOrca(base(right[0])) {
-			return true
-		}
-		wt, has := flagValue(right[1:], "--worktree")
-		if !has || !strings.HasPrefix(wt, "path:") || !filepath.IsAbs(strings.TrimPrefix(wt, "path:")) {
-			return true
-		}
-		c, err := contract.Load(filepath.Base(strings.TrimPrefix(wt, "path:")))
-		if err != nil || c.Name != left[4] || contract.Real(c.Worktree) != contract.Real(strings.TrimPrefix(wt, "path:")) {
-			return true
-		}
-		if _, err := os.Stat(left[3]); err != nil || x.coord.runSpecLint(left[3], c) != "" {
-			return true
-		}
-		if call := b.Y.Cmd.(*syntax.CallExpr); !asynchronous[call] {
-			checked[call] = true
-		}
-		return true
-	})
-	reason := ""
-	syntax.Walk(f, func(n syntax.Node) bool {
-		if reason != "" {
-			return false
-		}
-		if stmt, ok := n.(*syntax.Stmt); ok {
-			if call, ok := stmt.Cmd.(*syntax.CallExpr); ok && len(call.Args) > 0 && slices.Contains([]string{"bash", "sh", "zsh", "dash", "ksh"}, base(x.word(call.Args[0]))) {
-				for _, redirect := range stmt.Redirs {
-					if redirect.Hdoc != nil {
-						if body, ok := literalText(redirect.Hdoc); ok {
-							reason = x.taskSpecPreflight(body)
-						}
-					}
-				}
-			}
-		}
-		call, ok := n.(*syntax.CallExpr)
-		if !ok || len(call.Args) == 0 {
-			return true
-		}
-		var args []string
-		for _, w := range call.Args {
-			args = append(args, x.word(w))
-		}
-		name := base(args[0])
-		if name == "bash" || name == "sh" || name == "zsh" || name == "dash" || name == "ksh" {
-			for i, arg := range args[1:] {
-				if strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") && strings.Contains(arg, "c") && i+2 < len(args) {
-					reason = x.taskSpecPreflight(args[i+2])
-					break
-				}
-			}
-			return reason == ""
-		}
-		if name == "eval" {
-			reason = x.taskSpecPreflight(strings.Join(args[1:], " "))
-			return reason == ""
-		}
-		if wrappers[name] || name == "xargs" {
-			for i, arg := range args[1:] {
-				if isOrca(base(arg)) {
-					args = args[i+1:]
-					break
-				}
-			}
-		}
-		if !isOrca(base(args[0])) {
-			return true
-		}
-		task, has := flagValue(args, "--task")
-		wt, _ := flagValue(args, "--worktree")
-		if slices.Contains(args, "worker-start") && has && strings.HasPrefix(task, "task_") && !strings.HasPrefix(wt, "new-") && wt != "" && !checked[call] && (wt == "current" || wt == "active" || x.coord.treeOf(contract.Real(strings.TrimPrefix(wt, "path:"))) != "") {
-			reason = "SPEC_PREFLIGHT_REQUIRED: launch an Orca Task ID with `rein spec check <absolute-source-spec> <rein-contract-name> && orca orchestration worker-start --task <task_id> --worktree path:<exact-worktree> ...`; do not invent a source spec"
-			return false
-		}
-		return reason == ""
-	})
-	return reason
+	l, r := argsOf(left), argsOf(right)
+	if len(l) != 5 || base(l[0]) != "rein" || l[1] != "spec" || l[2] != "check" || !filepath.IsAbs(l[3]) || len(r) == 0 || !isOrca(base(r[0])) {
+		return false
+	}
+	wt, has := flagValue(r[1:], "--worktree")
+	if !has || !strings.HasPrefix(wt, "path:") || !filepath.IsAbs(strings.TrimPrefix(wt, "path:")) {
+		return false
+	}
+	c, err := contract.Load(filepath.Base(strings.TrimPrefix(wt, "path:")))
+	if err != nil || c.Name != l[4] || contract.Real(c.Worktree) != contract.Real(strings.TrimPrefix(wt, "path:")) {
+		return false
+	}
+	if _, err := os.Stat(l[3]); err != nil {
+		return false
+	}
+	return x.coord.runSpecLint(l[3], c) == ""
 }
 
 // gitEnvNames point git away from the repository the guard watches.
@@ -315,12 +227,24 @@ func (x *ctx) coordWorkerStart(rest []string) string {
 		return fmt.Sprintf("worker-start into %s: that exact worktree has no readable task contract, so its worker would run unguarded; %s", dir, coordHow)
 	}
 	if inline, hasSpec := flagValue(rest, "--spec"); hasSpec {
-		if reason := x.coord.runSpecLint(inline, c); reason != "" {
-			return "SPEC_LINT_FAILED: " + reason
+		task, hasTask := flagValue(rest, "--task")
+		if _, legacyFile := flagValue(rest, "--contract"); legacyFile || (hasTask && !strings.HasPrefix(task, "task_")) {
+			if reason := x.coord.checkLegacySpec(rest); reason != "" {
+				return reason
+			}
+		} else {
+			result, _ := spec.CheckText(inline, c, "")
+			if len(result.Violations) != 0 {
+				return fmt.Sprintf("SPEC_LINT_FAILED: %s", strings.Join(result.Violations, "; "))
+			}
 		}
 	}
+
 	if !x.coord.m.Allows("task", c.Name) {
 		return fmt.Sprintf("task %q is not in the approved scope ruling: ask the user to run `rein run allow --task %s --reason <text>` before spawning this worker", c.Name, c.Name)
+	}
+	if task, has := flagValue(rest, "--task"); has && strings.HasPrefix(task, "task_") && !x.specChecked {
+		return "SPEC_PREFLIGHT_REQUIRED: launch an Orca Task ID with `rein spec check <absolute-source-spec> <rein-contract-name> && orca orchestration worker-start --task <task_id> --worktree path:<exact-worktree> ...`; do not invent a source spec"
 	}
 	return ""
 }

@@ -36,17 +36,18 @@ var wrappers = map[string]bool{"env": true, "sudo": true, "nohup": true, "time":
 	"exec": true, "nice": true, "timeout": true, "gtimeout": true, "stdbuf": true, "caffeinate": true}
 
 type ctx struct {
-	c          *contract.Contract
-	top        string // real worktree root
-	cwd        string
-	cwdUnknown bool              // a cd we could not follow: relative writes are no longer judgeable
-	vars       map[string]string // simple VAR=literal assignments seen so far
-	deep       int
-	ports      *regexp.Regexp
-	stdin      stdinKind             // where the statement being checked reads stdin from
-	hdoc       string                // the heredoc body, when stdin == stdinHeredoc
-	pipeRHS    map[*syntax.Stmt]bool // statements that read a pipe
-	coord      *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
+	c           *contract.Contract
+	top         string // real worktree root
+	cwd         string
+	cwdUnknown  bool              // a cd we could not follow: relative writes are no longer judgeable
+	vars        map[string]string // simple VAR=literal assignments seen so far
+	deep        int
+	ports       *regexp.Regexp
+	stdin       stdinKind             // where the statement being checked reads stdin from
+	hdoc        string                // the heredoc body, when stdin == stdinHeredoc
+	pipeRHS     map[*syntax.Stmt]bool // statements that read a pipe
+	specChecked bool                  // current direct call has an adjacent successful source preflight
+	coord       *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
 }
 
 type stdinKind int
@@ -91,6 +92,21 @@ func (x *ctx) script(src string) string {
 	if err != nil {
 		return fmt.Sprintf("could not parse the command (%v); split it into simpler commands", err)
 	}
+	preflight := map[*syntax.CallExpr]bool{}
+	asynchronous := map[*syntax.CallExpr]bool{}
+	if x.coord != nil {
+		syntax.Walk(f, func(n syntax.Node) bool {
+			if stmt, ok := n.(*syntax.Stmt); ok && (stmt.Background || stmt.Negated) {
+				syntax.Walk(stmt, func(child syntax.Node) bool {
+					if call, ok := child.(*syntax.CallExpr); ok {
+						asynchronous[call] = true
+					}
+					return true
+				})
+			}
+			return true
+		})
+	}
 	var reason string
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if reason != "" {
@@ -124,6 +140,11 @@ func (x *ctx) script(src string) string {
 				}
 			}
 		case *syntax.BinaryCmd:
+			if x.coord != nil && n.Op == syntax.AndStmt {
+				if call, ok := n.Y.Cmd.(*syntax.CallExpr); ok && !asynchronous[call] && x.sourcePreflight(n.X, n.Y) {
+					preflight[call] = true
+				}
+			}
 			if n.Op == syntax.Pipe || n.Op == syntax.PipeAll {
 				x.pipeRHS[n.Y] = true
 			}
@@ -152,6 +173,7 @@ func (x *ctx) script(src string) string {
 			for _, w := range n.Args {
 				args = append(args, x.word(w))
 			}
+			x.specChecked = preflight[n]
 			reason = x.call(args)
 		}
 		return reason == ""
@@ -355,8 +377,23 @@ func (x *ctx) call(args []string) string {
 	case name == "npx" || name == "bunx" || name == "pnpx":
 		return x.call(rest)
 	case name == "tee" || name == "touch" || name == "truncate":
-		for _, t := range nonFlags(rest) {
-			if r := x.write(t); r != "" {
+		targets := rest
+		options := true
+		for i := 0; i < len(targets); i++ {
+			a := targets[i]
+			if options && a == "--" {
+				options = false
+				continue
+			}
+			if options && ((name == "truncate" && (a == "-s" || a == "--size" || a == "-r" || a == "--reference")) ||
+				(name == "touch" && (a == "-t" || a == "-d" || a == "--date" || a == "-r" || a == "--reference"))) {
+				i++
+				continue
+			}
+			if a == "" || (options && strings.HasPrefix(a, "-")) {
+				continue
+			}
+			if r := x.write(a); r != "" {
 				return r
 			}
 		}
@@ -463,6 +500,11 @@ func (x *ctx) git(args []string) string {
 	}
 	switch sub {
 	case "rm", "mv":
+		for _, arg := range rest {
+			if arg == "--pathspec-from-file" || strings.HasPrefix(arg, "--pathspec-from-file=") {
+				return "git pathspec files cannot be checked for ownership; use literal paths"
+			}
+		}
 		saved := x.cwd
 		if repo != "" {
 			x.cwd = x.abs(repo)

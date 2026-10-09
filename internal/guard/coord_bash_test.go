@@ -550,6 +550,7 @@ func TestCoordWorkerStartOrcaForms(t *testing.T) {
 	bad := filepath.Join(e.outside, "bad.md")
 	writeFile(t, bad, "invalid spec")
 	check := "rein spec check " + source + " side"
+	e.expect(false, e.bash("wt=path:"+e.side+"; "+check+" && orca orchestration worker-start --task task_opaque-id --worktree \"$wt\"; wt=new-top-level"), "valid current-state variable launch")
 	launch := "orca orchestration worker-start --worktree path:" + e.side + " --task task_opaque-id"
 	for _, command := range []string{
 		"! " + check + " && " + launch,
@@ -557,6 +558,11 @@ func TestCoordWorkerStartOrcaForms(t *testing.T) {
 		check + " && " + launch + " &",
 		check + "; " + launch,
 		check + " || " + launch,
+		"env bash -c '" + launch + "'",
+		"timeout 10 bash -c '" + launch + "'",
+		"find " + e.side + " -exec " + launch + " " + ";",
+		"wt=path:" + e.side + "; orca orchestration worker-start --task task_opaque-id --worktree \"$wt\"; wt=new-top-level",
+		"orca orchestration worker-start --worktree path:" + e.side + " --spec " + source,
 		"rein spec check " + source + " wrong-contract && " + launch,
 		"rein spec check " + bad + " side && " + launch,
 		"rein spec check " + source + "-missing side && " + launch,
