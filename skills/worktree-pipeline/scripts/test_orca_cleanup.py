@@ -81,6 +81,30 @@ class CleanupTests(unittest.TestCase):
                 self.assertEqual(code, 1)
                 self.assertEqual(len(calls), 3)
 
+    def test_retry_cannot_clear_unresolved_finished_session(self):
+        for state in ('retained', 'release_pending', 'release_unknown', None):
+            with self.subTest(state=state):
+                row = worker(action='worker-show')
+                row['terminalState'] = state
+                code, calls, _ = self.execute([page([row])])
+                self.assertEqual(code, 1)
+                self.assertEqual(len(calls), 1)
+
+    def test_retry_released_and_operator_owned_sessions_are_not_force_closed(self):
+        for state, mode in [('released', 'succeeded'), ('retained', 'unsupervised')]:
+            row = worker(action='worker-show')
+            row.update(terminalState=state, workerState=mode)
+            code, calls, _ = self.execute([page([row])])
+            self.assertEqual(code, 0)
+            self.assertEqual(len(calls), 1)
+
+    def test_unresolved_retry_dry_run_does_not_mutate(self):
+        row = worker(action='worker-show')
+        row['terminalState'] = 'release_pending'
+        code, calls, _ = self.execute([page([row])], '--dry-run')
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+
     def test_release_postcheck_completes_pagination(self):
         code, calls, _ = self.execute([page([worker()]), {'ok': True},
                                       page([], True, 'after'), released_page()])
@@ -103,16 +127,16 @@ class CleanupTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertEqual(len(calls), 1)
 
-    def test_missing_projection_evidence_preserved(self):
+    def test_missing_projection_evidence_fails_without_mutation(self):
         row = worker()
         row['projection'] = {}
         code, calls, _ = self.execute([page([row])])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertEqual(len(calls), 1)
 
     def test_all_pages_before_mutation(self):
         code, calls, _ = self.execute([page([worker()], True, 'opaque'),
-                                      page([worker('ctx_two', 'live', 'worker-show')]),
+                                      page([worker('ctx_two', 'live', 'worker-show', dispatchStatus='dispatched')]),
                                       {'ok': True}, released_page()])
         self.assertEqual(code, 0)
         self.assertEqual([c[2] for c in calls], ['worker-list', 'worker-list', 'worker-release', 'worker-list'])
@@ -149,7 +173,7 @@ class CleanupTests(unittest.TestCase):
         for action in ('worker-read', 'worker-stop'):
             with self.subTest(action=action):
                 code, calls, _ = self.execute([page([worker(verdict='live', action=action)])])
-                self.assertEqual(code, 0)
+                self.assertEqual(code, 1)
                 self.assertEqual(len(calls), 1)
 
     def test_dry_run_has_no_mutations(self):
@@ -200,7 +224,7 @@ class CleanupTests(unittest.TestCase):
         row = worker()
         row['projection']['nextAction']['argv'][-1] = 'ctx_other'
         code, calls, _ = self.execute([page([row])])
-        self.assertEqual(code, 0)
+        self.assertEqual(code, 1)
         self.assertEqual(len(calls), 1)
 
     def test_resolves_one_binary_for_whole_session(self):

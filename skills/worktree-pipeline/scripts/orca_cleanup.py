@@ -88,6 +88,9 @@ for w in workers:
         actions.append(expected)
     elif dispatch in stop:
         failed.append(f'refused stop {dispatch}: requires exited liveness and exact nextAction {expected}; inspect worker-list/worker-show')
+    elif (not a.dry_run and settled and w.get('workerState') != 'unsupervised' and
+          w.get('terminalState') != 'released'):
+        failed.append(f'session closure unconfirmed for {dispatch}: inspect receipts and follow recovery')
     else:
         print('keep   ', dispatch, '(no proven cleanup recommendation)')
 for dispatch in sorted(stop - seen):
