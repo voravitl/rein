@@ -52,7 +52,7 @@ func CodexFlags(bin, task string) string {
 // and cmd.exe quoting are not covered.
 func LaunchLine(vendor, bin, task string) string {
 	if vendor == "codex" {
-		return "codex exec " + CodexFlags(bin, task) + " -C <worktree> ...   (POSIX sh syntax; drop `exec` for the interactive TUI; Orca `worker-start --agent codex` cannot pass these flags: start codex in a shell terminal (preamble route) or with the direct codex exec fallback)"
+		return "codex exec " + CodexFlags(bin, task) + " -C <worktree> ...   (POSIX sh syntax; drop `exec` for the interactive TUI; Orca `worker-start --agent codex` cannot pass these flags: start codex in a shell terminal (preamble route) or with the direct codex exec fallback; both are operator-owned and unsupervised unless an adoption receipt proves otherwise; re-install hooks before every retry/fallback and use the fresh flags before testing a tool call)"
 	}
 	return launch[vendor]
 }

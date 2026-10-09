@@ -363,7 +363,9 @@ func TestCoordWorkerStart(t *testing.T) {
 	if _, err := contract.New("task-c", 1, filepath.Join(e.outside, "run"), "src/**", "", "S1", filepath.Dir(wt), "", "", 0, nil); err != nil {
 		t.Fatal(err)
 	}
-	start := "orca orchestration worker-start --run R --spec \"$(cat s.md)\" --agent opencode2 "
+	e.m.Allowed = append(e.m.Allowed, run.Allowance{Kind: "task", Ref: "task-c", Reason: "test"})
+	e.save()
+	start := "orca orchestration worker-start --run R --agent opencode2 "
 	for _, c := range []string{
 		start + "--worktree path:" + e.root, start + "--worktree path:" + e.side, start + "--worktree=path:" + e.side,
 		start + "--worktree path:" + filepath.Join(e.side, "src"), start + "--worktree current", start + "--worktree active",
@@ -705,7 +707,11 @@ func TestCoordSessionStartInjectsStandingMd(t *testing.T) {
 func TestCoordWorkerStartScopeRulingDenial(t *testing.T) {
 	e := newCoordEnv(t)
 
-	// Try to start a worker for a task that's not allowed
+	// A contract exists, but the scope ruling has not approved its identity.
+	c := &contract.Contract{Name: "side", Worktree: e.side, Allow: []string{"**"}, Scope: []string{"S1"}, ReportPath: filepath.Join(e.outside, "reports", "side.md")}
+	if _, err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
 	out := e.bash("orca orchestration worker-start --task unapproved-task --worktree path:" + e.side)
 	e.expect(true, out, "worker-start without approval should be denied")
 	if !strings.Contains(out, "is not in the approved scope ruling") {

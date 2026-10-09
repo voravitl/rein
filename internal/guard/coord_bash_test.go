@@ -82,6 +82,7 @@ Timebox: 2h
 	}
 
 	// Create coordPolicy with allowed task (ADR 0002 B4.4)
+	linkWorktree(t, tmpDir, c.Worktree, c.Name)
 	loc := run.Loc{Top: tmpDir, Common: commonDir}
 	p := &coordPolicy{
 		m: &run.Marker{
@@ -168,6 +169,7 @@ Timebox: 2h
 	}
 
 	// Create coordPolicy
+	linkWorktree(t, tmpDir, c.Worktree, c.Name)
 	loc := run.Loc{Top: tmpDir, Common: commonDir}
 	p := &coordPolicy{
 		m:   &run.Marker{},
@@ -261,6 +263,7 @@ Timebox: 2h
 		t.Fatalf("failed to write tick: %v", err)
 	}
 
+	linkWorktree(t, tmpDir, c.Worktree, c.Name)
 	loc := run.Loc{Top: tmpDir, Common: commonDir}
 	p := &coordPolicy{
 		m:   &run.Marker{},
@@ -414,7 +417,7 @@ Timebox: 2h
 
 		loc := run.Loc{Top: tmpDir, Common: commonDir}
 		p := &coordPolicy{
-			m:   &run.Marker{},
+			m:   &run.Marker{Allowed: []run.Allowance{{Kind: "task", Ref: c.Name, Reason: "test"}}},
 			loc: loc,
 		}
 
@@ -455,6 +458,7 @@ Some content but missing required sections
 			t.Fatalf("failed to create contracts dir: %v", err)
 		}
 
+		t.Setenv("PIPELINE_CONTRACTS", contractsDir)
 		worktreePath := filepath.Join(tmpDir, "worktrees/test-task-invalid")
 		t.Setenv("PIPELINE_CONTRACTS", contractsDir)
 
@@ -495,7 +499,7 @@ Some content but missing required sections
 		commonDir := filepath.Join(tmpDir, ".git")
 		loc := run.Loc{Top: tmpDir, Common: commonDir}
 		p := &coordPolicy{
-			m:   &run.Marker{},
+			m:   &run.Marker{Allowed: []run.Allowance{{Kind: "task", Ref: c.Name, Reason: "test"}}},
 			loc: loc,
 		}
 
@@ -518,4 +522,60 @@ Some content but missing required sections
 			t.Errorf("expected denial to contain SPEC_LINT_FAILED, got: %s", reason)
 		}
 	})
+}
+
+// Real Orca launch forms resolve rein identity from the prepared worktree.
+func TestCoordWorkerStartOrcaForms(t *testing.T) {
+	e := newCoordEnv(t)
+	c := &contract.Contract{Name: "side", Worktree: e.side, Allow: []string{"src/**"}, Scope: []string{"S1"}, ReportPath: filepath.Join(e.outside, "reports", "side.md")}
+	if _, err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	e.m.Allowed = []run.Allowance{{Kind: "task", Ref: "side", Reason: "test"}}
+	e.save()
+	valid := "# Task\n\n## Scope\n- **S1** Fix launch\n  - red check: invalid spec denied\n\n" + c.Snippet() + "\n## Not in scope\n- Other changes\n\nGates: go test ./...\nTimebox: 30m\n"
+	quoted := "'" + strings.ReplaceAll(valid, "'", "'\"'\"'") + "'"
+	for _, executable := range []string{"orca", "orca-dev", "orca-ide", "/opt/bin/orca-dev"} {
+		t.Run(executable, func(t *testing.T) {
+			start := executable + " orchestration worker-start --worktree path:" + e.side
+			e.expect(true, e.bash(start+" --spec 'invalid inline spec'"), "invalid inline spec must be linted")
+			e.expect(false, e.bash(start+" --spec "+quoted), "valid inline spec")
+			// Task source specs are explicitly checked before launching by authoritative Orca ID.
+			specPath := filepath.Join(e.outside, "source.md")
+			writeFile(t, specPath, valid)
+			e.expect(false, e.bash("rein spec check "+specPath+" side && "+start+" --task task_opaque-id"), "Orca ID must not become a rein name")
+		})
+	}
+	source := filepath.Join(e.outside, "source.md")
+	bad := filepath.Join(e.outside, "bad.md")
+	writeFile(t, bad, "invalid spec")
+	check := "rein spec check " + source + " side"
+	launch := "orca orchestration worker-start --worktree path:" + e.side + " --task task_opaque-id"
+	for _, command := range []string{
+		"! " + check + " && " + launch,
+		check + " & " + launch,
+		check + " && " + launch + " &",
+		check + "; " + launch,
+		check + " || " + launch,
+		"rein spec check " + source + " wrong-contract && " + launch,
+		"rein spec check " + bad + " side && " + launch,
+		"rein spec check " + source + "-missing side && " + launch,
+		check + " && command " + launch,
+		"bash -c '" + launch + "'",
+		"bash -lc '" + launch + "'",
+		"bash <<'EOF'\n" + launch + "\nEOF",
+	} {
+		e.expect(true, e.bash(command), "preflight must fail closed: "+command)
+	}
+	e.expect(true, e.bash("orca orchestration worker-start --worktree path:"+e.side+" --task task_opaque-id"), "opaque task requires explicit source preflight")
+	e.m.Allowed = []run.Allowance{{Kind: "task", Ref: "task_opaque-id", Reason: "wrong identity"}}
+	e.save()
+	out := e.bash("orca orchestration worker-start --worktree path:" + e.side + " --task task_opaque-id")
+	e.expect(true, out, "scope ruling must name actual contract")
+	if !strings.Contains(out, "side") {
+		t.Errorf("denial must identify rein contract: %s", out)
+	}
+	e.m.Allowed = []run.Allowance{{Kind: "task", Ref: "side", Reason: "test"}}
+	e.save()
+	e.expect(true, e.bash("orca orchestration worker-start --worktree path:"+filepath.Join(e.side, "src")+" --spec "+quoted), "contract must name exact prepared worktree")
 }

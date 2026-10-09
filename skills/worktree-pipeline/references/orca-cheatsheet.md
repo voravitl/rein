@@ -1,23 +1,21 @@
-# Orca cheatsheet for the pipeline (Orca 1.4.219, verified 2026-10-07/08)
+# Orca cheatsheet for the pipeline (Orca 1.4.219, launch help/guides verified 2026-10-09)
 
 ## Commands that worked
 ```sh
 orca status --json                                   # runtime.state must be "ready"
 orca orchestration run-create / run-use / run-show
-# Claude workers and unguarded read-only reviewers. A GUARDED worker of another vendor is NOT started like this:
-# create the worktree, run `rein hooks install <task>`, then start it on `--worktree path:<wt>` (codex: shell terminal, see below).
-# Mandatory: specify --task-title, --display-name, and --comment to display what is being done and with what model in Orca IDE.
-orca orchestration worker-start --run R --spec "$(cat s.md)" \
-  --task-title "<task>: <what it is doing>" \
-  --display-name "<task> [<agent>/<model>]" \
-  --comment "Working on <task> with <model>" \
-  --worktree new-top-level --name NAME --repo id:<repo-id> --base-branch origin/main --setup skip \
-  --agent codex|claude|antigravity --model <id> [--effort max] --json
-orca orchestration worker-start ... --worktree path:/abs/existing/worktree   # reuse an Orca-known worktree
-orca orchestration task-create --run R --task-title "<task>: <what>" --display-name "<task> [<agent>/<model>]" --spec "$(cat s.md)" --json
+# Prepare an exact worktree, install required hooks, and check the source spec before launch.
+# Existing worktrees reject creation flags; rein names and Orca Task IDs are distinct.
+# After task-create, use the returned task_<opaque-id>, never the rein contract name.
+rein spec check /abs/source.md <rein-contract-name>
+orca orchestration task-create --run R --task-title "<task>: <what>" --display-name "<task> [<agent>/<model>]" --spec "$(cat /abs/source.md)" --json
+rein spec check /abs/source.md <rein-contract-name> && \
+  orca orchestration worker-start --run R --task <returned-task-id> \
+  --worktree path:/abs/existing/worktree --agent claude --model <id> --json
+# Creation flags belong to worktree create, before hooks installation, not this launch.
 orca terminal create --worktree path:<wt> --title "<task> [<agent>/<model>]" --command "..." --json
 orca worktree set --worktree <wt> --display-name "<task> [<agent>/<model>]" --comment "<what> using <model>" --json
-orca orchestration dispatch --run R --task <task> --to <terminal> --return-preamble --json   # preamble route
+orca orchestration dispatch --run R --task <returned-task-id> --to <terminal> --return-preamble --json   # preamble route
 orca terminal send --terminal <term> --text "read the file <preamble> and do the TASK" --enter --json
 orca terminal read --terminal <term> --json          # last screen lines
 orca orchestration check --run R [--peek] [--types worker_done,escalation,question] [--wait --timeout-ms N] --json
@@ -31,7 +29,10 @@ orca worktree rm --worktree path:/abs/path --force --json
 ```
 Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`.
 
-## Guard hooks per vendor (`rein hooks install <task>` prints the exact flags)
+## Guard hooks per vendor (`rein hooks install <rein-contract-name>` prints the exact flags)
+Install before the first launch; re-install on every retry/provider fallback for a fresh generation before any test tool call. Use the newly printed flags. `GUARD_INACTIVE` remains retrospective current-generation evidence, not a launch preflight or resource-ownership proof.
+Run `rein spec check /abs/source.md <rein-contract-name>` before Task creation/dispatch. For Task-ID worker-start, keep it immediately before the launch with `&&` in the same shell call, using that checked source's Task receipt and exact worktree. Negated/background checks, semicolon/OR separation, and mismatched sources/contracts do not qualify. The guard cannot fetch a Task's source spec; never invent it. Literal inline specs are linted against the exact worktree contract; use the Task-ID recipe for shell-expanded file contents.
+
 - **codex:** `worker-start --agent codex` cannot pass CLI flags (only `--model`, `--effort`). The guard needs `--dangerously-bypass-hook-trust` plus the two `-c 'hooks.PreToolUse=[...]'` / `-c 'hooks.Stop=[...]'` flags, so start a guarded codex worker in a shell terminal (preamble route: `codex <printed flags> -C <worktree> "$(cat preamble)"`) or with the direct `codex exec <printed flags> -C <worktree> ...` fallback. Without the flags the hook is skipped silently (`rein drift` then says GUARD_INACTIVE).
 - **kiro:** `kiro-cli chat --agent rein --trust-all-tools --model <model> "$(cat preamble)"`; the `--agent rein` is what loads the hook.
 - **agy, opencode2:** no flag; start them inside the worktree.
@@ -46,7 +47,7 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 - **agy sometimes forgets `worker_done`:** ask it to send it.
 - **Out of credits:** agy exits 3 with `RESOURCE_EXHAUSTED (429)` → move the task to codex.
 - **codex terminals become "not a recognized agent" after a task:** use the same preamble route, or close the terminal and start a fresh worker.
-- **Claude terminals reuse fine** with `worker-start --terminal <term> --worktree path:...`.
+- **Recognized Claude terminals can be reused** with `worker-start --terminal <term> --worktree path:...`.
 - **Heartbeats pile up** as "You have N orchestration messages": `scripts/ocloop2.py` acks them every minute.
 - **A long `check --wait` returns `runtime_timeout`:** Orca is busy or hung. Check `orca status --json`.
 - **Orca runtime hung** (2026-10-07 23:00–06:20: `state: starting`, `reachable: false`, renderer above 100% CPU):
@@ -62,7 +63,7 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 
 ## opencode / kiro (verified 2026-10-08)
 - **opencode2 (v2.0.20)** is a native Orca agent: `worker-start ... --agent opencode2` (or `opencode`). `--model` is ignored for it; the model comes from `~/.config/opencode/opencode.jsonc` (`model`). For a different model per task use the shell route: `opencode2 run -m <provider/model> "$(cat preamble)"`. List models: `opencode2 models`. Headless probe answered in seconds.
-- **kiro-cli (2.21.0)** IS a known Orca TUI agent (Orca 1.4.219 app bundle: `agent-kind.js`, launched with `--trust-all-tools`; the `worker-start --help` agent list is only examples). But `worker-start --agent kiro` cannot pass `--model` (help: --model only for Claude, Codex, Cursor, Antigravity, Muse) nor `--agent rein`, so it runs kiro's configured default model (here `claude-opus-4.8`, effort max, 2.2x credits) WITHOUT the rein hook. Until kiro defaults are verified, run a guarded kiro worker in an Orca shell terminal + `dispatch --return-preamble` (still an Orca worker, visible in the UI):
+- **kiro-cli (2.21.0)** IS a known Orca TUI agent (Orca 1.4.219 app bundle: `agent-kind.js`, launched with `--trust-all-tools`; the `worker-start --help` agent list is only examples). But `worker-start --agent kiro` cannot pass `--model` (help: --model only for Claude, Codex, Cursor, Antigravity, Muse) nor `--agent rein`, so it runs kiro's configured default model (here `claude-opus-4.8`, effort max, 2.2x credits) WITHOUT the rein hook. Until kiro defaults are verified, run a guarded kiro worker in an Orca shell terminal + `dispatch --return-preamble` (authoritative Orca Task/Dispatch context; operator-owned unsupervised process):
   `kiro-cli chat --no-interactive --trust-all-tools --agent rein --model claude-sonnet-5.5 "$(cat preamble)"` (worker; it needs write + shell tools), or headless in the background with the same flags and the output to a log.
   - **Always pass `--model`** (`kiro-cli chat --list-models`); the configured default is `claude-opus-4.8` at effort max.
   - Each answer ends with `▸ Credits: N` — record it in the model ledger (`--credits`).
@@ -76,7 +77,9 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 - **A project without MR pipelines:** your gates are the only evidence; put the numbers in the MR.
 
 ## Keep sessions visible in Orca
-The user watches the team in the Orca UI. Every worker and reviewer starts through `worker-start`, with two carve-outs: a guarded **codex** worker starts in a shell terminal (preamble route) because `worker-start` cannot pass the hook flags, and every non-Claude worker needs its worktree created first and `rein hooks install <task>` run before it starts (`--worktree path:<wt>`; `new-top-level` creates the worktree at start, so no hooks exist). On a start failure, retry inside Orca first (`--retry-of`, or a fresh worker on the same worktree). Use a direct CLI (`codex exec`, `claude -p`) only when Orca is down or keeps failing, and tell the user in one line before switching.
+The user watches the team in the Orca UI. Prefer `worker-start` when it can carry the required launch arguments. Guarded Codex needs a shell terminal with the printed hook flags and low-level preamble delivery; install required hooks before all launches and re-install for every retry/fallback. Check the receipt and current-generation tool-hook logs separately.
+
+Orca 1.4.219's version-matched `skills get --topic orchestration --reference low-level-topology` distinguishes authoritative Task/Dispatch context from resource ownership. Low-level `dispatch --return-preamble` plus `terminal send` leaves the shell-created process **operator-owned and unsupervised**; dispatch does not adopt it. Supervised adoption via `worker-start --terminal` requires a successful receipt. In the 2026-10-09 parent run Claude exhausted quota and newly shell-launched Codex returned `agent_unconfigured` despite an idle TUI; preamble delivery worked with current-generation Codex hook evidence. Report that fallback honestly, retain operator process/resource ownership, and do not infer adoption from readiness or hook activity. Direct CLI fallback has the same operator ownership; announce the switch and use fresh hook flags.
 
 ## Orca Browser E2E Testing
 Orca provides native browser automation (`orca tab`, `orca goto`, `orca snapshot`, `orca click`, `orca fill`, `orca keypress`, `orca eval`, `orca screenshot`).
