@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Follow proven cleanup recommendations for one Run; never close terminals manually.
+"""Release settled supervised sessions and verify resource closure for one Run.
 
 usage: orca_cleanup.py <run_id> [--stop ctx_a,ctx_b] [--dry-run]
   --stop requires positive exited liveness and an exact worker-stop nextAction.
@@ -35,34 +35,41 @@ ap.add_argument('--stop', default='')
 ap.add_argument('--dry-run', action='store_true')
 a = ap.parse_args()
 stop = {s for s in a.stop.split(',') if s}
-workers = []
-seen = set()
-cursors = set()
-cursor = None
-# Complete enumeration before making any cleanup decision or mutation.
-while True:
-    args = ['orchestration', 'worker-list', '--run', a.run, '--include-remote']
-    if cursor is not None:
-        args += ['--cursor', cursor]
-    result = orca(*args).get('result')
-    if not isinstance(result, dict) or not isinstance(result.get('workers'), list):
-        raise SystemExit('[orca_cleanup] malformed worker-list result')
-    for row in result['workers']:
-        if (not isinstance(row, dict) or not isinstance(row.get('dispatchId'), str) or
-                not row['dispatchId'] or row['dispatchId'] in seen or
-                not isinstance(row.get('projection'), dict)):
-            raise SystemExit('[orca_cleanup] malformed or duplicate worker row')
-        seen.add(row['dispatchId'])
-        workers.append(row)
-    page = result.get('page')
-    if not isinstance(page, dict) or type(page.get('hasMore')) is not bool:
-        raise SystemExit('[orca_cleanup] missing or malformed pagination')
-    if not page['hasMore']:
-        break
-    cursor = page.get('nextCursor')
-    if not isinstance(cursor, str) or not cursor or cursor in cursors:
-        raise SystemExit('[orca_cleanup] missing or repeated page cursor')
-    cursors.add(cursor)
+
+def list_workers():
+    workers = []
+    seen = set()
+    cursors = set()
+    cursor = None
+    # Complete enumeration before making any cleanup decision or mutation.
+    while True:
+        args = ['orchestration', 'worker-list', '--run', a.run, '--include-remote']
+        if cursor is not None:
+            args += ['--cursor', cursor]
+        result = orca(*args).get('result')
+        if not isinstance(result, dict) or not isinstance(result.get('workers'), list):
+            raise SystemExit('[orca_cleanup] malformed worker-list result')
+        for row in result['workers']:
+            if (not isinstance(row, dict) or not isinstance(row.get('dispatchId'), str) or
+                    not row['dispatchId'] or row['dispatchId'] in seen or
+                    not isinstance(row.get('projection'), dict)):
+                raise SystemExit('[orca_cleanup] malformed or duplicate worker row')
+            seen.add(row['dispatchId'])
+            workers.append(row)
+        page = result.get('page')
+        if not isinstance(page, dict) or type(page.get('hasMore')) is not bool:
+            raise SystemExit('[orca_cleanup] missing or malformed pagination')
+        if not page['hasMore']:
+            break
+        cursor = page.get('nextCursor')
+        if not isinstance(cursor, str) or not cursor or cursor in cursors:
+            raise SystemExit('[orca_cleanup] missing or repeated page cursor')
+        cursors.add(cursor)
+    return workers
+
+
+workers = list_workers()
+seen = {w['dispatchId'] for w in workers}
 
 failed = []
 actions = []
@@ -93,3 +100,13 @@ for action in actions:
         receipt = orca(*action)
         print('  ->', json.dumps(receipt))
         # Recovery receipts remain authoritative; never replace them with terminal close.
+
+if not a.dry_run:
+    releases = {action[-1] for action in actions if action[1] == 'worker-release'}
+    if releases:
+        current = {w['dispatchId']: w for w in list_workers()}
+        pending = sorted(dispatch for dispatch in releases
+                         if current.get(dispatch, {}).get('terminalState') != 'released')
+        if pending:
+            raise SystemExit('[orca_cleanup] FAILED: session closure unconfirmed for ' +
+                             ', '.join(pending) + '; inspect receipts and follow recovery; never force-close a supervised terminal')

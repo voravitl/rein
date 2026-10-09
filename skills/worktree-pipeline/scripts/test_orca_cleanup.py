@@ -25,6 +25,12 @@ def page(workers, more=False, cursor=None):
                                   'page': {'hasMore': more, 'nextCursor': cursor}}}
 
 
+def released_page(dispatch="ctx_one", state="released"):
+    row = worker(dispatch)
+    row["terminalState"] = state
+    return page([row])
+
+
 class CleanupTests(unittest.TestCase):
     def execute(self, responses, *args, env=None, platform='darwin'):
         calls = []
@@ -64,9 +70,23 @@ class CleanupTests(unittest.TestCase):
             with self.subTest(state=state):
                 receipt = {'ok': True, 'result': {'releaseState': state,
                                                 'nextAction': {'argv': ['orchestration', 'worker-show']}}}
-                code, calls, _ = self.execute([page([worker()]), receipt])
-                self.assertEqual(code, 0)
-                self.assertEqual(len(calls), 2)
+                code, calls, _ = self.execute([page([worker()]), receipt, released_page(state=state)])
+                self.assertEqual(code, 0 if state == "released" else 1)
+                self.assertEqual(len(calls), 3)
+
+    def test_release_requires_fresh_positive_resource_confirmation(self):
+        for final in (page([]), page([worker()]), {'ok': False}, {'ok': True, 'result': {}}):
+            with self.subTest(final=final):
+                code, calls, output = self.execute([page([worker()]), {'ok': True}, final])
+                self.assertEqual(code, 1)
+                self.assertEqual(len(calls), 3)
+
+    def test_release_postcheck_completes_pagination(self):
+        code, calls, _ = self.execute([page([worker()]), {'ok': True},
+                                      page([], True, 'after'), released_page()])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 4)
+        self.assertIn('after', calls[-1])
 
     def test_failed_mutation_response_stops_without_fallback(self):
         for response in [[], {'ok': True, 'error': {'message': 'bad'}},
@@ -93,9 +113,9 @@ class CleanupTests(unittest.TestCase):
     def test_all_pages_before_mutation(self):
         code, calls, _ = self.execute([page([worker()], True, 'opaque'),
                                       page([worker('ctx_two', 'live', 'worker-show')]),
-                                      {'ok': True}])
+                                      {'ok': True}, released_page()])
         self.assertEqual(code, 0)
-        self.assertEqual([c[2] for c in calls], ['worker-list', 'worker-list', 'worker-release'])
+        self.assertEqual([c[2] for c in calls], ['worker-list', 'worker-list', 'worker-release', 'worker-list'])
         self.assertIn('--include-remote', calls[0])
         self.assertIn('opaque', calls[1])
 
@@ -112,7 +132,7 @@ class CleanupTests(unittest.TestCase):
             with self.subTest(status=status, outcome=outcome):
                 row = worker(verdict='live', dispatchStatus=status)
                 row['projection']['outcome'] = outcome
-                code, calls, _ = self.execute([page([row]), {'ok': True}])
+                code, calls, _ = self.execute([page([row]), {'ok': True}, released_page()])
                 self.assertEqual(code, 0)
                 self.assertEqual(calls[1][1:], ['orchestration', 'worker-release', '--dispatch', 'ctx_one', '--json'])
 
@@ -188,7 +208,7 @@ class CleanupTests(unittest.TestCase):
                                       ({'ORCA_DEV_REPO_ROOT': '/dev'}, 'darwin', 'orca-dev'),
                                       ({}, 'linux', 'orca-ide'), ({}, 'darwin', 'orca')]:
             with self.subTest(binary=binary):
-                code, calls, _ = self.execute([page([worker()]), {'ok': True}], env=env, platform=platform)
+                code, calls, _ = self.execute([page([worker()]), {'ok': True}, released_page()], env=env, platform=platform)
                 self.assertEqual(code, 0)
                 self.assertTrue(all(c[0] == binary for c in calls))
 
