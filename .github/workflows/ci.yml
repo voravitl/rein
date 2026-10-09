@@ -40,6 +40,9 @@ jobs:
       - name: cleanup regression tests
         if: runner.os != 'Windows'
         run: python3 -B -m unittest discover -s skills/worktree-pipeline/scripts -p 'test*cleanup*.py'
+      - name: advisor routing regression tests
+        if: runner.os != 'Windows'
+        run: python3 -B -m unittest discover -s skills/worktree-pipeline/scripts -p 'test_advise_routing.py'
       - name: SessionStart installer builds once and is idempotent
         if: runner.os != 'Windows'
         run: |

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/voravitl/rein/internal/contract"
+	"github.com/voravitl/rein/internal/routing"
+	"github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/spec"
 	"mvdan.cc/sh/v3/syntax"
 )
@@ -89,6 +91,14 @@ func (x *ctx) sourcePreflight(left, right *syntax.Stmt) bool {
 		return args
 	}
 	l, r := argsOf(left), argsOf(right)
+	if len(r) > 3 && base(r[0]) == "rein" && r[1] == "route" && r[2] == "launch" {
+		for i, a := range r[3:] {
+			if a == "--" {
+				r = r[i+4:]
+				break
+			}
+		}
+	}
 	if len(l) != 5 || base(l[0]) != "rein" || l[1] != "spec" || l[2] != "check" || !filepath.IsAbs(l[3]) || len(r) == 0 || !isOrca(base(r[0])) {
 		return false
 	}
@@ -168,6 +178,25 @@ func (x *ctx) coordCall(raw, name string, rest []string) string {
 	if cmd != "" {
 		return fmt.Sprintf("`%s` is for the user%s: run it in your own terminal; the coordinator never authorizes itself", cmd, via)
 	}
+	if name == "rein" && len(rest) >= 2 && rest[0] == "route" && rest[1] == "launch" {
+		return x.coordRouteLaunch(rest[2:])
+	}
+	if isOrca(name) && len(rest) >= 2 && rest[0] == "terminal" && rest[1] == "create" {
+		if command, ok := flagValue(rest, "--command"); ok {
+			if strings.Contains(command, "$?") {
+				return "ROUTE_REQUIRED: terminal --command must be a statically checkable routed launch"
+			}
+			child := *x
+			child.deep++
+			child.vars = map[string]string{}
+			if reason := child.script(command); reason != "" {
+				return reason
+			}
+		}
+	}
+	if harnessLaunch(name, rest) {
+		return "ROUTE_REQUIRED: use `rein route launch --task <contract> --run <run> -- <harness argv>` so the selected model and route are checked and recorded"
+	}
 	if isOrca(name) && slices.Contains(rest, "worker-start") {
 		return x.coordWorkerStart(rest)
 	}
@@ -195,12 +224,26 @@ func flagValue(args []string, name string) (string, bool) {
 // says nothing about a worktree, so it cannot be judged here.
 // Also runs spec lint if --spec is provided (ADR 0002 B3).
 // Also checks scope ruling for task approval (ADR 0002 B4.4).
-func (x *ctx) coordWorkerStart(rest []string) string {
+func (x *ctx) coordWorkerStart(rest []string, routed ...bool) string {
 	// Check tick staleness and budget before allowing worker spawn
 	if reason := x.coord.checkTickAndBudget(); reason != "" {
 		return reason
 	}
 
+	if x.coord.m.Run != "" {
+		count := 0
+		for _, a := range rest {
+			if a == "--worktree" || strings.HasPrefix(a, "--worktree=") {
+				count++
+			}
+		}
+		if count > 1 {
+			return "ROUTE_REQUIRED: worker-start needs one unambiguous --worktree"
+		}
+	}
+	if x.coord.m.Run != "" && (len(routed) == 0 || !routed[0]) {
+		return "ROUTE_REQUIRED: use `rein route launch` for worker-start so launch admission is recorded"
+	}
 	wt, has := flagValue(rest, "--worktree")
 	if !has || strings.HasPrefix(wt, "new-") {
 		return x.coord.checkLegacySpec(rest) // preserve the existing new-worktree policy
@@ -246,7 +289,136 @@ func (x *ctx) coordWorkerStart(rest []string) string {
 	if task, has := flagValue(rest, "--task"); has && strings.HasPrefix(task, "task_") && !x.specChecked {
 		return "SPEC_PREFLIGHT_REQUIRED: launch an Orca Task ID with `rein spec check <absolute-source-spec> <rein-contract-name> && orca orchestration worker-start --task <task_id> --worktree path:<exact-worktree> ...`; do not invent a source spec"
 	}
+	if reason := x.coord.checkTickAndBudget(c); reason != "" {
+		return reason
+	}
+	return x.checkWorkerRoute(c, rest)
+}
+
+func (x *ctx) coordRouteLaunch(args []string) string {
+	split := -1
+	for i, a := range args {
+		if a == "--" {
+			split = i
+			break
+		}
+	}
+	if split < 0 || split+1 >= len(args) {
+		return "ROUTE_REQUIRED: route launch requires -- <actual harness argv>"
+	}
+	outer, inner := args[:split], args[split+1:]
+	task, has := flagValue(outer, "--task")
+	runID, hasRun := flagValue(outer, "--run")
+	if !has || !hasRun || runID != x.coord.m.Run {
+		return "ROUTE_MISMATCH: route launch needs the contract and active --run"
+	}
+	c, err := contract.Load(task)
+	if err != nil {
+		return "ROUTE_INVALID: " + err.Error()
+	}
+	if isOrca(base(inner[0])) {
+		return x.coordWorkerStart(inner[1:], true)
+	}
+	agent := base(inner[0])
+	switch agent {
+	case "kiro-cli":
+		agent = "kiro"
+	case "agy":
+		agent = "antigravity"
+	}
+	model, ok := flagValue(inner[1:], "--model")
+	if !ok {
+		model, ok = flagValue(inner[1:], "-m")
+	}
+	if !ok {
+		return "ROUTE_REQUIRED: routed harness needs an explicit --model"
+	}
+	d, err := routing.Validate(c, runID, agent, model)
+	if err != nil {
+		return "ROUTE_INVALID: " + err.Error()
+	}
+	if !strings.HasPrefix(d.Chain, "worker:") {
+		return "ROUTE_INVALID: worker launch requires a worker routing chain"
+	}
+	if d.Launch != "shell" {
+		return "ROUTE_INVALID: direct harness requires a shell launch route"
+	}
+	if !x.coord.m.Allows("task", c.Name) {
+		return "ROUTE_INVALID: contract is not in the approved scope ruling"
+	}
+	if reason := x.coord.checkTickAndBudget(); reason != "" {
+		return reason
+	}
+	return x.coord.checkTickAndBudget(c)
+}
+
+func harnessLaunch(name string, args []string) bool {
+	if !slices.Contains([]string{"claude", "codex", "agy", "kiro-cli", "opencode", "opencode2"}, name) {
+		return false
+	}
+	if len(args) == 1 && slices.Contains([]string{"--help", "-h", "--version", "-v", "help", "version", "models"}, args[0]) {
+		return false
+	}
+	if len(args) == 2 && args[0] == "auth" && args[1] == "status" {
+		return false
+	}
+	return true
+}
+
+func (x *ctx) checkWorkerRoute(c *contract.Contract, args []string) string {
+	if x.coord.m.Run == "" {
+		return ""
+	}
+	values := map[string]string{}
+	for _, flag := range []string{"--run", "--agent", "--model"} {
+		count := 0
+		for i, a := range args {
+			if a == flag {
+				count++
+				if i+1 < len(args) {
+					values[flag] = args[i+1]
+				}
+			} else if v, ok := strings.CutPrefix(a, flag+"="); ok {
+				count++
+				values[flag] = v
+			}
+		}
+		if count != 1 || values[flag] == "" || strings.HasPrefix(values[flag], "-") || strings.Contains(values[flag], "$?") {
+			return "ROUTE_REQUIRED: worker-start requires one explicit --run, --agent and --model from `rein route prepare`"
+		}
+	}
+	if values["--run"] != x.coord.m.Run {
+		return "ROUTE_MISMATCH: worker-start --run must equal the active run " + x.coord.m.Run
+	}
+	d, err := routing.Validate(c, values["--run"], values["--agent"], values["--model"])
+	if err != nil {
+		return "ROUTE_INVALID: " + err.Error()
+	}
+	if !strings.HasPrefix(d.Chain, "worker:") || d.Launch != "orca" {
+		return "ROUTE_INVALID: Orca worker launch requires a worker chain and Orca launch route"
+	}
+	if slices.Contains([]string{"codex", "kiro", "opencode", "opencode2"}, d.Agent) {
+		return "ROUTE_INVALID: native harness flags are not forwarded by Orca; use a shell route"
+	}
 	return ""
+}
+
+// contractedRouteCall applies launch admission to child spawns from a hooked worker.
+func (x *ctx) contractedRouteCall(raw, name string, args []string) string {
+	loc, found := run.Find(x.top)
+	if !found {
+		return ""
+	}
+	m, err := run.Load(loc.Marker)
+	if err != nil {
+		return "ROUTE_INVALID: cannot load run: " + err.Error()
+	}
+	if !loc.Belongs(m) || !m.OwnerAlive() || m.Run == "" {
+		return ""
+	}
+	checked := *x
+	checked.coord = &coordPolicy{m: m, loc: loc}
+	return checked.coordCall(raw, name, args)
 }
 
 // coordFind judges find: -delete removes its roots, -exec/-ok run a command per file (judged with {} as the target).

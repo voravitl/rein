@@ -9,8 +9,9 @@ orca orchestration run-create / run-use / run-show
 # After task-create, use the returned task_<opaque-id>, never the rein contract name.
 rein spec check /abs/source.md <rein-contract-name>
 orca orchestration task-create --run R --task-title "<task>: <what>" --display-name "<task> [<agent>/<model>]" --spec "$(cat /abs/source.md)" --json
+rein route prepare --task <rein-contract-name> --run R --chain worker:<type>
 rein spec check /abs/source.md <rein-contract-name> && \
-  orca orchestration worker-start --run R --task <returned-task-id> \
+  rein route launch --task <rein-contract-name> --run R -- orca orchestration worker-start --run R --task <returned-task-id> \
   --worktree path:/abs/existing/worktree --agent claude --model <id> --json
 # Creation flags belong to worktree create, before hooks installation, not this launch.
 orca terminal create --worktree path:<wt> --title "<task> [<agent>/<model>]" --command "..." --json
@@ -31,10 +32,10 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 
 ## Guard hooks per vendor (`rein hooks install <rein-contract-name>` prints the exact flags)
 Install before the first launch; re-install on every retry/provider fallback for a fresh generation before any test tool call. Use the newly printed flags. `GUARD_INACTIVE` remains retrospective current-generation evidence, not a launch preflight or resource-ownership proof.
-Run `rein spec check /abs/source.md <rein-contract-name>` before Task creation/dispatch. For Task-ID worker-start, keep it immediately before the launch with `&&` in the same shell call, using that checked source's Task receipt and exact worktree. Negated/background checks, semicolon/OR separation, and mismatched sources/contracts do not qualify. The guard cannot fetch a Task's source spec; never invent it. Literal inline specs are linted against the exact worktree contract; use the Task-ID recipe for shell-expanded file contents.
+Run `rein spec check /abs/source.md <rein-contract-name>` before Task creation/dispatch. Install hooks then prepare the configured route before launch; all model argv go through `rein route launch` with explicit task/run/model. The wrapper injects current task-bound Codex hooks and Kiro agent flags; do not add conflicting hook/model/provider overrides. Native Orca Codex/Kiro/OpenCode are rejected by the routed launcher. For Task-ID worker-start, keep it immediately before the launch with `&&` in the same shell call, using that checked source's Task receipt and exact worktree. Negated/background checks, semicolon/OR separation, and mismatched sources/contracts do not qualify. The guard cannot fetch a Task's source spec; never invent it. Literal inline specs are linted against the exact worktree contract; use the Task-ID recipe for shell-expanded file contents.
 
-- **codex:** `worker-start --agent codex` cannot pass CLI flags (only `--model`, `--effort`). The guard needs `--dangerously-bypass-hook-trust` plus the two `-c 'hooks.PreToolUse=[...]'` / `-c 'hooks.Stop=[...]'` flags, so start a guarded codex worker in a shell terminal (preamble route: `codex <printed flags> -C <worktree> "$(cat preamble)"`) or with the direct `codex exec <printed flags> -C <worktree> ...` fallback. Without the flags the hook is skipped silently (`rein drift` then says GUARD_INACTIVE).
-- **kiro:** `kiro-cli chat --agent rein --trust-all-tools --model <model> "$(cat preamble)"`; the `--agent rein` is what loads the hook.
+- **codex:** `worker-start --agent codex` cannot pass CLI flags (only `--model`, `--effort`). The guard needs `--dangerously-bypass-hook-trust` plus the two `-c 'hooks.PreToolUse=[...]'` / `-c 'hooks.Stop=[...]'` flags, so start a guarded codex worker in a shell terminal (preamble route: `rein route launch --task <contract> --run <run> -- codex exec --model <selected-model> "$(cat preamble)"`) or with the direct routed `codex exec --model <selected-model> ...` fallback. Without the flags the hook is skipped silently (`rein drift` then says GUARD_INACTIVE).
+- **kiro:** `rein route launch --task <contract> --run <run> -- kiro-cli chat --trust-all-tools --model <selected-model> "$(cat preamble)"` (injects `--agent rein`); the `--agent rein` is what loads the hook.
 - **agy, opencode2:** no flag; start them inside the worktree.
 
 ## Quirks and the fix for each
@@ -62,9 +63,9 @@ Run `rein spec check /abs/source.md <rein-contract-name>` before Task creation/d
 - **Current recovery authority:** load `orca skills get orchestration --reference references/recovery-and-cleanup.md` and `orca skills get orchestration --reference references/messaging-and-gates.md`; a listing argument is never proof of exit.
 
 ## opencode / kiro (verified 2026-10-08)
-- **opencode2 (v2.0.20)** is a native Orca agent: `worker-start ... --agent opencode2` (or `opencode`). `--model` is ignored for it; the model comes from `~/.config/opencode/opencode.jsonc` (`model`). For a different model per task use the shell route: `opencode2 run -m <provider/model> "$(cat preamble)"`. List models: `opencode2 models`. Headless probe answered in seconds.
+- **opencode2 (v2.0.20)** is a native Orca agent: `worker-start ... --agent opencode2` (or `opencode`). `--model` is ignored for it; the model comes from `~/.config/opencode/opencode.jsonc` (`model`). For a different model per task use the routed shell path: `rein route launch --task <contract> --run <run> -- opencode2 run --model <selected-model> "$(cat preamble)"`. List models: `opencode2 models`. Headless probe answered in seconds.
 - **kiro-cli (2.21.0)** IS a known Orca TUI agent (Orca 1.4.219 app bundle: `agent-kind.js`, launched with `--trust-all-tools`; the `worker-start --help` agent list is only examples). But `worker-start --agent kiro` cannot pass `--model` (help: --model only for Claude, Codex, Cursor, Antigravity, Muse) nor `--agent rein`, so it runs kiro's configured default model (here `claude-opus-4.8`, effort max, 2.2x credits) WITHOUT the rein hook. Until kiro defaults are verified, run a guarded kiro worker in an Orca shell terminal + `dispatch --return-preamble` (authoritative Orca Task/Dispatch context; operator-owned unsupervised process):
-  `kiro-cli chat --no-interactive --trust-all-tools --agent rein --model claude-sonnet-5.5 "$(cat preamble)"` (worker; it needs write + shell tools), or headless in the background with the same flags and the output to a log.
+  `rein route launch --task <contract> --run <run> -- kiro-cli chat --no-interactive --trust-all-tools --model <selected-model> "$(cat preamble)"` (worker; it needs write + shell tools), or headless in the background with the same flags and the output to a log.
   - **Always pass `--model`** (`kiro-cli chat --list-models`); the configured default is `claude-opus-4.8` at effort max.
   - Each answer ends with `▸ Credits: N` — record it in the model ledger (`--credits`).
   - **Read-only mode** = `--trust-tools=read,grep,glob`: reads run, writes and shell are rejected ("non-interactive mode (no user to approve)"). A batch that mixes a rejected call with a read cancels the read too. `scripts/advise.sh` uses this with `ADVISE_PROVIDER=kiro`.

@@ -10,16 +10,18 @@ import (
 
 func cmdAdvise(args []string) int {
 	fs := flag.NewFlagSet("advise", flag.ContinueOnError)
-	provider := fs.String("provider", "", "provider to run advisor with (codex|kiro; default $ADVISE_PROVIDER or codex)")
-	model := fs.String("model", "", "model for advisor (default $ADVISE_MODEL or provider default)")
+	provider := fs.String("provider", "", "explicit routed advisor harness (codex|kiro|claude; or $ADVISE_PROVIDER)")
+	model := fs.String("model", "", "explicit routed model (or $ADVISE_MODEL)")
+	runID := fs.String("run", "", "run identity (or $ADVISE_RUN)")
+	taskID := fs.String("task", "", "contract name (or $ADVISE_TASK)")
 	timeout := fs.Duration("timeout", 0, "timeout for advisor call")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 
 	posArgs := fs.Args()
-	if len(posArgs) < 4 {
-		fmt.Fprintln(os.Stderr, "usage: rein advise <role> <repo-or-worktree dir> <task-file> <out-file> [--provider codex|kiro] [--model M]")
+	if len(posArgs) != 4 {
+		fmt.Fprintln(os.Stderr, "usage: rein advise [--run R --task T --provider codex|kiro|claude --model M] <role> <repo-or-worktree dir> <task-file> <out-file>")
 		return 2
 	}
 
@@ -39,6 +41,12 @@ func cmdAdvise(args []string) int {
 		cmd.Args = append(cmd.Args, *model)
 	}
 	cmd.Env = os.Environ()
+	if *runID != "" {
+		cmd.Env = append(cmd.Env, "ADVISE_RUN="+*runID)
+	}
+	if *taskID != "" {
+		cmd.Env = append(cmd.Env, "ADVISE_TASK="+*taskID)
+	}
 	if *provider != "" {
 		cmd.Env = append(cmd.Env, "ADVISE_PROVIDER="+*provider)
 	}

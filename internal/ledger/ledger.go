@@ -117,6 +117,15 @@ func Append(r Row) error {
 }
 
 func Load(since string) ([]Row, error) {
+	return load(since, false)
+}
+
+// LoadStrict refuses corrupt records instead of undercounting spend at a budget gate.
+func LoadStrict(since string) ([]Row, error) {
+	return load(since, true)
+}
+
+func load(since string, strict bool) ([]Row, error) {
 	f, err := os.Open(Path())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -135,6 +144,9 @@ func Load(since string) ([]Row, error) {
 		}
 		var r Row
 		if err := json.Unmarshal([]byte(line), &r); err != nil {
+			if strict {
+				return nil, fmt.Errorf("ledger line %d: %w", n, err)
+			}
 			fmt.Fprintf(os.Stderr, "[ledger] skipping bad line %d\n", n)
 			continue
 		}

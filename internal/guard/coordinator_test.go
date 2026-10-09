@@ -360,12 +360,14 @@ func TestCoordWorkerStart(t *testing.T) {
 	e := newCoordEnv(t)
 	wt := filepath.Join(contract.Real(filepath.Dir(e.root)), "wts", "task-c")
 	linkWorktree(t, e.root, wt, "task-c")
-	if _, err := contract.New("task-c", 1, filepath.Join(e.outside, "run"), "src/**", "", "S1", filepath.Dir(wt), "", "", 0, nil); err != nil {
+	if c, err := contract.New("task-c", 1, filepath.Join(e.outside, "run"), "src/**", "", "S1", filepath.Dir(wt), "", "", 0, nil); err != nil {
 		t.Fatal(err)
+	} else {
+		prepareGuardRouteFor(t, c, e.m.Run, "claude", "claude-sonnet", "orca", "worker:backend")
 	}
 	e.m.Allowed = append(e.m.Allowed, run.Allowance{Kind: "task", Ref: "task-c", Reason: "test"})
 	e.save()
-	start := "orca orchestration worker-start --run R --agent opencode2 "
+	start := "rein route launch --task task-c --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet "
 	for _, c := range []string{
 		start + "--worktree path:" + e.root, start + "--worktree path:" + e.side, start + "--worktree=path:" + e.side,
 		start + "--worktree path:" + filepath.Join(e.side, "src"), start + "--worktree current", start + "--worktree active",
@@ -377,7 +379,7 @@ func TestCoordWorkerStart(t *testing.T) {
 		start + "--worktree path:" + wt, start + "--worktree new-top-level --name x", start + "--worktree new-child",
 		start + "--worktree path:" + e.outside, start, "orca orchestration worker-start --task t1 --agent claude",
 	} {
-		e.expect(false, e.bash(c), c)
+		e.expect(strings.HasPrefix(c, "orca "), e.bash(c), c)
 	}
 }
 
@@ -712,7 +714,7 @@ func TestCoordWorkerStartScopeRulingDenial(t *testing.T) {
 	if _, err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
-	out := e.bash("orca orchestration worker-start --task unapproved-task --worktree path:" + e.side)
+	out := e.bash("rein route launch --task side --run sprint -- orca orchestration worker-start --task unapproved-task --worktree path:" + e.side)
 	e.expect(true, out, "worker-start without approval should be denied")
 	if !strings.Contains(out, "is not in the approved scope ruling") {
 		t.Errorf("wrong denial reason: %q", out)
@@ -741,7 +743,8 @@ func TestCoordWorkerStartScopeRulingAllowed(t *testing.T) {
 	b, _ := json.Marshal(c)
 	writeFile(t, filepath.Join(e.contract, "side.json"), string(b))
 
-	// Now worker-start should be allowed
-	out := e.bash("orca orchestration worker-start --task side --worktree path:" + e.side)
+	// Now worker-start should be allowed with an audited route.
+	prepareGuardRouteFor(t, c, e.m.Run, "claude", "claude-sonnet", "orca", "worker:backend")
+	out := e.bash("rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --task side --worktree path:" + e.side)
 	e.expect(false, out, "worker-start with approval should be allowed")
 }

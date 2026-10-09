@@ -19,6 +19,8 @@ import (
 )
 
 type Provider struct {
+	Maker  string   `json:"maker,omitempty"`
+	Pool   string   `json:"pool,omitempty"`
 	Agent  string   `json:"agent"`
 	Model  string   `json:"model"`
 	Launch string   `json:"launch"`
@@ -101,7 +103,7 @@ func probe(ctx context.Context, name string, p Provider, signals []string, timeo
 		return Result{name, "down", fmt.Sprintf("timeout %s", timeout), secs}
 	}
 	// Success first: a healthy kiro answer also prints "Credits: N", which must not read as a credit problem.
-	if okRx.MatchString(text) {
+	if err == nil && okRx.MatchString(text) {
 		return Result{name, "up", "", secs}
 	}
 	low := strings.ToLower(text)
@@ -237,4 +239,13 @@ func Print(w io.Writer, c *Config, names []string, results map[string]Result, pi
 		}
 		fmt.Fprintf(w, "%-45s -> %s\n", k, v)
 	}
+}
+
+// Probe checks one provider without probing unused fallback candidates.
+func Probe(c *Config, name string, timeout time.Duration) Result {
+	p, ok := c.Providers[name]
+	if !ok {
+		return Result{Name: name, State: "down", Detail: "unknown provider"}
+	}
+	return probe(context.Background(), name, p, c.QuotaSignals[p.Agent], timeout)
 }

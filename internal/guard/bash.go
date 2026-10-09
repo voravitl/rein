@@ -278,6 +278,11 @@ func (x *ctx) call(args []string) string {
 			return r
 		}
 	} else {
+		if (isOrca(name) && strings.Contains(strings.Join(rest, " "), "worker-start")) || harnessLaunch(name, rest) || (name == "rein" && len(rest) >= 2 && rest[0] == "route" && rest[1] == "launch") {
+			if r := x.contractedRouteCall(args[0], name, rest); r != "" {
+				return r
+			}
+		}
 		for _, a := range args {
 			if textOnly[name] {
 				break

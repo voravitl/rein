@@ -59,6 +59,8 @@ func main() {
 		os.Exit(cmdLedger(os.Args[2:]))
 	case "providers":
 		os.Exit(cmdProviders(os.Args[2:]))
+	case "route":
+		os.Exit(cmdRoute(os.Args[2:]))
 	case "sandbox":
 		os.Exit(cmdSandbox(os.Args[2:]))
 	case "verdict":
@@ -97,13 +99,16 @@ func usage() {
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
   rein ledger report [--type T] [--since ISO] | suggest [--min-n 3]
   rein sandbox <name>     write the OS sandbox settings into the worker's worktree (before the worker starts)
+  rein route prepare --task T --run R --chain worker:<type>|review:<name> [--worker-model M]
+  rein route launch --task T --run R -- <provider argv> | route check --task T --run R --agent A --model M [--phase review --worktree P]
+  rein route cooldown --provider P --reason TEXT [--until RFC3339] | route clear --provider P --reason TEXT | route status
   rein providers [--chain worker:backend] [--only a,b] [--skip-claude] [--timeout 90s] [--config F] [--json]
   rein verdict record --mr N --sha SHA --verdict APPROVE|REQUEST_CHANGES --reviewer MODEL --worker MODEL [--run-dir D]
   rein verdict check --mr N --sha SHA [--tier T1|T2|T3] [--run-dir D] [--repo PATH]    exits 0 (pass), 1 (fail)
   rein verdict template [--mr N] [--sha SHA] [--base SHA] [--title T] [--reviewer R] [--worker W]    render Review Report scaffold
   rein approve prompt --mr N [--sha SHA] [--run-dir D] [--repo PATH]    prints AskUserQuestion JSON
   rein approve --mr N [--sha SHA] [--reason TEXT] [--run-dir D] [--repo PATH]    user-only: records human approval
-  rein advise <role> <dir> <task-file> <out-file> [--provider codex|kiro] [--model M]    run read-only advisor
+  rein advise --run R --task T --provider codex|kiro|claude --model M <role> <dir> <task-file> <out-file>    run read-only advisor
   rein e2e check [--json] | test <url-or-spec> [--out DIR] | run <spec-file> [--out DIR] [--base-url URL] [--json]
 
 For full syntax, flags, and operational examples, see docs/CLI_REFERENCE.md or skill rein:cli-reference.`)
@@ -400,6 +405,7 @@ func cmdLedger(args []string) int {
 		var r ledger.Row
 		r.Kind = "call"
 		fs := flag.NewFlagSet("ledger call", flag.ContinueOnError)
+		fs.StringVar(&r.Task, "task", "", "contract task attribution")
 		fs.StringVar(&r.Role, "role", "", "")
 		fs.StringVar(&r.Provider, "provider", "codex", "")
 		fs.StringVar(&r.Model, "model", "", "")

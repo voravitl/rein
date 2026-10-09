@@ -84,7 +84,7 @@ func Check(markerPath string, p *contract.Profile, task string) (CheckResult, er
 	}
 
 	// Load ledger rows since started_at
-	rows, err := ledger.Load(m.StartedAt)
+	rows, err := ledger.LoadStrict(m.StartedAt)
 	if err != nil {
 		// Ledger unavailable is distinct from backend down
 		return CheckResult{}, fmt.Errorf("load ledger: %w", err)
@@ -101,7 +101,7 @@ func Check(markerPath string, p *contract.Profile, task string) (CheckResult, er
 	spend := tallySpend(rows, m.Run, task)
 
 	// Count review rounds for this task if specified
-	reviewRounds := countReviewRounds(rows, task)
+	reviewRounds := countReviewRounds(rows, m.Run, task)
 
 	// Get effective caps
 	caps := getEffectiveCaps(budget, task != "")
@@ -152,17 +152,17 @@ func Check(markerPath string, p *contract.Profile, task string) (CheckResult, er
 	// Track which pools have approximated spend (rows with no exact token count)
 	approx := make(map[string]bool)
 	for _, row := range rows {
-		// If a row has neither WorkerTokens/ReviewerTokens nor Tokens, it's an estimate
-		hasTokens := (row.Tokens != nil && *row.Tokens > 0) ||
-			(row.WorkerTokens != nil && *row.WorkerTokens > 0) ||
-			(row.ReviewerTokens != nil && *row.ReviewerTokens > 0)
-		if !hasTokens {
-			// Determine which pool this row contributes to
-			poolName := "claude_tokens"
-			if row.Provider == "codex" {
-				poolName = "codex_tokens"
-			}
-			approx[poolName] = true
+		if row.Run != m.Run || (task != "" && row.Task != task) {
+			continue
+		}
+		if row.Worker != nil && row.WorkerTokens == nil && row.Tokens == nil {
+			approx[tokenPool(row.Worker.Agent)] = true
+		}
+		if row.Reviewer != nil && row.ReviewerTokens == nil {
+			approx[tokenPool(row.Reviewer.Agent)] = true
+		}
+		if row.Kind == "call" && row.Tokens == nil {
+			approx[tokenPool(row.Provider)] = true
 		}
 	}
 
@@ -297,20 +297,27 @@ func tallySpend(rows []ledger.Row, runName, task string) map[string]float64 {
 			continue
 		}
 
-		// Tally tokens
+		// Component counts take precedence over a row's aggregate token count.
 		if r.WorkerTokens != nil {
-			spend["claude_tokens"] += float64(*r.WorkerTokens)
+			agent := ""
+			if r.Worker != nil {
+				agent = r.Worker.Agent
+			}
+			spend[tokenPool(agent)] += float64(*r.WorkerTokens)
 		}
 		if r.ReviewerTokens != nil {
-			spend["claude_tokens"] += float64(*r.ReviewerTokens)
-		}
-		if r.Tokens != nil {
-			// Determine pool from provider/agent
-			if r.Provider == "codex" || (r.Worker != nil && r.Worker.Agent == "codex") {
-				spend["codex_tokens"] += float64(*r.Tokens)
-			} else {
-				spend["claude_tokens"] += float64(*r.Tokens)
+			agent := ""
+			if r.Reviewer != nil {
+				agent = r.Reviewer.Agent
 			}
+			spend[tokenPool(agent)] += float64(*r.ReviewerTokens)
+		}
+		if r.Tokens != nil && r.WorkerTokens == nil && r.ReviewerTokens == nil {
+			agent := r.Provider
+			if agent == "" && r.Worker != nil {
+				agent = r.Worker.Agent
+			}
+			spend[tokenPool(agent)] += float64(*r.Tokens)
 		}
 
 		// Tally credits
@@ -327,14 +334,24 @@ func tallySpend(rows []ledger.Row, runName, task string) map[string]float64 {
 	return spend
 }
 
-func countReviewRounds(rows []ledger.Row, task string) int {
+// Token pools identify the harness; they do not infer subscription USD from tokens.
+func tokenPool(agent string) string {
+	for _, known := range ledger.Agents {
+		if agent == known {
+			return agent + "_tokens"
+		}
+	}
+	return "unknown_tokens"
+}
+
+func countReviewRounds(rows []ledger.Row, runName, task string) int {
 	if task == "" {
 		return 0
 	}
 
 	maxRounds := 0
 	for _, r := range rows {
-		if r.Task == task && r.ReviewRounds != nil && *r.ReviewRounds > maxRounds {
+		if r.Run == runName && r.Task == task && r.ReviewRounds != nil && *r.ReviewRounds > maxRounds {
 			maxRounds = *r.ReviewRounds
 		}
 	}

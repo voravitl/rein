@@ -28,9 +28,10 @@ OMC adds cheap helpers around the Orca loop. Use each one at the step named belo
 ```sh
 scripts/advise.sh <role> <repo or worktree dir> <task prompt file> <output file> [model]
 # e.g. spec critique, run from anywhere:
-scripts/advise.sh critic ~/src/myapp <run>/specs/<task>-critique-task.md <run>/reports/<task>-critique.md
+ADVISE_RUN=<run> ADVISE_TASK=<contract> ADVISE_PROVIDER=<selected-agent> ADVISE_MODEL=<selected-model> scripts/advise.sh critic <contract-worktree> <run>/specs/<task>-critique-task.md <run>/reports/<task>-critique.md
 ```
-- **Providers:** `ADVISE_PROVIDER=codex` (default, `codex exec -s read-only`) or `kiro` (`kiro-cli --trust-tools=read,grep,glob`, default model `claude-sonnet-5.5`, Kiro credits; verified 2026-10-08: reads run, writes and shell rejected). Use kiro when codex quota is short or a second vendor is wanted; `ADVISE_MODEL` overrides the model.
+- **Routing is required:** install hooks on the target contract, prepare `review:<chain>` with the actual worker model, then set explicit `ADVISE_RUN`, `ADVISE_TASK` (contract name, not prompt filename), `ADVISE_PROVIDER`, and `ADVISE_MODEL`. The helper checks review phase and exact directory before any model call; missing attribution, wrong route or ledger failure fails the call. Codex, Kiro and Claude are supported. Claude runs restricted with only Read/Grep/Glob and strict MCP config; it never inherits a writing worker persona.
+- **Providers:** `ADVISE_PROVIDER=codex`, `kiro`, or `claude`; always set `ADVISE_MODEL` to the prepared review route. Codex uses a read-only sandbox, Kiro trusts only read/grep/glob, and Claude uses restricted read tools with MCP disabled. These harnesses have separate usage pools.
 - `<role>` is an OMC agent prompt (`critic`, `tracer`, `code-reviewer`, `security-reviewer`, `test-engineer`, `architect`, …) read from `$(npm root -g)/oh-my-claude-sisyphus/agents/` (the same prompts `omc ask --agent-prompt` uses). The script adds `templates/advisor-rules.md` plus `$PIPELINE_PACK/advisor-rules.md` (the project's protected resources) and runs the provider read-only.
 - **Enforced** (probe 2026-10-08, codex-cli 0.160.0): file writes fail (`Operation not permitted`) and the docker socket is denied. **Network stays open**, so the advisor rules still forbid DB and HTTP calls.
 - The task file says what to judge, e.g. for a spec critique: the spec, the files other running tasks own, and "missing scope, untestable criteria, claims the code contradicts; no style notes".

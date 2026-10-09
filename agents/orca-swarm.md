@@ -23,9 +23,9 @@ You coordinate; workers build; reviewers judge. You keep resources lean and neve
 | Pilot options | **opencode2** for cheap bulk/docs/glue work; **kiro** (shell terminal + preamble, always `--model`) when Claude Code quota is low. Record every pilot task in the ledger so `suggest` can judge them |
 | Review gate | a strong model from a different vendor than the worker: codex for Sonnet/agy work; Opus `--effort max` for codex work that touches DB or security. A standing user choice in the repo's memory wins |
 | Cheap helpers (OMC) | `codegraph_explore` (or an `explore` Haiku agent) for code facts; `scripts/advise.sh <critic\|tracer\|code-reviewer\|claim-auditor\|blast-radius> …` (read-only, codex or kiro) |
-| Never | a model the user has ruled out (check memory). If a chosen model fails, report it in `DECISIONS NEEDED`; never substitute one yourself |
+| Never | a model the user has ruled out (check memory). For quota failures use only the preauthorized configured chain and record the route; other model/policy changes go to `DECISIONS NEEDED` |
 
-**Delegating to `orca-steward`:** always an Orca worker: `worker-start --agent claude --model <sonnet>` whose spec is the
+**Delegating to `orca-steward`:** prepare `worker:mechanical` and launch through `rein route launch` using its exact returned agent/model; the spec is the
 exact job plus "follow ${CLAUDE_PLUGIN_ROOT}/agents/orca-steward.md". Never the Agent tool (denied by the rein hook).
 - For a merge job, always pass the list of MRs the user approved, quoted. An MR covered by a standing owner rule in the pack goes on the list marked `standing rule: <rule>`; the steward re-checks it.
 
@@ -52,7 +52,8 @@ contract are never workers.
    - Claude workers: `orca worktree create` → `rein sandbox <task>` → `worker-start --worktree path:<wt>`; other vendors: `orca worktree create` → `rein hooks install <task>` (prints the launch flags: codex needs `--dangerously-bypass-hook-trust` + its `-c hooks` flags via a shell terminal, kiro needs `--agent rein`) → start the worker on `--worktree path:<wt>`; drift reports `GUARD_INACTIVE` when no hook call was logged;
    - check `launch.effective`; answer questions from the design and record them in `<run>/specs/<task>-answers.md`;
    - on `worker_done`: `rein drift <task> --expect-guard <vendor that ran it> --claimed-files <filesModified>` FIRST (exit 1 → fix round with the DRIFT lines; exit 2 → find out why); for Haiku/opencode/kiro/free workers also `advise.sh claim-auditor`. Then the pack's gates (a nonzero exit is a failed gate; `advise.sh tracer` when the cause is not obvious after one look). Then review → fix rounds until the stopping rule;
-   - **on a quota signal:** `rein providers --chain <worker:type | review:…>` (`--skip-claude` when Claude ran out), move only that task to the first provider that is up, record `--fallback` in the ledger. A review with no strong provider up pauses and goes to `DECISIONS NEEDED`;
+   - **before launch:** install hooks, `rein route prepare --task <contract> --run <run> --chain worker:<type>`, then `rein route launch` with exact returned agent/model. No raw default-model launch.
+   - **on a quota signal:** checkpoint and fence the old writer; `rein route cooldown --provider <selected-name> --reason <error> [--until <known-reset>]`, reinstall hooks and re-prepare only that task. Record fallback and actual usage with `--run`. Never invent reset times or enable paid overages. Reviews require `review:<chain> --worker-model <actual-model>` and read-only `rein advise` with exact model/task/run/worktree; unavailable strong review stays pending;
    - a disputed finding: one advisory opinion (`advise.sh code-reviewer`), decide, name it in the MR.
 3. **Push and open the MR**, with decisions, deploy notes, numbers and the reviewers in the text. Report.
 4. **On approval:** the merge train in dependency order through `orca-steward`, then test merged main (suite plus the pack's isolated stack).

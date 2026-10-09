@@ -533,11 +533,12 @@ func TestCoordWorkerStartOrcaForms(t *testing.T) {
 	}
 	e.m.Allowed = []run.Allowance{{Kind: "task", Ref: "side", Reason: "test"}}
 	e.save()
+	prepareGuardRouteFor(t, c, e.m.Run, "claude", "claude-sonnet", "orca", "worker:backend")
 	valid := "# Task\n\n## Scope\n- **S1** Fix launch\n  - red check: invalid spec denied\n\n" + c.Snippet() + "\n## Not in scope\n- Other changes\n\nGates: go test ./...\nTimebox: 30m\n"
 	quoted := "'" + strings.ReplaceAll(valid, "'", "'\"'\"'") + "'"
 	for _, executable := range []string{"orca", "orca-dev", "orca-ide", "/opt/bin/orca-dev"} {
 		t.Run(executable, func(t *testing.T) {
-			start := executable + " orchestration worker-start --worktree path:" + e.side
+			start := "rein route launch --task side --run sprint -- " + executable + " orchestration worker-start --run sprint --agent claude --model claude-sonnet --worktree path:" + e.side
 			e.expect(true, e.bash(start+" --spec 'invalid inline spec'"), "invalid inline spec must be linted")
 			e.expect(false, e.bash(start+" --spec "+quoted), "valid inline spec")
 			// Task source specs are explicitly checked before launching by authoritative Orca ID.
@@ -550,8 +551,8 @@ func TestCoordWorkerStartOrcaForms(t *testing.T) {
 	bad := filepath.Join(e.outside, "bad.md")
 	writeFile(t, bad, "invalid spec")
 	check := "rein spec check " + source + " side"
-	e.expect(false, e.bash("wt=path:"+e.side+"; "+check+" && orca orchestration worker-start --task task_opaque-id --worktree \"$wt\"; wt=new-top-level"), "valid current-state variable launch")
-	launch := "orca orchestration worker-start --worktree path:" + e.side + " --task task_opaque-id"
+	e.expect(false, e.bash("wt=path:"+e.side+"; "+check+" && rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --task task_opaque-id --worktree \"$wt\"; wt=new-top-level"), "valid current-state variable launch")
+	launch := "rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --worktree path:" + e.side + " --task task_opaque-id"
 	for _, command := range []string{
 		"! " + check + " && " + launch,
 		check + " & " + launch,
@@ -561,8 +562,8 @@ func TestCoordWorkerStartOrcaForms(t *testing.T) {
 		"env bash -c '" + launch + "'",
 		"timeout 10 bash -c '" + launch + "'",
 		"find " + e.side + " -exec " + launch + " " + ";",
-		"wt=path:" + e.side + "; orca orchestration worker-start --task task_opaque-id --worktree \"$wt\"; wt=new-top-level",
-		"orca orchestration worker-start --worktree path:" + e.side + " --spec " + source,
+		"wt=path:" + e.side + "; rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --task task_opaque-id --worktree \"$wt\"; wt=new-top-level",
+		"rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --worktree path:" + e.side + " --spec " + source,
 		"rein spec check " + source + " wrong-contract && " + launch,
 		"rein spec check " + bad + " side && " + launch,
 		"rein spec check " + source + "-missing side && " + launch,
@@ -573,15 +574,15 @@ func TestCoordWorkerStartOrcaForms(t *testing.T) {
 	} {
 		e.expect(true, e.bash(command), "preflight must fail closed: "+command)
 	}
-	e.expect(true, e.bash("orca orchestration worker-start --worktree path:"+e.side+" --task task_opaque-id"), "opaque task requires explicit source preflight")
+	e.expect(true, e.bash("rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --worktree path:"+e.side+" --task task_opaque-id"), "opaque task requires explicit source preflight")
 	e.m.Allowed = []run.Allowance{{Kind: "task", Ref: "task_opaque-id", Reason: "wrong identity"}}
 	e.save()
-	out := e.bash("orca orchestration worker-start --worktree path:" + e.side + " --task task_opaque-id")
+	out := e.bash("rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --worktree path:" + e.side + " --task task_opaque-id")
 	e.expect(true, out, "scope ruling must name actual contract")
 	if !strings.Contains(out, "side") {
 		t.Errorf("denial must identify rein contract: %s", out)
 	}
 	e.m.Allowed = []run.Allowance{{Kind: "task", Ref: "side", Reason: "test"}}
 	e.save()
-	e.expect(true, e.bash("orca orchestration worker-start --worktree path:"+filepath.Join(e.side, "src")+" --spec "+quoted), "contract must name exact prepared worktree")
+	e.expect(true, e.bash("rein route launch --task side --run sprint -- orca orchestration worker-start --run sprint --agent claude --model claude-sonnet --worktree path:"+filepath.Join(e.side, "src")+" --spec "+quoted), "contract must name exact prepared worktree")
 }

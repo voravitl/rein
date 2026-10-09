@@ -84,3 +84,16 @@ func TestSuggestPrefersApprovedWork(t *testing.T) {
 		t.Errorf("rejected one-round work must not win:\n%s", b.String())
 	}
 }
+
+func TestLoadStrictRejectsCorruptionWithoutChangingReports(t *testing.T) {
+	t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "ledger.jsonl"))
+	if err := os.WriteFile(Path(), []byte(`{"kind":"call","run":"r","recorded_at":"2026-01-01T00:00:00Z"}`+"\nbroken\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := Load(""); err != nil || len(rows) != 1 {
+		t.Fatalf("legacy reporting changed: %v %v", rows, err)
+	}
+	if _, err := LoadStrict(""); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("strict corruption result: %v", err)
+	}
+}

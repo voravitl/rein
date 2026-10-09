@@ -212,7 +212,7 @@ rein approve --mr <N> [--sha <HEAD_SHA>] --reason "<APPROVAL_REASON>"
 
 Dispatches a secondary model to inspect claims, trace errors, or audit blast radius:
 ```sh
-rein advise <ROLE> <DIR> <TASK_FILE> <OUT_FILE> [--provider codex|kiro] [--model <M>]
+rein advise --run <RUN> --task <CONTRACT> --provider codex|kiro|claude --model <M> <ROLE> <CONTRACT_WORKTREE> <TASK_FILE> <OUT_FILE>
 ```
 - Available roles: `code-reviewer`, `claim-auditor`, `blast-radius`, `tracer`.
 
@@ -258,3 +258,19 @@ Writes OS sandbox profiles into the worker's worktree:
 ```sh
 rein sandbox <TASK_NAME>
 ```
+
+## Routed model launches
+
+```sh
+rein route prepare --task <contract> --run <run> --chain worker:<type> [--config F] [--skip-claude] [--timeout 90s]
+rein route prepare --task <contract> --run <run> --chain review:<name> --worker-model <actual-model>
+rein route check --task <contract> --run <run> --agent <agent> --model <model> [--phase worker|review] [--worktree <exact-path>]
+rein route launch --task <contract> --run <run> -- codex exec --model <selected-model> <prompt>
+rein route cooldown --provider <name> --reason <quota-evidence> [--until <RFC3339-reset>] [--config F]
+rein route clear --provider <name> --reason <availability-evidence> [--config F]
+rein route status
+```
+
+Install hooks before preparation. JSON decisions report configured chain, attempts, actual harness/model/maker/pool and fallback. Probe eligible candidates in order and stop first available; no automatic price ranking. Prepare/check/launch fail with exit1 on unknown/stale/mismatched identity, inaccessible ledger/state or hard configured budget; argument errors exit2. Review phase requires a different known model maker; implementation requires worker phase. `route check` records intent but does not execute a provider; `route launch` validates, records, executes argv in the exact checkout, and records process exit (not task completion). Codex hooks and Kiro rein-agent are injected automatically. Native Orca launches support only harnesses whose flags can be forwarded. Actual provider receipts/hook evidence must be verified separately.
+
+Receipts live outside checkouts in `<contract-index>/routes/decisions/`; quota state in `<contract-index>/routes/cooldowns.json`. Receipts expire after30minutes and bind contract/config/hook generation. Quota without knownreset stays blocked until explicit clear. State writes are serialized; an interrupted writer can leave `<contract-index>/routes/.lock`: verify that no routing writer is alive before removing only that empty lock, then retry. No automatic stale-lock takeover. Usage unknown is not free; missing budget supplies no cap, and in-flight spend is not reserved. Direct invocations outside instrumented guards and opaque terminal sends are not universally intercepted.
