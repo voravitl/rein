@@ -5,11 +5,9 @@ package run
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -63,14 +61,15 @@ func Tick(repo string) error {
 	defer lockFile.Close()
 
 	// Try to acquire lock (non-blocking)
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			// Another tick is running
-			return nil
-		}
+	locked, err := lockFileExclusive(lockFile)
+	if err != nil {
 		return fmt.Errorf("flock: %w", err)
 	}
-	defer syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+	if !locked {
+		// Another tick is running
+		return nil
+	}
+	defer unlockFile(lockFile)
 
 	// Sample workers (placeholder for now - will be enhanced)
 	workers := sampleWorkers(common)
