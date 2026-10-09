@@ -65,6 +65,8 @@ func main() {
 		os.Exit(cmdVerdict(os.Args[2:]))
 	case "approve":
 		os.Exit(cmdApprove(os.Args[2:]))
+	case "advise":
+		os.Exit(cmdAdvise(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("rein", version)
 	default:
@@ -74,7 +76,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|advise|version> [args]
   rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
   rein hooks install <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
@@ -97,7 +99,8 @@ func usage() {
   rein verdict record --mr N --sha SHA --verdict APPROVE|REQUEST_CHANGES --reviewer MODEL --worker MODEL [--run-dir D]
   rein verdict check --mr N --sha SHA [--tier T1|T2|T3] [--run-dir D] [--repo PATH]    exits 0 (pass), 1 (fail)
   rein approve prompt --mr N [--sha SHA] [--run-dir D] [--repo PATH]    prints AskUserQuestion JSON
-  rein approve --mr N [--sha SHA] [--reason TEXT] [--run-dir D] [--repo PATH]    user-only: records human approval`)
+  rein approve --mr N [--sha SHA] [--reason TEXT] [--run-dir D] [--repo PATH]    user-only: records human approval
+  rein advise <role> <dir> <task-file> <out-file> [--provider codex|kiro] [--model M]    run read-only advisor`)
 }
 
 // cmdHook never crashes the vendor's session: a panic means "no decision" (exit 0). A bad flag exits 1, which

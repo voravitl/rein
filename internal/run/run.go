@@ -37,6 +37,15 @@ var DefaultTools = []string{"View", "ViewFile", "Read", "ReadFile", "Glob", "Gre
 	"TodoWrite", "TaskCreate", "TaskGet", "TaskList", "TaskUpdate", "TaskOutput", "BashOutput", "Skill", "ToolSearch",
 	"WebFetch", "WebSearch"}
 
+// DefaultReadonlyAgents lists standard read-only subagents permitted without rein run allow:
+// research, exploration, critique, review, and test verification roles.
+var DefaultReadonlyAgents = []string{
+	"Explore", "explore",
+	"Critic", "critic",
+	"Research", "research",
+	"code-reviewer", "test-engineer",
+}
+
 // Allowance is something the USER recorded with `rein run allow`.
 type Allowance struct {
 	Kind   string `json:"kind"` // "task" (an Agent call may name rein-task: <Ref>) | "commit" (audit accepts commit Ref)
@@ -430,7 +439,7 @@ func Start(repo, name string, prof *contract.Profile, who Owner) (*Marker, error
 		SessionID: who.SessionID, PID: who.PID, StartTime: st, BootID: bootID(),
 		CoordinatorWritable: pick(prof.CoordinatorWritable, DefaultWritable),
 		CoordinatorTools:    pick(prof.CoordinatorTools, DefaultTools),
-		ReadonlyAgents:      pick(prof.ReadonlyAgents, nil)}
+		ReadonlyAgents:      pick(prof.ReadonlyAgents, DefaultReadonlyAgents)}
 	if err := writeMarker(loc.Marker, m, true); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return nil, &ErrActive{Run: name, Alive: true}

@@ -151,6 +151,11 @@ var taskRx = regexp.MustCompile(`rein-task:[ \t]*([A-Za-z0-9][A-Za-z0-9._-]*)`)
 
 // agent judges an Agent call and records the pending binding SubagentStart will pair with.
 func (p *coordPolicy) agent(a Action) string {
+	// Nested subagents check: subagents cannot spawn other subagents (depth limit = 1)
+	if a.AgentID != "" {
+		return "subagents must not spawn nested subagents (depth limit = 1)"
+	}
+
 	// Check tick staleness before allowing agent spawn
 	if reason := p.checkTickAndBudget(); reason != "" {
 		return reason

@@ -353,6 +353,7 @@ func TestCoordBoundSubagentUsesTaskContract(t *testing.T) {
 	e.expect(false, e.tool("Edit", map[string]any{"file_path": filepath.Join(e.root, "docs", "d.md")}, other), "unbound subagent edits docs")
 	e.expect(true, e.bash("echo x > src/a.go", other), "read-only subagent's Bash goes through the write rules")
 	e.expect(true, e.bash("rein run allow --task t --reason r", other), "subagent authorizes itself")
+	e.expect(true, e.tool("Agent", map[string]any{"subagent_type": "Explore", "prompt": "nested"}, other), "subagent cannot spawn nested subagent")
 }
 
 func TestCoordWorkerStart(t *testing.T) {
