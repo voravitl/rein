@@ -51,7 +51,7 @@ func (r *Runner) Run(spec *Spec) (*TestReport, error) {
 	if err != nil {
 		report.DurationMS = time.Since(startTime).Milliseconds()
 		report.FailureMessage = fmt.Sprintf("failed to create orca browser tab: %v", err)
-		r.writeReports(report)
+		r.writeReports(spec, report)
 		return report, fmt.Errorf("create browser tab: %w", err)
 	}
 
@@ -112,7 +112,7 @@ func (r *Runner) Run(spec *Spec) (*TestReport, error) {
 	report.Success = allPassed
 	report.DurationMS = time.Since(startTime).Milliseconds()
 
-	r.writeReports(report)
+	r.writeReports(spec, report)
 	return report, nil
 }
 
@@ -337,7 +337,7 @@ func (r *Runner) captureFailureDiagnostics(pageID string, stepIndex int) {
 	}
 }
 
-func (r *Runner) writeReports(report *TestReport) {
+func (r *Runner) writeReports(spec *Spec, report *TestReport) {
 	if r.evidenceDir == "" {
 		return
 	}
@@ -378,4 +378,13 @@ func (r *Runner) writeReports(report *TestReport) {
 		sb.WriteString(fmt.Sprintf("| %d | `%s` | %s | %s | %d ms |\n", st.Index, st.Action, desc, res, st.DurationMS))
 	}
 	_ = os.WriteFile(filepath.Join(r.evidenceDir, "report.md"), []byte(sb.String()), 0o644)
+
+	// Automatically build Board-PDF report
+	pdfPath, err := BuildBoardPDF(spec, report, r.evidenceDir)
+	if err == nil && pdfPath != "" {
+		report.PDFPath = pdfPath
+		if data, err := json.MarshalIndent(report, "", "  "); err == nil {
+			_ = os.WriteFile(filepath.Join(r.evidenceDir, "report.json"), data, 0o644)
+		}
+	}
 }

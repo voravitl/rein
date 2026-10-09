@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>[Document title]</title>
+<!-- fonts.css and board.css sit next to this file (scripts/new_doc.py copies them). Keep every path relative. -->
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="board.css">
+</head>
+<body>
+
+<!-- ===================== COVER ===================== -->
+<section class="board cover">
+  <div class="kicker">[Topic] · [System] · YYYY-MM-DD</div>
+  <h1>[หัวเรื่องที่บอกข้อสรุป<br>ไม่ใช่แค่ชื่อหัวข้อ]</h1>
+  <p class="lede">[ตรวจจากอะไร (ระบบจริง, log, หน้าจอ), เทียบกับอะไร และเอกสารนี้ให้อะไรกับผู้อ่าน ในสองบรรทัด]</p>
+
+  <!-- optional: newest result first, when the situation changed while you were writing -->
+  <div class="card box-ok banner">
+    <span class="chip done lg">อัปเดต HH:MM</span>
+    <div><b>[ผลล่าสุดที่สำคัญที่สุด]</b> [หลักฐานสั้น ๆ และเวลาที่ตรวจ]</div>
+  </div>
+
+  <div class="cards3">
+    <div class="card"><h3>[อาการ / สิ่งที่ตรวจ]</h3>
+      <ul><li>[ข้อเท็จจริง 1]</li><li>[ข้อเท็จจริง 2]</li><li>[ข้อเท็จจริง 3]</li></ul></div>
+    <div class="card"><h3>[สาเหตุ / เทียบกับอะไร]</h3>
+      <ul><li>[สาเหตุหลัก]</li><li>[ผลที่ตามมา]</li></ul></div>
+    <div class="card"><h3>[สิ่งที่ต้องทำ / ตรวจอย่างไร]</h3>
+      <ol>
+        <li>[ขั้นที่ 1] <span class="chip done">ทำแล้ว</span></li>
+        <li>[ขั้นที่ 2] <span class="chip wait">ค้าง</span></li>
+        <li>[ขั้นที่ 3] <span class="chip todo">ต้องแก้</span></li>
+        <li>[ขั้นที่ 4] <span class="chip check">ตรวจผล</span></li>
+      </ol></div>
+  </div>
+
+  <div class="legend-title">สถานะที่ใช้ในเอกสารนี้ (ตรวจล่าสุด [วันที่ เวลา])</div>
+  <div class="legend">
+    <div><span class="chip done">ทำแล้ว</span><span>ตรวจแล้วว่าถูกต้อง</span></div>
+    <div><span class="chip wait">ค้าง</span><span>ทำไปบางส่วน</span></div>
+    <div><span class="chip todo">ต้องแก้</span><span>ยังไม่ถูกต้อง</span></div>
+    <div><span class="chip opt">ไม่บังคับ</span><span>ดีขึ้นถ้าทำ แต่ไม่ใช่สาเหตุ</span></div>
+    <div><span class="chip check">ตรวจผล</span><span>ทดสอบหลังแก้ครบ</span></div>
+  </div>
+</section>
+
+<!-- ===================== CHAIN / EVIDENCE ===================== -->
+<section class="board">
+  <div class="kicker">01 · [Short Latin label]</div>
+  <h1>[ข้อสรุปของหน้านี้: ผ่านถึงขั้นไหน ล้มที่ไหน]</h1>
+  <p class="lede">[หลักฐานมาจากไหน และอ่านหน้านี้อย่างไร]</p>
+
+  <div class="flow">
+    <div class="step"><div class="n">1</div><h4>[ขั้น]</h4><p>[หลักฐาน]</p><div class="res ok">✓ ผ่าน</div></div>
+    <div class="step"><div class="n">2</div><h4>[ขั้น]</h4><p>[หลักฐาน]</p><div class="res ok">✓ ผ่าน</div></div>
+    <div class="step"><div class="n">3</div><h4>[ขั้น]</h4><p>[หลักฐาน]</p><div class="res ok">✓ ผ่าน</div></div>
+    <div class="step fail"><div class="n">4</div><h4>[ขั้นที่ล้ม]</h4><p>[อาการ]</p><div class="res no">✕ [ผล]</div></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h3>[ตารางหลักฐาน]</h3>
+      <table>
+        <tr><th>[ที่มา]</th><th>[ค่า]</th><th>[ผล]</th></tr>
+        <tr><td>[แถว]</td><td>[ค่า]</td><td class="no">ไม่มี</td></tr>
+        <tr><td>[แถว]</td><td>[ค่า]</td><td class="yes">ครบ</td></tr>
+      </table>
+    </div>
+    <div class="stack">
+      <div class="card"><div class="item"><div class="num">1</div><div>
+        <h3>[ข้อค้นพบ]</h3><p>[หลักฐานหนึ่งถึงสามบรรทัด]</p><p><span class="do">สรุป</span> [ผลต่อผู้อ่าน]</p>
+      </div></div></div>
+      <div class="card"><div class="item"><div class="num plain">2</div><div>
+        <h3>[ข้อสังเกตที่ไม่ใช่สาเหตุ]</h3><ul><li>[รายการ]</li></ul>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== FINDINGS ON A REAL SCREEN ===================== -->
+<section class="board">
+  <div class="head">
+    <div>
+      <div class="kicker">02 · [Short Latin label]</div>
+      <h1>[ข้อสรุปของหน้าจอนี้]</h1>
+    </div>
+    <div class="status"><span class="chip todo lg">ต้องแก้ ×1</span> <span class="chip done lg">ถูกแล้ว ×1</span><small>[ภาพถ่ายเมื่อ HH:MM]</small></div>
+  </div>
+  <p class="lede">[ตรวจหน้าไหน ด้วยสิทธิ์อะไร อ่านอย่างเดียวหรือไม่]</p>
+
+  <div class="cols">
+    <div>
+      <!-- Replace the placeholder with: <div class="shot"><img src="img/xxx.jpg" alt="..."> pins/highlights </div>
+           Positions are % of the image; compute them with scripts/shot_tools.py pins. -->
+      <div class="shot placeholder">[ภาพหน้าจอจริง 2x — แทนที่ด้วย &lt;img&gt;]
+        <div class="hl" style="left:20%;top:60%;width:75%;height:7%"></div>
+        <div class="pin" style="left:95%;top:60%">1</div>
+      </div>
+      <p class="cap">[ภาพนี้คืออะไร ถ่ายเมื่อไร หมุดไหนชี้อะไร]</p>
+      <div style="margin-top:22px">
+        <div class="shot placeholder" style="aspect-ratio: 2059 / 548">[ภาพซูมส่วนที่ต้องอ่านให้ชัด]
+          <div class="hl ok" style="left:3%;top:50%;width:94%;height:16%"></div>
+          <div class="pin" style="left:90%;top:58%">2</div>
+        </div>
+        <p class="cap">ซูม: [สิ่งที่ถูกต้องในภาพนี้] (หมุด 2)</p>
+      </div>
+    </div>
+    <div class="stack">
+      <div class="card"><div class="item"><div class="num">1</div><div>
+        <h3><span class="chip todo">ต้องแก้</span>[ปัญหาที่หมุด 1]</h3>
+        <p>[หลักฐาน]</p><p><span class="do">วิธีแก้</span> [ไปขั้นไหน]</p>
+      </div></div></div>
+      <div class="card"><div class="item"><div class="num">2</div><div>
+        <h3><span class="chip done">ถูกแล้ว</span>[สิ่งที่ถูกต้องที่หมุด 2]</h3>
+        <p>[ทำไมถึงถูก]</p>
+      </div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== ONE STEP, STEP BY STEP ===================== -->
+<section class="board">
+  <div class="head">
+    <div>
+      <div class="kicker">03 · Step 1 · [Short Latin label]</div>
+      <h1>[ขั้นที่ 1: ทำอะไร ให้ได้ผลอะไร]</h1>
+    </div>
+    <div class="status"><span class="chip wait lg">ค้าง</span><small>[ตรวจล่าสุด HH:MM]</small></div>
+  </div>
+  <p class="lede">[ทำไมขั้นนี้จำเป็น เทียบกับตัวอย่างที่ถูกต้องในระบบเดียวกัน]</p>
+
+  <div class="cols">
+    <div>
+      <div class="shot placeholder">[หน้าจอที่ใช้ทำขั้นนี้]
+        <div class="hl" style="left:3%;top:52%;width:13%;height:5%"></div>
+        <div class="pin" style="left:18.5%;top:54.5%">1</div>
+        <div class="pin" style="left:93%;top:27%">2</div>
+        <div class="pin" style="left:93%;top:34%">3</div>
+        <div class="pin" style="left:93%;top:13.6%">4</div>
+      </div>
+      <p class="cap">[ชื่อหน้า] หมายเลขตรงกับขั้นตอนด้านขวา</p>
+    </div>
+    <div class="stack">
+      <div class="card"><div class="item"><div class="num">1</div><div><h3>[เปิดเมนูไหน]</h3><p>[เมนู → เมนู หรือ <a href="https://example.invalid/path"><code>/path</code></a>]</p></div></div></div>
+      <div class="card"><div class="item"><div class="num">2</div><div><h3>[ช่องแรกใส่อะไร]</h3><p>[รูปแบบที่ถูก และเหตุผล]</p></div></div></div>
+      <div class="card"><div class="item"><div class="num">3</div><div><h3>[เลือกอะไร]</h3><p>[ระวังอะไร]</p></div></div></div>
+      <div class="card"><div class="item"><div class="num">4</div><div><h3>[กดบันทึก]</h3><p><span class="do">ตรวจผล</span> [ต้องเห็นอะไรถึงถือว่าสำเร็จ]</p></div></div></div>
+      <div class="card box-warn"><div class="item"><div class="num plain">!</div><div><h3>[ข้อสังเกต]</h3><p>[สิ่งที่อาจสับสนหรือยังไม่ยืนยัน]</p></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== VERIFY / NEXT ===================== -->
+<section class="board">
+  <div class="kicker">04 · Verify</div>
+  <h1>[ตรวจผลอย่างไร และทำอะไรต่อ]</h1>
+  <div class="cols">
+    <div class="card">
+      <div class="item"><div class="num">5</div><div><h3><span class="chip check">ตรวจผล</span>[วิธีทดสอบ]</h3><p>[ทำไมต้องทดสอบก่อนใช้งานจริง]</p></div></div>
+      <div class="mini"><div><b>1 · [ใคร]</b>[ทำอะไร]</div><div><b>2 · [ใคร]</b>[ทำอะไร]</div><div><b>3 · [ใคร]</b>[ทำอะไร]</div></div>
+      <div class="pre"><span class="k">ผลที่ต้องเห็น</span>
+  [key]  <span class="v">[value]</span></div>
+    </div>
+    <div class="stack">
+      <div class="card box-warn"><h3>ข้อควรระวัง</h3><ul class="warns"><li>[ข้อควรระวัง]</li></ul></div>
+      <div class="card box-ok"><h3>สิ่งที่ทำต่อ</h3><ul class="checks"><li>[งานถัดไป]</li></ul></div>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

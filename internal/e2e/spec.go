@@ -52,6 +52,7 @@ type TestReport struct {
 	DurationMS     int64        `json:"duration_ms"`
 	FailureMessage string       `json:"failure_message,omitempty"`
 	EvidenceDir    string       `json:"evidence_dir,omitempty"`
+	PDFPath        string       `json:"pdf_path,omitempty"`
 	Steps          []StepReport `json:"steps"`
 }
 

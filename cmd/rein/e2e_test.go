@@ -19,6 +19,12 @@ func TestCmdE2E_ArgValidation(t *testing.T) {
 	if code := cmdE2ERun([]string{"non-existent-spec-file.json"}); code != 2 {
 		t.Fatalf("expected code 2 on missing spec file, got %d", code)
 	}
+	if code := cmdE2ETest([]string{}); code != 2 {
+		t.Fatalf("expected code 2 on empty e2e test, got %d", code)
+	}
+	if code := cmdE2ETest([]string{"non-existent.json"}); code != 2 {
+		t.Fatalf("expected code 2 on missing test file, got %d", code)
+	}
 }
 
 func TestCmdE2E_Check(t *testing.T) {

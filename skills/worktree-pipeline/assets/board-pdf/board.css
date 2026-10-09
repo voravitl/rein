@@ -1,0 +1,125 @@
+/* board-pdf design system: landscape "review boards" printed by scripts/build_pdf.py.
+   One <section class="board"> = one PDF page; the page height is cropped to the content. */
+
+:root {
+  --bg: #F2F4F7; --card: #FFFFFF; --line: #E2E8F0; --ink: #0F172A; --ink2: #334155; --muted: #64748B;
+  --brand: #B4235A;                       /* kicker, pins, highlight outlines */
+  --ok: #15803D; --ok-soft: #E7F6EC;      /* done / correct */
+  --bad: #B91C1C; --bad-soft: #FDECEC;    /* must fix / failing */
+  --warn: #B45309; --warn-soft: #FEF3E2;  /* partial / caution */
+  --info: #1D4ED8; --info-soft: #EAF0FE;  /* verify / test */
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { font-family: 'IBM Plex Sans Thai', 'Sarabun', 'Thonburi', sans-serif; color: var(--ink); font-size: 17px; line-height: 1.62; }
+
+/* ---------- board frame ---------- */
+.board { width: 1440px; padding: 76px 88px 84px; break-after: page; }
+.board:last-child { break-after: auto; }
+.kicker { font-family: 'IBM Plex Mono', monospace; font-size: 15px; font-weight: 500; letter-spacing: .09em; color: var(--brand); text-transform: uppercase; }
+.head { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }
+h1 { font-size: 46px; line-height: 1.22; margin: 12px 0 16px; font-weight: 700; letter-spacing: -.005em; max-width: 1080px; }
+.cover h1 { font-size: 64px; line-height: 1.16; margin: 18px 0 22px; }
+.lede { font-size: 20px; color: var(--ink2); max-width: 1100px; margin: 0; }
+.cover .lede { font-size: 22px; }
+.status { text-align: right; flex: none; margin-top: 4px; }
+.status small { display: block; color: var(--muted); font-size: 14px; margin-top: 8px; }
+
+/* ---------- text atoms ---------- */
+code, .mono { font-family: 'IBM Plex Mono', monospace; }
+code { font-size: .84em; background: #F1F5F9; border: 1px solid #E2E8F0; border-radius: 5px; padding: 1px 6px; color: #0F172A; white-space: nowrap; }
+a { color: #1D4ED8; text-decoration: none; }
+.do { color: var(--ok); font-weight: 700; }          /* "วิธีแก้", "ตรวจผล", "แนะนำ" labels */
+.note { font-size: 15px; color: var(--muted); }
+
+/* ---------- status chips ---------- */
+.chip { display: inline-block; flex: none; font-family: 'IBM Plex Mono', 'IBM Plex Sans Thai', monospace; font-size: 13px; font-weight: 600; line-height: 1; padding: 6px 9px; border-radius: 6px; white-space: nowrap; }
+.chip.done { background: var(--ok); color: #fff; }
+.chip.wait { background: var(--warn); color: #fff; }
+.chip.todo { background: var(--bad); color: #fff; }
+.chip.opt { background: #fff; color: #334155; border: 1px solid #94A3B8; padding: 5px 8px; }
+.chip.check { background: var(--info); color: #fff; }
+.chip.p0 { background: var(--bad); color: #fff; }
+.chip.p1 { background: #C2410C; color: #fff; }
+.chip.p2 { background: #334155; color: #fff; }
+.chip.p3 { background: #fff; color: #334155; border: 1px solid #94A3B8; padding: 5px 8px; }
+.chip.lg { font-size: 15px; padding: 8px 12px; }
+
+/* ---------- cards ---------- */
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 24px 28px; }
+.card h3 { font-size: 21px; line-height: 1.35; margin: 0 0 10px; }
+.card p { margin: 0 0 8px; color: var(--ink2); }
+.card p:last-child, .card ul:last-child, .card ol:last-child { margin-bottom: 0; }
+.card ul, .card ol { margin: 0; padding-left: 22px; color: var(--ink2); }
+.card li { margin: 0 0 8px; }
+.card li:last-child { margin-bottom: 0; }
+.box-ok { background: var(--ok-soft); border-color: #BBE5C8; }
+.box-warn { background: var(--warn-soft); border-color: #F6D9A8; }
+.box-bad { background: var(--bad-soft); border-color: #F5C2C2; }
+.checks { list-style: none; padding-left: 0 !important; }
+.checks li { position: relative; padding-left: 26px; }
+.checks li::before { content: '✓'; position: absolute; left: 2px; top: 0; color: var(--ok); font-weight: 700; }
+.warns li::marker { color: var(--warn); }
+
+/* numbered card body: pin-colored number + content */
+.item { display: grid; grid-template-columns: 34px 1fr; gap: 16px; align-items: start; }
+.num { width: 32px; height: 32px; border-radius: 50%; background: var(--brand); color: #fff; font-weight: 700; font-size: 16px; line-height: 32px; text-align: center; margin-top: 1px; }
+.num.plain { background: #E2E8F0; color: #334155; }
+.item h3 { display: flex; gap: 10px; align-items: flex-start; font-size: 19px; margin: 2px 0 8px; line-height: 1.4; }
+.item h3 .chip { margin-top: 3px; }
+
+/* ---------- layouts ---------- */
+.cards3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 40px; }
+.cover .card h3 { font-size: 24px; margin-bottom: 16px; }
+.cover .card li { font-size: 18px; }
+.cols { display: grid; grid-template-columns: 1fr 470px; gap: 34px; margin-top: 40px; align-items: start; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; margin-top: 30px; align-items: start; }
+.stack { display: grid; gap: 18px; }
+.banner { display: flex; gap: 18px; align-items: flex-start; margin-top: 38px; font-size: 18px; color: var(--ink2); }
+.banner b { color: var(--ink); }
+
+/* legend row under the cover cards */
+.legend-title { font-weight: 600; color: var(--ink2); margin: 44px 0 14px; font-size: 18px; }
+.legend { display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px; }
+.legend div { display: flex; gap: 12px; align-items: flex-start; color: var(--ink2); font-size: 16px; line-height: 1.5; }
+
+/* ---------- screenshots, pins, highlights ---------- */
+.shot { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid #CBD5E1; background: #fff; box-shadow: 0 1px 2px rgba(15, 23, 42, .06); }
+.shot img { display: block; width: 100%; }
+.shot.placeholder { aspect-ratio: 2582 / 1612; display: grid; place-items: center; color: var(--muted); font-size: 15px; border-style: dashed; background: repeating-linear-gradient(45deg, #F8FAFC, #F8FAFC 12px, #F1F5F9 12px, #F1F5F9 24px); }
+.cap { font-size: 15px; color: var(--muted); margin: 10px 2px 0; line-height: 1.5; }
+/* left/top/width/height are percentages of the image, so they survive any display size */
+.pin { position: absolute; transform: translate(-50%, -50%); width: 30px; height: 30px; border-radius: 50%; background: var(--brand); color: #fff; font-weight: 700; font-size: 15px; line-height: 26px; text-align: center; border: 2px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, .28); font-family: 'IBM Plex Sans Thai', sans-serif; }
+.hl { position: absolute; border: 3px solid var(--brand); border-radius: 7px; box-shadow: 0 0 0 3px rgba(180, 35, 90, .14); }
+.hl.ok { border-color: var(--ok); box-shadow: 0 0 0 3px rgba(21, 128, 61, .14); }
+.hl.bad { border-color: var(--bad); box-shadow: 0 0 0 3px rgba(185, 28, 28, .14); }
+
+/* ---------- flow strip (a chain of steps with pass/fail) ---------- */
+.flow { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; margin-top: 40px; }
+.step { position: relative; background: #fff; border: 1px solid var(--line); padding: 18px 18px 18px 20px; margin-right: 18px; border-radius: 12px; min-height: 186px; }
+.step:last-child { margin-right: 0; }
+.step:not(:last-child)::after { content: ''; position: absolute; right: -16px; top: 50%; width: 14px; height: 2px; background: #94A3B8; }
+.step .n { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--muted); font-weight: 600; }
+.step h4 { font-size: 18px; margin: 6px 0 6px; line-height: 1.35; }
+.step p { margin: 0; font-size: 15px; color: var(--ink2); line-height: 1.5; }
+.step .res { position: absolute; left: 20px; bottom: 16px; }
+.step.fail { border: 2px solid var(--bad); background: var(--bad-soft); }
+.res { font-size: 14px; font-weight: 700; }
+.res.ok { color: var(--ok); }
+.res.no { color: var(--bad); }
+
+/* ---------- tables, timeline, code, mini steps ---------- */
+table { width: 100%; border-collapse: collapse; font-size: 16px; }
+th { text-align: left; font-weight: 600; color: var(--ink2); font-size: 14px; padding: 9px 10px; border-bottom: 2px solid var(--line); }
+td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink2); }
+tr:last-child td { border-bottom: 0; }
+td.no { color: var(--bad); font-weight: 700; }
+td.yes { color: var(--ok); font-weight: 700; }
+.tl td { font-size: 15px; padding: 8px 10px; }
+.tl td.mono { white-space: nowrap; color: var(--brand); font-size: 13px; font-weight: 600; width: 120px; }
+.pre { font-family: 'IBM Plex Mono', monospace; font-size: 15px; background: #0F172A; color: #E2E8F0; border-radius: 10px; padding: 16px 18px; line-height: 1.6; white-space: pre; }
+.pre .k { color: #F9A8D4; }
+.pre .v { color: #86EFAC; }
+.mini { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 12px; margin: 14px 0 16px; }
+.mini div { background: #F8FAFC; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 15px; line-height: 1.5; color: var(--ink2); }
+.mini b { display: block; color: var(--ink); font-size: 14px; font-family: 'IBM Plex Mono', monospace; margin-bottom: 4px; }
