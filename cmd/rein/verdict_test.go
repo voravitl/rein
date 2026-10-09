@@ -77,3 +77,53 @@ func TestCmdVerdictCheck_EvidenceOutput(t *testing.T) {
 		t.Errorf("output missing approval reason:\n%s", output)
 	}
 }
+
+func TestCmdVerdictTemplate(t *testing.T) {
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	code := cmdVerdictTemplate([]string{
+		"--mr", "42",
+		"--sha", "abcdef123456",
+		"--base", "main-sha-000",
+		"--title", "feat: auth provider",
+		"--reviewer", "codex:gpt-5",
+		"--worker", "claude:sonnet-4.5",
+		"--tier", "T2",
+		"--round", "1",
+	})
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	output := buf.String()
+
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d", code)
+	}
+
+	requiredParts := []string{
+		"# Review Report: MR !42 (Round 1)",
+		"MR / PR**: !42 - feat: auth provider",
+		"Base SHA**: `main-sha-000`",
+		"Head SHA**: `abcdef123456`",
+		"Reviewer**: codex:gpt-5",
+		"Worker**: claude:sonnet-4.5",
+		"Task Tier**: T2",
+		"Acceptance Criteria Checklist",
+		"Verification & Test Execution",
+		"Findings & Defects",
+		"Handoff & Remediation Plan",
+		"Verdict",
+		"rein verdict record --mr 42 --sha abcdef123456 --verdict <APPROVE|REQUEST_CHANGES> --reviewer codex:gpt-5 --worker claude:sonnet-4.5",
+	}
+
+	for _, req := range requiredParts {
+		if !strings.Contains(output, req) {
+			t.Errorf("missing expected string %q in template output:\n%s", req, output)
+		}
+	}
+}

@@ -15,7 +15,7 @@ import (
 
 func cmdVerdict(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: rein verdict <record|check>")
+		fmt.Fprintln(os.Stderr, "usage: rein verdict <record|check|template>")
 		return 2
 	}
 
@@ -24,6 +24,8 @@ func cmdVerdict(args []string) int {
 		return cmdVerdictRecord(args[1:])
 	case "check":
 		return cmdVerdictCheck(args[1:])
+	case "template":
+		return cmdVerdictTemplate(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown verdict subcommand: %s\n", args[0])
 		return 2
@@ -412,4 +414,124 @@ func execOutput(dir string, name string, args ...string) ([]byte, error) {
 		cmd.Dir = dir
 	}
 	return cmd.Output()
+}
+
+func cmdVerdictTemplate(args []string) int {
+	fs := flag.NewFlagSet("verdict template", flag.ContinueOnError)
+	mr := fs.Int("mr", 0, "MR number")
+	sha := fs.String("sha", "", "commit SHA (defaults to git rev-parse HEAD)")
+	base := fs.String("base", "", "base SHA or branch (defaults to origin/main)")
+	title := fs.String("title", "", "MR title")
+	reviewer := fs.String("reviewer", "", "reviewer model (e.g. codex:gpt-5)")
+	worker := fs.String("worker", "", "worker model (e.g. claude:sonnet)")
+	tierStr := fs.String("tier", "T1", "task tier (T1, T2, T3)")
+	round := fs.Int("round", 1, "review round number")
+	repoPath := fs.String("repo", ".", "repository path")
+
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	mrStr := "<MR_NUMBER>"
+	if *mr > 0 {
+		mrStr = fmt.Sprintf("%d", *mr)
+	}
+
+	mrTitle := *title
+	if mrTitle == "" {
+		mrTitle = "<MR_TITLE>"
+	}
+
+	headSHA := *sha
+	if headSHA == "" {
+		if out, err := execOutput(*repoPath, "git", "rev-parse", "HEAD"); err == nil {
+			headSHA = strings.TrimSpace(string(out))
+		} else {
+			headSHA = "<HEAD_SHA>"
+		}
+	}
+
+	baseSHA := *base
+	if baseSHA == "" {
+		if out, err := execOutput(*repoPath, "git", "rev-parse", "origin/main"); err == nil {
+			baseSHA = strings.TrimSpace(string(out))
+		} else {
+			baseSHA = "origin/main"
+		}
+	}
+
+	revModel := *reviewer
+	if revModel == "" {
+		revModel = "<REVIEWER_MODEL>"
+	}
+
+	workModel := *worker
+	if workModel == "" {
+		workModel = "<WORKER_MODEL>"
+	}
+
+	template := fmt.Sprintf(`# Review Report: MR !%s (Round %d)
+
+## 1. Work & Revision Identity
+- **MR / PR**: !%s - %s
+- **Base SHA**: `+"`%s`"+`
+- **Head SHA**: `+"`%s`"+`
+- **Reviewer**: %s
+- **Worker**: %s
+- **Task Tier**: %s
+- **Revision Status**: CURRENT (Evaluated against exact Head SHA)
+
+## 2. Acceptance Criteria Checklist
+| # | Criterion | Status | Evidence (`+"`file:line`"+` / output) |
+|---|---|---|---|
+| 1 | <Requirement 1> | PASS | `+"`path/to/file.go:42`"+` - verified |
+| 2 | <Requirement 2> | FAIL | `+"`path/to/file.go:88`"+` - missing edge case handling |
+
+*Status options: PASS, FAIL, NOT VERIFIED*
+
+## 3. Verification & Test Execution
+- **Commands Executed**:
+  `+"```sh"+`
+  <exact test commands run, e.g. go test -count=1 ./...>
+  `+"```"+`
+- **Local Test Outcome**: <PASS (exit 0) / FAIL (exit 1)>
+- **CI / External Status**: <GREEN / PENDING / NOT RUN>
+- **Red Check (Mutation Testing)**:
+  - Mutation: <temporary mutation to break rule in review worktree>
+  - Result: <failed as expected, restored cleanly; git status clean>
+- **E2E / Visual Proof**: <link to report/e2e/report.pdf or evidence>
+
+## 4. Findings & Defects
+### [F-01] <Title of finding>
+- **Severity**: BLOCKER | HIGH | MEDIUM | LOW | NIT
+- **Location**: `+"`path/to/file.go:123`"+`
+- **Failure Scenario**: <concrete input/state leading to wrong outcome>
+- **Risk / Impact**: <why this breaks invariants or stability>
+- **Realistic**: Yes | Theoretical
+- **Recommended Fix**:
+  `+"```"+`
+  <code snippet or exact guidance>
+  `+"```"+`
+
+*(If no findings, state: "No defects found. All checks pass.")*
+
+## 5. Handoff & Remediation Plan (Next AI Action)
+Before merge, the remediating AI must:
+1. [ ] Fix [F-01]: <concrete action>
+2. [ ] Add regression test: <test file and description>
+3. [ ] Re-run gates: <exact test command>
+4. [ ] Note: If new commits are pushed, this report becomes STALE for %s.
+
+## 6. Verdict
+- **Verdict**: APPROVE | REQUEST_CHANGES | COMMENT
+- **Blockers**: <None / List of blocker IDs>
+- **Recorded Command**:
+  `+"```sh"+`
+  rein verdict record --mr %s --sha %s --verdict <APPROVE|REQUEST_CHANGES> --reviewer %s --worker %s
+  `+"```"+`
+- **Merge Gate Note**: APPROVE is a review recommendation. Merge is gated by rein verdict check and requires human approval via rein approve.
+`, mrStr, *round, mrStr, mrTitle, baseSHA, headSHA, revModel, workModel, strings.ToUpper(*tierStr), headSHA, mrStr, headSHA, revModel, workModel)
+
+	fmt.Print(template)
+	return 0
 }

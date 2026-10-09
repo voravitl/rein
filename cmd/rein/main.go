@@ -100,6 +100,7 @@ func usage() {
   rein providers [--chain worker:backend] [--only a,b] [--skip-claude] [--timeout 90s] [--config F] [--json]
   rein verdict record --mr N --sha SHA --verdict APPROVE|REQUEST_CHANGES --reviewer MODEL --worker MODEL [--run-dir D]
   rein verdict check --mr N --sha SHA [--tier T1|T2|T3] [--run-dir D] [--repo PATH]    exits 0 (pass), 1 (fail)
+  rein verdict template [--mr N] [--sha SHA] [--base SHA] [--title T] [--reviewer R] [--worker W]    render Review Report scaffold
   rein approve prompt --mr N [--sha SHA] [--run-dir D] [--repo PATH]    prints AskUserQuestion JSON
   rein approve --mr N [--sha SHA] [--reason TEXT] [--run-dir D] [--repo PATH]    user-only: records human approval
   rein advise <role> <dir> <task-file> <out-file> [--provider codex|kiro] [--model M]    run read-only advisor

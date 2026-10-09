@@ -73,13 +73,27 @@ Default routing (change it only with ledger evidence and the user's yes):
 - **No fake completion:** run the diff grep from `references/omc-toolkit.md`. A hit is a fix-round item.
 - **On failure:** find the root cause quickly (fixture vs code vs load). When it is not obvious after one look, run `<skill>/scripts/advise.sh tracer <worktree> <task file> <out>` with the failing names, first error lines and log path, and run the one check it says separates the hypotheses yourself. Then send a precise fix round (`templates/fix-round.md`). For agy or codex terminals that cannot be injected, use the preamble route in the cheatsheet.
 
-## 4. Review loop
-- **Where:** a separate review worktree (new-top-level from the branch, or a detached checkout), with a strong model from a different vendor. Use `templates/review.md` plus `templates/review-rules.md` and `<pack>/review-rules.md`.
-- **Reviewer duties:** check claims against the code; re-run red checks; run the gates.
-- **Verdict:** `APPROVE`, `APPROVE WITH NITS` or `REQUEST CHANGES`, with severities and a "Realistic: yes/no" line per finding. **Stopping rule:** APPROVE when what remains is theoretical or nits.
+## 4. Review loop (Mandatory Review Report Policy)
+- **Where:** a separate review worktree (new-top-level from the branch, or a detached checkout), with a strong model from a different vendor. Use `templates/review.md`, `templates/review-rules.md`, and strictly follow `templates/review-policy.md` (and `AGENTS.md`).
+- **Reviewer duties:**
+  1. Check claims against the code with `file:line` proof; re-run red checks; run the gates.
+  2. Produce the mandatory **6-part Review Report** bound to the exact `Head SHA`:
+     - 1. Work & Revision Identity (MR, Base SHA, Head SHA, Models, Tier)
+     - 2. Acceptance Criteria Checklist (PASS / FAIL / NOT VERIFIED with evidence)
+     - 3. Verification & Test Execution (exact test commands, local/CI, red checks)
+     - 4. Ranked Findings (Severity, `file:line`, Failure Scenario, Risk, Fix)
+     - 5. Handoff & Remediation Plan (actionable items for downstream AI worker)
+     - 6. Verdict & Blockers (`APPROVE` / `REQUEST_CHANGES` / `COMMENT`)
+  3. Register verdict:
+     ```sh
+     rein verdict record --mr <N> --sha <HEAD_SHA> --verdict <APPROVE|REQUEST_CHANGES> --reviewer <MODEL> --worker <MODEL>
+     ```
+- **Head SHA Invalidation:** If new commits are pushed (`Head SHA` changes), previous reports are STALE; subsequent rounds evaluate `git diff <old-sha>..<new-sha>` and check resolved findings.
+- **Stopping rule:** `APPROVE` when remaining issues are theoretical or nits. Merge is gated by `rein verdict check` and human approval (`rein approve`).
 - **Fix rounds:** each round fixes the ranked findings and comes back for a delta review (`git diff <old>..<new>`). The same reviewer context is best when its terminal still lives.
 - **A finding outside the task's scope:** ask the user whether to fix it here or split it into a new issue. Never silently override a reviewer.
 - **A disputed finding** (the worker shows evidence against it): get one advisory opinion with `<skill>/scripts/advise.sh code-reviewer <review worktree> <task file> <out>`, decide, and record both views in the MR.
+
 
 ## 5. Push and open the MR (no merge)
 - **Blast radius (DB, security, shared code):** `<skill>/scripts/advise.sh blast-radius <worktree> <task file> <out>`; run the proof command it names yourself and put the result in the MR.
