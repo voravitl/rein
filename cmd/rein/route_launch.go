@@ -57,10 +57,25 @@ func cmdRouteLaunch(args []string) int {
 	if err == nil {
 		err = routeBudget(c, *runID)
 	}
-
+	if err == nil && d.Attempt != "" {
+		// the prepared effort is part of the evidence the model was chosen on: launch exactly it, or nothing
+		var effort string
+		if effort, err = launchEffort(argv); err == nil && effort != strings.ToLower(d.Effort) {
+			err = fmt.Errorf("launch effort %q differs from the prepared effort %q", effort, d.Effort)
+		}
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
+	}
+	// one live writer per checkout: proven by process identity, released only on proof of exit
+	var lease *routing.Lease
+	if d.Attempt != "" {
+		if lease, err = routing.AcquireLease(c, d); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		defer lease.Release()
 	}
 	if !isOrcaLaunch(argv) && agent == "codex" {
 		bin, binErr := os.Executable()
@@ -84,6 +99,12 @@ func cmdRouteLaunch(args []string) int {
 	note, _ := json.Marshal(map[string]any{"provider": d.Provider, "chain": d.Chain, "launch": launch, "configured_launch": d.Launch})
 	row := ledger.Row{Kind: "routing_launch", Task: c.Name, Run: *runID, Provider: d.Provider,
 		Model: model, Role: d.Chain, Notes: string(note)}
+	if d.Attempt != "" { // attributable evidence: the denominator of this model's record, with who launched it
+		pid := os.Getpid()
+		start, _ := run.ProcStart(pid)
+		row.Attempt, row.Decision, row.Worker = d.Attempt, d.DecisionID, &ledger.AgentModel{Agent: agent, Model: model}
+		row.Type, row.Effort, row.Config, row.Suite, row.Tier, row.Pid, row.PidStart = d.Kind, d.Effort, d.ConfigFingerprint, d.Suite, d.Tier, &pid, &start
+	}
 	if err := ledger.Append(row); err != nil {
 		fmt.Fprintln(os.Stderr, "[route] cannot record launch:", err)
 		return 1
@@ -93,7 +114,17 @@ func cmdRouteLaunch(args []string) int {
 	cmd.Env = append(os.Environ(), "ADVISE_RUN="+*runID, "ADVISE_TASK="+c.Name)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	started := time.Now()
-	err = cmd.Run()
+	err = cmd.Start()
+	if err == nil && lease != nil {
+		if lerr := lease.SetChild(cmd.Process.Pid); lerr != nil { // an unrecorded provider process could hide a writer after a crash
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			err = fmt.Errorf("cannot record the provider process in the task lease: %w", lerr)
+		}
+	}
+	if err == nil {
+		err = cmd.Wait()
+	}
 	code := 0
 	if err != nil {
 		code = 1
@@ -104,6 +135,17 @@ func cmdRouteLaunch(args []string) int {
 	}
 	ok, minutes := code == 0, time.Since(started).Minutes()
 	row.Kind, row.OK, row.Minutes = "routing_exit", &ok, &minutes
+	if orca := isOrcaLaunch(argv); orca {
+		// worker-start returns once the worker STARTED, not when it ended: the time is not the worker's, and nothing here can
+		// vouch for the worker's process. The task stays held until `rein route settle --attempt` ends it.
+		row.Minutes = nil
+		if lease != nil && code == 0 {
+			if err := lease.MarkDispatched(); err != nil {
+				fmt.Fprintln(os.Stderr, "[route] cannot hold the task for the dispatched worker:", err)
+				code = 1
+			}
+		}
+	}
 	if err := ledger.Append(row); err != nil {
 		fmt.Fprintln(os.Stderr, "[route] cannot record provider exit:", err)
 		return 1
@@ -264,4 +306,44 @@ func launchIdentity(argv []string, c *contract.Contract, runID string) (string, 
 		return "", "", fmt.Errorf("launch requires one explicit agent and model: %v", err)
 	}
 	return agent, model, nil
+}
+
+// launchEffort returns the reasoning effort an argv asks for: --effort or --variant (claude, agy, opencode, Orca worker-start)
+// or Codex's model_reasoning_effort configuration. "" means it names none; two different values are an error.
+func launchEffort(argv []string) (string, error) {
+	norm := func(v string) string { return strings.ToLower(strings.Trim(strings.TrimSpace(v), `"'`)) }
+	args := argv[1:]
+	flagVal, err := launchFlag(args, "--effort", "--variant")
+	if err != nil {
+		return "", err
+	}
+	flagVal, cfgVal := norm(flagVal), ""
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		var kv string
+		switch {
+		case (args[i] == "-c" || args[i] == "--config") && i+1 < len(args):
+			kv = args[i+1]
+			i++
+		case strings.HasPrefix(args[i], "--config="):
+			kv = strings.TrimPrefix(args[i], "--config=")
+		case strings.HasPrefix(args[i], "-c") && len(args[i]) > 2:
+			kv = args[i][2:]
+		}
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.TrimSpace(k) == "model_reasoning_effort" {
+			if v = norm(v); cfgVal != "" && cfgVal != v {
+				return "", fmt.Errorf("conflicting model_reasoning_effort values")
+			}
+			cfgVal = norm(v)
+		}
+	}
+	switch {
+	case flagVal != "" && cfgVal != "" && flagVal != cfgVal:
+		return "", fmt.Errorf("conflicting effort values %q and %q", flagVal, cfgVal)
+	case cfgVal != "":
+		return cfgVal, nil
+	}
+	return flagVal, nil
 }

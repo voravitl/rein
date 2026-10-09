@@ -7,7 +7,7 @@
 #   kiro: `kiro-cli chat --no-interactive --trust-tools=read,grep,glob` (only read tools run; writes and shell are
 #         rejected; costs Kiro credits, not Claude Code quota). Never `omc ask`: it runs codex without a sandbox.
 # usage: advise.sh <role> <repo-or-worktree dir> <task prompt file> <output file> [model]
-# env: ADVISE_PROVIDER, ADVISE_MODEL, ADVISE_TIMEOUT, ADVISE_PURPOSE, ADVISE_RUN, ADVISE_TASK (contract task ID), PIPELINE_PACK (project pack dir;
+# env: ADVISE_PROVIDER, ADVISE_MODEL, ADVISE_EFFORT (reasoning effort; codex defaults to high; kiro has none), ADVISE_TIMEOUT, ADVISE_PURPOSE, ADVISE_RUN, ADVISE_TASK (contract task ID), PIPELINE_PACK (project pack dir;
 #      required unless ADVISE_NO_PACK=1),
 #      REIN (rein binary; default `rein` on PATH)
 set -uo pipefail
@@ -19,13 +19,17 @@ for VALUE in "$RUN" "$TASK_ID" "$PROVIDER" "$MODEL"; do
 done
 case "$PROVIDER" in codex|kiro|claude) ;; *) echo "[advise] ADVISE_PROVIDER must be codex, kiro or claude"; exit 2;; esac
 case "$MODEL" in *fable*) echo "[advise] fable is never used"; exit 2;; esac
+# The effort a review runs at is part of what an automatic receipt was chosen on: `route check --effort` must match it.
+EFFORT=${ADVISE_EFFORT:-}
+[ "$PROVIDER" != codex ] || EFFORT=${EFFORT:-high}
+[ "$PROVIDER" != kiro ] || [ -z "$EFFORT" ] || { echo "[advise] kiro has no effort setting; leave ADVISE_EFFORT empty"; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"; RULES="$HERE/../templates/advisor-rules.md"
 # Pipeline roles (templates/roles: blast-radius, claim-auditor) first, then OMC agent prompts.
 ROLEFILE="$HERE/../templates/roles/$ROLE.md"
 [ -f "$ROLEFILE" ] || ROLEFILE="$(npm root -g 2>/dev/null)/oh-my-claude-sisyphus/agents/$ROLE.md"
 [ -f "$ROLEFILE" ] || { echo "[advise] role '$ROLE' not found (templates/roles or OMC agents)"; exit 2; }
 [ -d "$DIR" ] && [ -s "$TASK" ] || { echo "[advise] need an existing dir and a non-empty task file"; exit 2; }
-"${REIN:-rein}" route check --task "$TASK_ID" --run "$RUN" --agent "$PROVIDER" --model "$MODEL" --phase review --worktree "$DIR" || {
+"${REIN:-rein}" route check --task "$TASK_ID" --run "$RUN" --agent "$PROVIDER" --model "$MODEL" --effort "$EFFORT" --phase review --worktree "$DIR" || {
   echo "[advise] route check failed; advisor was not called"; exit 2;
 }
 LOGDIR="${PIPELINE_LOGDIR:-$HOME/.cache/worktree-pipeline/logs}"; mkdir -p "$LOGDIR" "$(dirname "$OUT")"
@@ -50,10 +54,10 @@ rm -f "$OUT"   # an old answer must never count as this call's result
 T0=$(date +%s)
 if [ "$PROVIDER" = codex ]; then
   timeout "${ADVISE_TIMEOUT:-1500}" codex exec -s read-only --skip-git-repo-check --ephemeral --color never \
-    -m "$MODEL" -c model_reasoning_effort=high -C "$DIR" -o "$OUT" "$PROMPT" </dev/null >"$LOG" 2>&1
+    -m "$MODEL" -c model_reasoning_effort="$EFFORT" -C "$DIR" -o "$OUT" "$PROMPT" </dev/null >"$LOG" 2>&1
   RC=$?
 elif [ "$PROVIDER" = claude ]; then
-  (cd "$DIR" && timeout "${ADVISE_TIMEOUT:-1500}" claude -p --model "$MODEL" --restricted \
+  (cd "$DIR" && timeout "${ADVISE_TIMEOUT:-1500}" claude -p --model "$MODEL" ${EFFORT:+--effort "$EFFORT"} --restricted \
     --tools Read,Grep,Glob --strict-mcp-config "$PROMPT") </dev/null >"$LOG" 2>&1
   RC=$?
   [ "$RC" -ne 0 ] || cp "$LOG" "$OUT"

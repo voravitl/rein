@@ -27,6 +27,7 @@ import (
 	"github.com/voravitl/rein/internal/hooks"
 	"github.com/voravitl/rein/internal/ledger"
 	"github.com/voravitl/rein/internal/providers"
+	"github.com/voravitl/rein/internal/routing"
 	runpkg "github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/sandbox"
 )
@@ -99,8 +100,13 @@ func usage() {
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
   rein ledger report [--type T] [--since ISO] | suggest [--min-n 3]
   rein sandbox <name>     write the OS sandbox settings into the worker's worktree (before the worker starts)
+  rein route auto --task T --run R --profile-file F [--config F] [--timeout 90s] [--worker-model M] [--base REF]    automatic task+model selection (the profile describes the task; rein picks the model)
+  rein route settle --attempt A | route holds | route calibrate --task T --run R --provider P --amount N | route discover [--json]
+  rein route reconcile --hold H --reason TEXT [--used pool=amount]    user-only: release a hold whose owner crashed
+  rein contract hash <name>    digest a route-auto task profile must carry
+  rein ledger add --attempt A --rounds N [--gates-passed|--gates-failed --review-sha SHA --resolved-model M] ... | ledger charge --attempt A --pool P ... [--component review --provider NAME --model M] | ledger fixture --provider P ...
   rein route prepare --task T --run R --chain worker:<type>|review:<name> [--worker-model M]
-  rein route launch --task T --run R -- <provider argv> | route check --task T --run R --agent A --model M [--phase review --worktree P]
+  rein route launch --task T --run R -- <provider argv> | route check --task T --run R --agent A --model M [--effort E --phase review --worktree P]
   rein route cooldown --provider P --reason TEXT [--until RFC3339] | route clear --provider P --reason TEXT | route status
   rein providers [--chain worker:backend] [--only a,b] [--skip-claude] [--timeout 90s] [--config F] [--json]
   rein verdict record --mr N --sha SHA --verdict APPROVE|REQUEST_CHANGES --reviewer MODEL --worker MODEL [--run-dir D]
@@ -229,7 +235,7 @@ func cmdContract(args []string) int {
 			}
 		}
 		fmt.Printf("[contract] written: %s (+ run copy)\n\n%s\n", contract.PathOf(c.Name), c.Snippet())
-	case "show", "path":
+	case "show", "path", "hash":
 		if len(args) < 2 {
 			usage()
 			return 2
@@ -242,6 +248,10 @@ func cmdContract(args []string) int {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "[contract]", err)
 			return 2
+		}
+		if args[0] == "hash" { // the digest a task profile for `rein route auto` must carry; hooks installation changes it
+			fmt.Println(routing.ContractHash(c))
+			return 0
 		}
 		fmt.Println(c.Snippet())
 	default:
@@ -373,11 +383,39 @@ func cmdLedger(args []string) int {
 		fs.StringVar(&r.Notes, "notes", "", "")
 		fs.StringVar(&r.Source, "source", "measured", "measured|memory")
 		fs.BoolVar(&r.Approx, "approx", false, "")
+		fs.StringVar(&r.Attempt, "attempt", "", "attempt ID from `rein route auto`: worker, type, effort, config, suite and tier are taken from its launch record")
+		fs.StringVar(&r.ResolvedModel, "resolved-model", "", "exact model the harness reports it ran (required when the launched model is an alias)")
+		fs.StringVar(&r.ReviewSHA, "review-sha", "", "exact revision the independent review judged")
+		gatesOK := fs.Bool("gates-passed", false, "objective acceptance gates passed at the reviewed revision")
+		gatesBad := fs.Bool("gates-failed", false, "objective acceptance gates failed")
 		if fs.Parse(args) != nil {
 			return 2
 		}
+		if *gatesOK && *gatesBad {
+			fmt.Fprintln(os.Stderr, "[ledger] --gates-passed and --gates-failed are exclusive")
+			return 2
+		}
+		if *gatesOK || *gatesBad {
+			v := *gatesOK
+			r.GatesPassed = &v
+		}
+		if r.Attempt != "" { // cohort fields come from the launch record, so an outcome can never disagree with its launch
+			rows, err := ledger.LoadStrict("")
+			launch, ok := ledger.LaunchRow(rows, r.Attempt)
+			if err != nil || !ok {
+				fmt.Fprintf(os.Stderr, "[ledger] no routing launch recorded for attempt %q (%v)\n", r.Attempt, err)
+				return 2
+			}
+			wm := launch.Worker.Agent + ":" + launch.Worker.Model
+			if *worker != "" && *worker != wm || r.Type != "" && r.Type != launch.Type || r.Task != "" && r.Task != launch.Task {
+				fmt.Fprintf(os.Stderr, "[ledger] --worker, --type and --task must match the launch record (%s, %s, %s) or be left out\n", wm, launch.Type, launch.Task)
+				return 2
+			}
+			*worker, r.Type, r.Task, r.Run = wm, launch.Type, launch.Task, firstNonEmpty(r.Run, launch.Run)
+			r.Decision, r.Effort, r.Config, r.Suite, r.Tier = launch.Decision, launch.Effort, launch.Config, launch.Suite, launch.Tier
+		}
 		if r.Task == "" || r.ReviewRounds == nil || *worker == "" || !oneOf(r.Type, ledger.Types) {
-			fmt.Fprintln(os.Stderr, "[ledger] --task, --type, --worker and --rounds are required")
+			fmt.Fprintln(os.Stderr, "[ledger] --task, --type, --worker and --rounds are required (or --attempt and --rounds)")
 			return 2
 		}
 		var err error
@@ -430,6 +468,10 @@ func cmdLedger(args []string) int {
 		ok := !*failed
 		r.OK = &ok
 		return save(r)
+	case "charge":
+		return cmdLedgerCharge(args)
+	case "fixture":
+		return cmdLedgerFixture(args)
 	case "report", "suggest":
 		fs := flag.NewFlagSet("ledger "+sub, flag.ContinueOnError)
 		typ := fs.String("type", "", "")
@@ -453,6 +495,15 @@ func cmdLedger(args []string) int {
 		return 2
 	}
 	return 0
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func save(r ledger.Row) int {

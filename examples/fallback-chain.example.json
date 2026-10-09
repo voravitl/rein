@@ -1,5 +1,5 @@
 {
-  "_doc": "Example fallback chains for `rein providers`. Copy to ~/.config/rein/fallback-chain.json (or set PIPELINE_FALLBACK) and edit providers, models and costs to your own accounts. Review chains should list strong models only.",
+  "_doc": "Example fallback chains for `rein providers` and `rein route prepare`. Copy to ~/.config/rein/fallback-chain.json (or set PIPELINE_FALLBACK) and edit providers, models and costs to your own accounts. Review chains should list strong models only. The fields effort, capabilities, context_tokens, billing and probe_bound are used only by automatic selection (`rein route auto`, docs/ROUTING_SELECTION_DESIGN.md): worker_chains[<policy>] then names the APPROVED candidate set (its order is ignored) and the union of review_chains the approved reviewers. billing.pool qualifies a quota by provider/account/plan/window and is shared by every provider drawing on it; billing.unit is its native unit (usd, kiro_credits, agy_credits, subscription_percent, tokens) and units are never merged. probe_bound is the owner-declared worst case of ONE availability probe in that unit: without it a provider is never probed. effort must be expressible on the launch command line (--effort, --variant or -c model_reasoning_effort=) or left out. The numbers below are placeholders: replace them with your own plan names and limits.",
   "providers": {
     "claude-sonnet": {
       "agent": "claude",
@@ -12,7 +12,21 @@
         "--model",
         "claude-sonnet-5-5",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 200000,
+      "billing": {
+        "mode": "subscription",
+        "unit": "subscription_percent",
+        "pool": "claude/max/5h"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.3
+      }
     },
     "claude-opus": {
       "agent": "claude",
@@ -25,7 +39,21 @@
         "--model",
         "claude-opus-5-5",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 200000,
+      "billing": {
+        "mode": "subscription",
+        "unit": "subscription_percent",
+        "pool": "claude/max/5h"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.5
+      }
     },
     "claude-haiku": {
       "agent": "claude",
@@ -38,7 +66,21 @@
         "--model",
         "claude-haiku-5-5",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 200000,
+      "billing": {
+        "mode": "subscription",
+        "unit": "subscription_percent",
+        "pool": "claude/max/5h"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.1
+      }
     },
     "codex": {
       "agent": "codex",
@@ -55,7 +97,22 @@
         "-m",
         "gpt-6.1-sol",
         "Reply with exactly: OK"
-      ]
+      ],
+      "effort": "high",
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 400000,
+      "billing": {
+        "mode": "subscription",
+        "unit": "subscription_percent",
+        "pool": "codex/plus/week"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.3
+      }
     },
     "antigravity": {
       "agent": "antigravity",
@@ -70,7 +127,23 @@
         "gemini-3.8-flash-high",
         "--output-format",
         "text"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests",
+        "browser",
+        "input:image"
+      ],
+      "context_tokens": 1000000,
+      "billing": {
+        "mode": "credits",
+        "unit": "agy_credits",
+        "pool": "agy/credits"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.1
+      }
     },
     "kiro-sonnet": {
       "agent": "kiro",
@@ -85,7 +158,21 @@
         "claude-sonnet-5.5",
         "--trust-tools=",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 1000000,
+      "billing": {
+        "mode": "credits",
+        "unit": "kiro_credits",
+        "pool": "kiro/team/month"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 1.0
+      }
     },
     "kiro-opus": {
       "agent": "kiro",
@@ -100,7 +187,21 @@
         "claude-opus-5.5",
         "--trust-tools=",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 1000000,
+      "billing": {
+        "mode": "credits",
+        "unit": "kiro_credits",
+        "pool": "kiro/team/month"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 2.0
+      }
     },
     "opencode-glm": {
       "agent": "opencode2",
@@ -113,7 +214,21 @@
         "-m",
         "opencode-go/glm-5.3-flash",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 200000,
+      "billing": {
+        "mode": "subscription",
+        "unit": "subscription_percent",
+        "pool": "opencode-go/plan/month"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.1
+      }
     },
     "opencode-haiku": {
       "agent": "opencode2",
@@ -126,7 +241,21 @@
         "-m",
         "opencode-go/claude-haiku-5-5",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 200000,
+      "billing": {
+        "mode": "subscription",
+        "unit": "subscription_percent",
+        "pool": "opencode-go/plan/month"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.1
+      }
     },
     "opencode-deepseek": {
       "agent": "opencode2",
@@ -139,7 +268,21 @@
         "-m",
         "opencode-go/deepseek-v4.1-flash",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 200000,
+      "billing": {
+        "mode": "subscription",
+        "unit": "subscription_percent",
+        "pool": "opencode-go/plan/month"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 0.1
+      }
     },
     "opencode-free": {
       "agent": "opencode2",
@@ -152,7 +295,21 @@
         "-m",
         "opencode/muse-spark-1.3-contributor-free",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 200000,
+      "billing": {
+        "mode": "free",
+        "unit": "tokens",
+        "pool": "opencode/free"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 2000
+      }
     },
     "kiro-gpt-terra": {
       "agent": "kiro",
@@ -167,7 +324,21 @@
         "gpt-5.6-terra",
         "--trust-tools=",
         "Reply with exactly: OK"
-      ]
+      ],
+      "capabilities": [
+        "repository-edit",
+        "tests"
+      ],
+      "context_tokens": 1000000,
+      "billing": {
+        "mode": "credits",
+        "unit": "kiro_credits",
+        "pool": "kiro/team/month"
+      },
+      "probe_bound": {
+        "calls": 1,
+        "amount": 2.2
+      }
     }
   },
   "worker_chains": {

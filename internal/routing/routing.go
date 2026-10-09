@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -36,6 +37,26 @@ type Decision struct {
 	Pool            string             `json:"pool"`
 	PreparedAt      time.Time          `json:"prepared_at"`
 	Attempts        []providers.Result `json:"attempts"`
+
+	// Automatic selection (docs/ROUTING_SELECTION_DESIGN.md). All empty on a receipt made from an ordered chain.
+	DecisionID        string     `json:"decision_id,omitempty"`
+	Attempt           string     `json:"attempt,omitempty"` // root decision ID: ties launch, outcome and charge rows to this attempt
+	ParentDecision    string     `json:"parent_decision,omitempty"`
+	SelectionMode     string     `json:"selection_mode,omitempty"` // scored | baseline_insufficient_evidence
+	Objective         string     `json:"objective,omitempty"`
+	Kind              string     `json:"kind,omitempty"`
+	Tier              string     `json:"tier,omitempty"`
+	Suite             string     `json:"suite,omitempty"`
+	Effort            string     `json:"effort,omitempty"`
+	ConfigFingerprint string     `json:"config_fingerprint,omitempty"` // harness configuration the evidence belongs to
+	ReviewerPlan      []string   `json:"reviewer_plan,omitempty"`      // reviewers the cost forecast was bound to
+	TaskProfileHash   string     `json:"task_profile_hash,omitempty"`
+	InventoryHash     string     `json:"inventory_hash,omitempty"`
+	PricingHash       string     `json:"pricing_hash,omitempty"`
+	QualityHash       string     `json:"quality_hash,omitempty"`
+	PolicyHash        string     `json:"policy_hash,omitempty"`
+	ExpiresAt         *time.Time `json:"expires_at,omitempty"` // earliest expiry of any evidence the choice rests on
+	Hold              string     `json:"hold,omitempty"`       // reservation covering the probe and the funding plan
 }
 type Cooldown struct {
 	Until  *time.Time `json:"until,omitempty"`
@@ -69,6 +90,9 @@ func receipt(c *contract.Contract) (string, error) {
 }
 func hash(b []byte) string                     { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 func contractHash(c *contract.Contract) string { b, _ := json.Marshal(c); return hash(b) }
+
+// ContractHash is the digest a task profile must carry to be bound to the current contract (hooks installation changes it).
+func ContractHash(c *contract.Contract) string { return contractHash(c) }
 func atomic(path string, v any) error {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -319,20 +343,24 @@ func Validate(c *contract.Contract, run, agent, model string) (*Decision, error)
 	if cp != d.ConfigPath || ch != d.ConfigHash {
 		return nil, errors.New("routing config changed")
 	}
-	names, err := eligible(cfg, d.Chain, d.WorkerModel)
-	if err != nil {
-		return nil, err
-	}
-	found := false
-	for _, n := range names {
-		if n == d.Provider {
-			found = true
+	if d.DecisionID != "" {
+		// automatic receipt: no chain membership, but everything it was bound to must still hold
+		if err = validateAuto(c, &d, cfg); err != nil {
+			return nil, err
+		}
+	} else {
+		names, err := eligible(cfg, d.Chain, d.WorkerModel)
+		if err != nil {
+			return nil, err
+		}
+		if !slices.Contains(names, d.Provider) {
+			return nil, errors.New("provider outside chain")
 		}
 	}
-	if !found {
-		return nil, errors.New("provider outside chain")
+	p, ok := cfg.Providers[d.Provider]
+	if !ok {
+		return nil, errors.New("provider outside configuration")
 	}
-	p := cfg.Providers[d.Provider]
 	maker, pool, err := identity(p)
 	if err != nil {
 		return nil, err

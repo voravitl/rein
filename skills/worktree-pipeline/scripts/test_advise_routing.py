@@ -79,8 +79,9 @@ os.execvp(sys.argv[2],sys.argv[2:])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(calls[0], ['route', 'check', '--task', 'contract-task', '--run',
                                     'run-r', '--agent', 'codex', '--model', 'gpt-test',
-                                    '--phase', 'review', '--worktree', str(self.root)])
+                                    '--effort', 'high', '--phase', 'review', '--worktree', str(self.root)])
         self.assertEqual(calls[1][0], 'model-call')
+        self.assertIn('model_reasoning_effort=high', calls[1])
         self.assertEqual(calls[2][:2], ['ledger', 'call'])
         for flag, value in (('--task', 'contract-task'), ('--run', 'run-r'),
                             ('--provider', 'codex'), ('--model', 'gpt-test'), ('--tokens', '123')):
@@ -104,6 +105,27 @@ os.execvp(sys.argv[2],sys.argv[2:])
             self.assertEqual(ledger[ledger.index(flag) + 1], value)
         self.assertNotIn('--tokens', ledger)
         self.assertNotIn('--credits', ledger)
+
+    def test_effort_is_checked_against_the_receipt_and_applied_to_the_call(self):
+        # the effort an automatic receipt was chosen on is the effort the review runs at: route check sees it, the CLI gets it
+        self.env['ADVISE_EFFORT'] = 'xhigh'
+        result, calls = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls[0][calls[0].index('--effort') + 1], 'xhigh')
+        self.assertIn('model_reasoning_effort=xhigh', calls[1])
+        self.assertNotIn('model_reasoning_effort=high', calls[1])
+        self.calls.unlink()
+        self.env.update(ADVISE_PROVIDER='claude', ADVISE_MODEL='claude-opus-5-1', ADVISE_EFFORT='max')
+        result, calls = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls[0][calls[0].index('--effort') + 1], 'max')
+        self.assertEqual(calls[1][calls[1].index('--effort') + 1], 'max')
+
+    def test_kiro_has_no_effort_and_a_receipt_effort_blocks_the_call(self):
+        self.env.update(ADVISE_PROVIDER='kiro', ADVISE_EFFORT='high')
+        result, calls = self.invoke()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [], 'nothing may be checked or called when the effort cannot be applied')
 
     def test_post_call_ledger_failure_is_failure(self):
         self.env['LEDGER_EXIT'] = '1'
