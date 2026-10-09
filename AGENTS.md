@@ -99,3 +99,10 @@ Before merge, the remediating AI must:
   rein e2e test <url-or-spec> --out report/e2e
   ```
 - Every E2E test automatically compiles an executive Board-PDF report (`report/e2e/report.pdf`) with real screenshots and accessibility snapshots for PR evidence.
+
+---
+
+## 5. Complete CLI Reference
+
+Consult [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) for full syntax, flags, exit codes, and operational examples for all 16 `rein` commands (`contract`, `drift`, `hook`, `run`, `budget`, `task`, `ledger`, `providers`, `verdict`, `approve`, `advise`, `e2e`, `spec`, `sandbox`).
+

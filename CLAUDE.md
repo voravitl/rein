@@ -9,4 +9,6 @@ Read `docs/adr/0001-rein-supervisor.md` first.
 - Inside a worker, unknown or broken state fails closed (deny with a reason the worker can act on).
 - Project-specific values belong in a profile, never in code; never commit real profiles or personal provider configs.
 - Never claim Windows support without a real Windows run (ADR rule 2).
+- CLI command reference for all 16 subcommands: `docs/CLI_REFERENCE.md`.
+
 
