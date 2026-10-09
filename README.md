@@ -2,6 +2,8 @@
 
 **Keep cheap and fallback worker models on task.**
 
+![rein Multi-Harness Architecture](assets/rein-multi-harness-architecture.png)
+
 When a multi-agent pipeline runs out of quota and falls back to smaller or free models, the work tends to drift:
 edits outside the task, "done" claims that are not true, a `git push` nobody asked for, or a command against the
 live stack. `rein` holds the reins with three deterministic layers, so the judgement does not depend on the model
@@ -34,46 +36,72 @@ The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](http
 > **The guard is a seatbelt, not a wall.** It cannot see writes made through interpreters (`python -c`, `node -e`).
 > Pair it with an OS sandbox (Claude Code's Bash sandbox, `codex -s workspace-write`) and always run `rein drift`.
 
-## Install
+## Multi-Harness Plugin Bundle & Installation
 
-As a Claude Code plugin (this repository is also its marketplace):
+`rein` delivers unified deterministic guardrails across **5 major AI coding harnesses**:
 
+| Harness | Bundle Type | Configuration Path | How to Install |
+|---|---|---|---|
+| **Claude Code** | Native Plugin | `.claude-plugin/plugin.json`, `hooks/hooks.json` | `/plugin marketplace add voravitl/rein` && `/plugin install rein@rein` |
+| **Antigravity (AGY)** | Plugin Bundle | `plugins/rein/plugin.json`, `plugins/rein/hooks.json` | `agy plugin install ./plugins/rein` (or `sh scripts/install-harness.sh agy`) |
+| **OpenCode** | V2 Plugin | `.opencode/plugins/rein/package.json`, `server.js` | `sh scripts/install-harness.sh opencode` (links to `~/.config/opencode/plugins/rein`) |
+| **OpenAI Codex** | Native Plugin | `.codex/hooks.json`, `plugin.json` | `codex plugin marketplace add ./` && `codex plugin add rein@rein` |
+| **AWS Kiro** | Agent Definition | `.kiro/agents/rein.json` | `sh scripts/install-harness.sh kiro` (copies to `~/.kiro/agents/rein.json`) |
+
+### One-Click Harness Setup & Uninstall Script
+
+Register or link the plugin bundle for any harness (or all at once):
+
+```sh
+sh scripts/install-harness.sh all          # register into all installed harnesses
+# or target a specific harness:
+sh scripts/install-harness.sh agy          # Antigravity (Gemini CLI)
+sh scripts/install-harness.sh codex        # OpenAI Codex
+sh scripts/install-harness.sh opencode     # OpenCode
+sh scripts/install-harness.sh claude       # Claude Code
+sh scripts/install-harness.sh kiro         # AWS Kiro
+
+# Clean uninstall from all harnesses:
+sh scripts/install-harness.sh uninstall all
+```
+
+### 1. Claude Code
+In Claude Code:
 ```
 /plugin marketplace add voravitl/rein
 /plugin install rein@rein
 ```
-
-Start a new session: the plugin's SessionStart hook builds the binary with Go (or downloads the release binary and
-checks `SHA256SUMS`) into the plugin data dir, which survives updates. Then run `/rein:setup` to check every
-prerequisite and set up a project. Full prerequisites, Orca and OMC integration, and migration from a manual
-install: [`docs/SETUP.md`](docs/SETUP.md).
+Start a new session: the plugin's SessionStart hook builds the binary with Go (or downloads the release binary and checks `SHA256SUMS`) into the plugin data dir, which survives updates. Then run `/rein:setup`. Full prerequisites, Orca and OMC integration: [`docs/SETUP.md`](docs/SETUP.md).
 
 | Plugin part | Name |
 |---|---|
 | Guard hooks | SessionStart (install binary), PreToolUse + Stop (`rein hook`, exec form, silent outside a contracted worktree) |
-| Skills | `rein:setup`, `rein:worktree-pipeline` (coordinator playbook for Orca), `rein:orca-e2e` (Orca browser E2E testing & Board-PDF reporting) |
+| Skills | `rein:setup`, `rein:worktree-pipeline` (coordinator playbook for Orca), `rein:orca-e2e` (Orca browser E2E testing & Board-PDF reporting), `rein:cli-reference` (all-in-one CLI command manual) |
 | Agents | `rein:orca-swarm` (Opus coordinator, main session only), `rein:orca-steward` (Sonnet/Haiku mechanical jobs, started as an Orca worker) |
 
-Without the plugin (guard only), build it yourself (Go 1.26+; one static binary, no runtime):
+### 2. Antigravity (AGY)
+Install natively via `agy` CLI (or link via script):
+```sh
+agy plugin install ./plugins/rein
+# or: sh scripts/install-harness.sh agy
+```
+Antigravity automatically loads `plugins/rein/plugin.json`, imports 4 skills, 2 agents, 2 hooks, and enforces `plugins/rein/rules/AGENTS.md`. Verify with `agy plugin list`.
 
+### 3. OpenCode
+Link or place the OpenCode V2 plugin:
+```sh
+sh scripts/install-harness.sh opencode
+```
+OpenCode automatically executes `server.js` before each tool execution, streaming tool calls directly to `rein hook --vendor opencode`.
+
+### 4. Standalone Static Binary (No Harness Plugin)
+Build the single static Go binary directly (Go 1.26+; zero external dependencies):
 ```sh
 git clone https://github.com/voravitl/rein && cd rein
 sh scripts/install.sh          # builds bin/rein for this machine
 sh scripts/build.sh            # optional: dist/rein-<os>-<arch> + SHA256SUMS for macOS, Linux, Windows
 ```
-
-and add the hook to `~/.claude/settings.json` (do not do this as well as installing the plugin, or the guard runs twice):
-
-```json
-{ "hooks": {
-  "PreToolUse": [{ "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
-                   "hooks": [{ "type": "command", "command": "/path/to/rein/bin/rein", "args": ["hook"], "timeout": 10 }] }],
-  "Stop":       [{ "hooks": [{ "type": "command", "command": "/path/to/rein/bin/rein", "args": ["hook"], "timeout": 10 }] }]
-} }
-```
-
-The hook is silent unless the session runs inside a git worktree that has a contract, so it is safe to install
-globally. Measured on Apple Silicon: about 5 ms per call (p50), inside or outside a worker.
+The hook is silent unless the session runs inside a git worktree that has a contract, so it is safe to install globally. Measured on Apple Silicon: about 5 ms per call (p50), inside or outside a worker.
 
 ## Use
 

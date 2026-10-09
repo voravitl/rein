@@ -1,0 +1,24 @@
+{
+  "description": "rein: PreToolUse and Stop guardrails for Antigravity (AGY)",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|run_command|write_to_file|replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "rein hook --vendor agy",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "rein hook --vendor agy",
+        "timeout": 10
+      }
+    ]
+  }
+}

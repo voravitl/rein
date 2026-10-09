@@ -1,0 +1,8 @@
+{
+  "name": "opencode-plugin-rein",
+  "version": "0.7.0",
+  "description": "OpenCode V2 plugin for rein deterministic guardrails and contract enforcement",
+  "main": "server.js",
+  "type": "module",
+  "keywords": ["opencode", "rein", "guardrails", "worktree", "contract"]
+}

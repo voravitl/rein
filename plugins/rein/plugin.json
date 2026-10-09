@@ -1,0 +1,10 @@
+{
+  "name": "rein",
+  "version": "0.7.0",
+  "description": "Deterministic multi-agent worktree guardrails, contract locking, and E2E verification for Antigravity & AI coding harnesses",
+  "author": { "name": "P' Tik", "url": "https://github.com/voravitl" },
+  "homepage": "https://github.com/voravitl/rein",
+  "repository": "https://github.com/voravitl/rein",
+  "license": "MIT",
+  "keywords": ["antigravity", "guardrails", "multi-agent", "worktree", "contract", "pipeline"]
+}

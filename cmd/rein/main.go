@@ -104,7 +104,9 @@ func usage() {
   rein approve prompt --mr N [--sha SHA] [--run-dir D] [--repo PATH]    prints AskUserQuestion JSON
   rein approve --mr N [--sha SHA] [--reason TEXT] [--run-dir D] [--repo PATH]    user-only: records human approval
   rein advise <role> <dir> <task-file> <out-file> [--provider codex|kiro] [--model M]    run read-only advisor
-  rein e2e check [--json] | test <url-or-spec> [--out DIR] | run <spec-file> [--out DIR] [--base-url URL] [--json]`)
+  rein e2e check [--json] | test <url-or-spec> [--out DIR] | run <spec-file> [--out DIR] [--base-url URL] [--json]
+
+For full syntax, flags, and operational examples, see docs/CLI_REFERENCE.md or skill rein:cli-reference.`)
 }
 
 // cmdHook never crashes the vendor's session: a panic means "no decision" (exit 0). A bad flag exits 1, which
