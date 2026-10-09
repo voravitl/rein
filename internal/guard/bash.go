@@ -386,7 +386,7 @@ func (x *ctx) call(args []string) string {
 				continue
 			}
 			if options && ((name == "truncate" && (a == "-s" || a == "--size" || a == "-r" || a == "--reference")) ||
-				(name == "touch" && (a == "-t" || a == "-d" || a == "--date" || a == "-r" || a == "--reference"))) {
+				(name == "touch" && (a == "-t" || a == "-d" || a == "--date" || a == "-r" || a == "--reference" || a == "--time"))) {
 				i++
 				continue
 			}
@@ -501,7 +501,9 @@ func (x *ctx) git(args []string) string {
 	switch sub {
 	case "rm", "mv":
 		for _, arg := range rest {
-			if arg == "--pathspec-from-file" || strings.HasPrefix(arg, "--pathspec-from-file=") {
+			// Git accepts unambiguous abbreviations of long options.
+			option := strings.SplitN(arg, "=", 2)[0]
+			if strings.HasPrefix(option, "--") && len(option) > 2 && strings.HasPrefix("--pathspec-from-file", option) {
 				return "git pathspec files cannot be checked for ownership; use literal paths"
 			}
 		}
@@ -896,7 +898,9 @@ func (x *ctx) find(args []string) string {
 				if r := x.write(root); r != "" {
 					return r
 				}
-			case "-exec", "-execdir", "-ok", "-okdir":
+			case "-execdir", "-okdir":
+				return "find directory actions have an unknown execution directory; use -exec with explicit paths"
+			case "-exec", "-ok":
 				var cmd []string
 				for i++; i < len(args) && args[i] != ";" && args[i] != `\;` && args[i] != "+"; i++ {
 					cmd = append(cmd, strings.ReplaceAll(args[i], "{}", x.abs(root)))
