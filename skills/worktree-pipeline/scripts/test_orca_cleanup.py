@@ -8,6 +8,7 @@ import runpy
 import subprocess
 import sys
 import unittest
+import tempfile
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).with_name('orca_cleanup.py')
@@ -21,7 +22,7 @@ def worker(dispatch='ctx_one', verdict='exited', action='worker-release', **fiel
 
 
 def page(workers, more=False, cursor=None):
-    return {'ok': True, 'result': {'workers': workers,
+    return {'ok': True, 'result': {'workers': workers, 'scope': {'source': 'flag', 'run': 'run_one'},
                                   'page': {'hasMore': more, 'nextCursor': cursor}}}
 
 
@@ -43,6 +44,8 @@ class CleanupTests(unittest.TestCase):
                 raise value
             if isinstance(value, subprocess.CompletedProcess):
                 return value
+            if isinstance(value, dict):
+                value.setdefault('_meta', {'runtimeId': 'runtime_one'})
             return subprocess.CompletedProcess(command, 0, json.dumps(value), '')
 
         output = io.StringIO()
@@ -57,7 +60,8 @@ class CleanupTests(unittest.TestCase):
             except SystemExit as error:
                 code = 0 if error.code in (None, 0) else 1
                 output.write(str(error.code))
-        self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls), calls)
+        if '--close-operator' not in args:
+            self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls), calls)
         return code, calls, output.getvalue()
 
     def test_release_failure_never_closes(self):
@@ -192,9 +196,176 @@ class CleanupTests(unittest.TestCase):
                 self.assertIn('refus', output.lower())
 
     def test_proven_stop_only(self):
-        code, calls, _ = self.execute([page([worker(action='worker-stop')]), {'ok': True}], '--stop', 'ctx_one')
+        code, calls, _ = self.execute([page([worker(action='worker-stop')]), {'ok': True},
+                                      released_page()], '--stop', 'ctx_one')
         self.assertEqual(code, 0)
         self.assertEqual(calls[1][1:], ['orchestration', 'worker-stop', '--dispatch', 'ctx_one', '--json'])
+        self.assertEqual(len(calls), 3)
+
+    def test_stopped_session_must_be_released_before_success(self):
+        for post in (page([]), page([worker(action='worker-show')]),
+                     page([worker(dispatchStatus='dispatched')]), {'ok': False}):
+            with self.subTest(post=post):
+                code, calls, _ = self.execute([page([worker(action='worker-stop')]), {'ok': True}, post],
+                                              '--stop', 'ctx_one')
+                self.assertEqual(code, 1)
+                self.assertEqual(len(calls), 3)
+
+    def test_stop_unknown_state_fails(self):
+        code, _, _ = self.execute([page([worker(action='worker-stop')]), {'ok': True},
+                                  released_page(state='release_unknown')], '--stop', 'ctx_one')
+        self.assertEqual(code, 1)
+
+    def test_finished_worktree_session_gate(self):
+        for terminals in ([], [{'handle': 'term_operator'}]):
+            code, calls, _ = self.execute([page([]), {'ok': True, 'result': {
+                'terminals': terminals, 'truncated': False, 'totalCount': len(terminals),
+                'hostScope': {'hostIds': ['local'], 'omittedHostIds': []}}}],
+                '--check-worktree', 'id:repo::/finished')
+            self.assertEqual(code, 0 if not terminals else 1)
+            self.assertEqual(calls[-1][1:], ['terminal', 'list', '--worktree', 'id:repo::/finished', '--json'])
+
+    def test_unverifiable_worktree_session_gate_fails(self):
+        for result in ({}, {'terminals': []}, {'terminals': [], 'truncated': True},
+                       {'terminals': [], 'truncated': False, 'totalCount': 0,
+                        'hostScope': {'hostIds': [], 'omittedHostIds': ['remote']}},
+                       {'terminals': [], 'truncated': False, 'totalCount': 0,
+                        'hostScope': {'hostIds': ['remote'], 'omittedHostIds': []}}):
+            code, _, _ = self.execute([page([]), {'ok': True, 'result': result}],
+                                      '--check-worktree', 'id:repo::/finished')
+            self.assertEqual(code, 1)
+
+    def operator_case(self, change=None, close=True, remaining=False, main=False,
+                      adopted=False, coordinator=False, activity=False, bad_close=False, dry_run=False, bad_runs=None, wrong_scope=False):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            identity = dict(handle='term_operator', incarnationId='inc_one', executionHostId='local',
+                            worktreeId='repo::/finished', ptyId='repo::/finished@@pty')
+            launch = {'ok': True, '_meta': {'runtimeId': 'runtime_one'},
+                      'result': {'terminal': identity}}
+            snapshot = json.loads(json.dumps(launch))
+            snapshot['result']['terminal']['lastOutputAt'] = 42
+            current = json.loads(json.dumps(snapshot))
+            if change:
+                current['result']['terminal'].update(change)
+            for name, value in [('launch.json', launch), ('snapshot.json', snapshot)]:
+                (root/name).write_text(json.dumps(value))
+            (root/'report.md').write_text('Final report archived and verified by coordinator.')
+            runs = {'ok': True, '_meta': {'runtimeId': 'runtime_one'}, 'result': {
+                'runs': [{'id': 'run_one', 'coordinator_handle': 'term_operator' if coordinator else None},
+                         {'id': 'run_other', 'coordinator_handle': None}], 'nextCursor': None}}
+            owners = page([])
+            owners['_meta'] = {'runtimeId': 'runtime_one'}
+            owners['result']['scope'] = {'source': 'flag', 'run': 'run_one'}
+            if bad_runs is not None:
+                runs['result'] = bad_runs
+            if wrong_scope:
+                owners['result']['scope']['source'] = 'bound'
+            other = page([dict(worker(), agentTerminalHandle='term_operator')] if adopted else [])
+            other['_meta'] = {'runtimeId': 'runtime_one'}
+            other['result']['scope'] = {'source': 'flag', 'run': 'run_other'}
+            responses = [page([]), runs, owners, other, {'ok': True, 'result': {'worktree': {
+                'id': identity['worktreeId'], 'isMainWorktree': main}}}, current]
+            if close:
+                recheck = json.loads(json.dumps(current))
+                if activity:
+                    recheck['result']['terminal']['lastOutputAt'] = 43
+                responses += [runs, owners, other, recheck, {'ok': True, '_meta': {'runtimeId': 'runtime_one'}, 'result': {'close': {
+                    'handle': identity['handle'], 'ptyKilled': not bad_close}}}, {'ok': True, 'result': {
+                        'terminals': [{'handle': 'term_operator'}] if remaining else [],
+                        'truncated': False, 'totalCount': 1 if remaining else 0,
+                        'hostScope': {'hostIds': ['local'], 'omittedHostIds': []}}}]
+            return self.execute(responses, '--close-operator', str(root/'launch.json'),
+                                str(root/'snapshot.json'), str(root/'report.md'), *(['--dry-run'] if dry_run else []))
+
+    def test_operator_completed_exact_identity_closes(self):
+        code, calls, _ = self.operator_case()
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[-2][1:], ['terminal', 'close', '--terminal', 'term_operator', '--json'])
+
+    def test_operator_reused_identity_or_new_activity_preserved(self):
+        for change in ({'incarnationId': 'new'}, {'executionHostId': 'remote'},
+                       {'worktreeId': 'another'}, {'ptyId': 'new'}, {'lastOutputAt': 43}):
+            code, calls, _ = self.operator_case(change, close=False)
+            self.assertEqual(code, 1)
+            self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+
+    def test_main_operator_session_cannot_close(self):
+        code, calls, _ = self.operator_case(close=False, main=True)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+
+    def test_operator_close_requires_fresh_absence(self):
+        code, _, _ = self.operator_case(remaining=True)
+        self.assertEqual(code, 1)
+
+    def test_operator_adopted_by_other_run_is_preserved(self):
+        code, calls, _ = self.operator_case(adopted=True, close=False)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+        self.assertTrue(any('run_other' in c for c in calls))
+
+    def test_operator_coordinator_in_feature_worktree_is_preserved(self):
+        code, calls, _ = self.operator_case(coordinator=True, close=False)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+
+    def test_operator_recheck_detects_new_activity(self):
+        code, calls, _ = self.operator_case(activity=True)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+
+    def test_operator_no_positive_pty_receipt_fails(self):
+        code, _, _ = self.operator_case(bad_close=True)
+        self.assertEqual(code, 1)
+
+    def test_operator_dry_run_does_not_close(self):
+        code, calls, _ = self.operator_case(dry_run=True)
+        self.assertEqual(code, 0)
+        self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+
+    def test_operator_bound_scope_is_not_global_ownership_proof(self):
+        code, calls, _ = self.operator_case(wrong_scope=True, close=False)
+        self.assertEqual(code, 1)
+        self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+
+    def test_operator_incomplete_run_inventory_is_preserved(self):
+        for result in ({}, {'runs': []}, {'runs': [], 'nextCursor': None},
+                       {'runs': [{'id': 'run_one'}], 'nextCursor': None},
+                       {'runs': [], 'nextCursor': True}):
+            with self.subTest(result=result):
+                code, calls, _ = self.operator_case(bad_runs=result, close=False)
+                self.assertEqual(code, 1)
+                self.assertFalse(any(c[1:3] == ['terminal', 'close'] for c in calls))
+
+    def test_runtime_missing_or_changed_never_confirms_closure(self):
+        for meta in ({}, {'runtimeId': 'new_runtime'}, None):
+            result = {'ok': True, '_meta': meta, 'result': {
+                'terminals': [], 'totalCount': 0, 'truncated': False,
+                'hostScope': {'hostIds': ['local'], 'omittedHostIds': []}}}
+            code, calls, _ = self.execute([page([]), result], '--check-worktree', 'id:repo::/finished')
+            self.assertEqual(code, 1)
+            self.assertEqual(len(calls), 2)
+
+    def test_initial_missing_runtime_fails_before_mutation(self):
+        value = page([worker()])
+        value['_meta'] = {}
+        code, calls, _ = self.execute([value])
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 1)
+
+    def test_wrong_initial_run_scope_never_mutates(self):
+        value = page([worker()])
+        value['result']['scope'] = {'source': 'bound', 'run': 'run_other'}
+        code, calls, _ = self.execute([value])
+        self.assertEqual(code, 1)
+        self.assertEqual(len(calls), 1)
+
+    def test_wrong_post_cleanup_run_scope_fails(self):
+        value = released_page()
+        value['result']['scope'] = {'source': 'flag', 'run': 'run_other'}
+        code, _, _ = self.execute([page([worker()]), {'ok': True}, value])
+        self.assertEqual(code, 1)
 
     def test_unknown_stop_refused(self):
         code, calls, _ = self.execute([page([])], '--stop', 'missing')
