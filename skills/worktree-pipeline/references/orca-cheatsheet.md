@@ -25,7 +25,7 @@ orca orchestration send --run R --to dispatch:<ctx> --type status --subject S --
 orca orchestration worker-list --run R --include-remote --json  # projection.liveness / nextAction; follow page.nextCursor until !page.hasMore
 orca orchestration worker-stop --dispatch <ctx> --json      # only positive exited proof + exact nextAction; no --run flag
 orca orchestration worker-release --dispatch <ctx> --json
-orca worktree rm --worktree path:/abs/path --force --json
+orca worktree rm --worktree <exact-verified-selector> --json
 ```
 Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`.
 
@@ -91,6 +91,8 @@ Orca provides native browser automation (`orca tab`, `orca goto`, `orca snapshot
 ## Mandatory finished-session closure
 Session closure is a completion gate in the pipeline, not optional end-of-run housekeeping. Archive the final result and finish coordinator verification, then close run-created worker/reviewer/helper sessions (including Kiro TUI) and unused launch shells without waiting for merge. Retain only at the user's explicit request.
 
-For supervised workers use worker-release and authoritative recovery. For operator-owned fallback/advisor sessions, match terminal show against the original launch handle, incarnation, host and worktree, verify completion and no newer activity/takeover, archive output, then terminal close that exact handle. Verify ptyKilled=true and absence in a fresh worktree terminal list. Idle alone is not completion proof, headless CLI exit leaves the enclosing shell alive, and a release failure never authorizes this operator path. Preserve the main session, active or unknown sessions, history and unmerged worktrees. Every session must be accounted for as closed, explicitly retained, or unresolved before final reporting.
+For supervised workers use worker-release and authoritative recovery. For operator-owned fallback/advisor sessions, match terminal show against the original launch handle, incarnation, host and worktree, verify completion and no newer activity/takeover, archive output, then terminal close that exact handle. Verify ptyKilled=true and absence in a fresh worktree terminal list. Idle alone is not completion proof, headless CLI exit leaves the enclosing shell alive, and a release failure never authorizes this operator path. Preserve the main session, active or unknown sessions, history and worktrees still needed for active work or an open integration MR. Every session must be accounted for as closed, explicitly retained, or unresolved before final reporting.
 
 The supervised cleanup gate also fails on retries when a finished dispatch remains retained/pending/unknown and only inspection is recommended; a new invocation cannot turn unresolved closure into success. Operator-owned sessions still follow the separate identity-verified procedure above.
+
+Finished auxiliary worktrees are removed after their contribution is integrated and verified, even before the integration MR merges. Archive reports, ignored/local files and a verified Git bundle outside them first; require a clean checkout, no live terminal/job or active dispatch, exact repo/host/worktree identity and no dependency needing the checkout. Re-check before exact Orca worktree removal, preserve unmerged branches and verify absence in Orca/Git/disk. A failed or unverifiable check retains the worktree with a reason, with no raw-deletion fallback. Keep main and the integration/review checkout for an open MR; account for every run-created worktree as removed or retained with its reason.
