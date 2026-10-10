@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/voravitl/rein/internal/run"
 )
 
 var Types = []string{"backend", "frontend", "fullstack", "docs", "mechanical", "review"}
@@ -128,6 +130,21 @@ func contains(s []string, v string) bool {
 }
 
 func Append(r Row) error {
+	unlock, err := run.LockFile(Path()+".lock", 10*time.Second)
+	if err != nil {
+		return err
+	}
+	defer unlock()
+	if r.Kind == "cost" && r.ChargeID != "" {
+		rows, err := LoadStrict("")
+		if err != nil {
+			return err
+		}
+		if err := validateCharges(append(rows, r)); err != nil {
+			return err
+		}
+	}
+
 	r.RecordedAt = time.Now().Format(time.RFC3339)
 	b, err := json.Marshal(r)
 	if err != nil {
@@ -164,6 +181,7 @@ func load(since string, strict bool) ([]Row, error) {
 	}
 	defer f.Close()
 	var rows []Row
+	var costRows []Row
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	for n := 1; sc.Scan(); n++ {
@@ -179,12 +197,23 @@ func load(since string, strict bool) ([]Row, error) {
 			fmt.Fprintf(os.Stderr, "[ledger] skipping bad line %d\n", n)
 			continue
 		}
+		if strict && r.Kind == "cost" {
+			costRows = append(costRows, r)
+		}
 		if since != "" && !recordedSince(r.RecordedAt, since) {
 			continue
 		}
 		rows = append(rows, r)
 	}
-	return rows, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if strict {
+		if err := validateCharges(costRows); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
 }
 
 // recordedSince reports whether a row stamped at is not before since. Append stamps local time and run markers hold UTC, so

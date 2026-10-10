@@ -114,7 +114,7 @@ func collect(rows []Row, o EvidenceOptions) (order []string, by map[string]*atte
 		var slot func(a *attemptRows) **Row
 		switch r.Kind {
 		case "routing_launch":
-			if r.Worker == nil {
+			if r.Worker == nil || strings.HasPrefix(r.Role, "review:") {
 				continue
 			}
 			slot = func(a *attemptRows) **Row { return &a.launch }
@@ -440,7 +440,7 @@ func LaunchRow(rows []Row, attempt string) (Row, bool) {
 func latestLaunch(rows []Row, run, task string) *Row {
 	var launch *Row
 	for i := range rows {
-		if r := &rows[i]; r.Kind == "routing_launch" && r.Run == run && r.Task == task && r.Worker != nil {
+		if r := &rows[i]; r.Kind == "routing_launch" && r.Run == run && r.Task == task && r.Worker != nil && !strings.HasPrefix(r.Role, "review:") {
 			launch = r
 		}
 	}

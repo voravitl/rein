@@ -25,7 +25,6 @@ import (
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/ledger"
 	"github.com/voravitl/rein/internal/providers"
-	"github.com/voravitl/rein/internal/run"
 )
 
 const (
@@ -161,22 +160,24 @@ type AutoResult struct {
 }
 
 type auto struct {
-	in         AutoInput
-	ctx        context.Context
-	c          *contract.Contract
-	cfg        *providers.Config
-	cfgPath    string
-	cfgHash    string
-	pol        *contract.Selection
-	budgetProf *contract.Profile
-	class      *Class
-	profileRaw []byte
-	attempt    string
-	now        func() time.Time
-	prices     map[string]ledger.Rates
-	poolMode   map[string]string
-	baseExpiry time.Time
-	res        *AutoResult
+	in             AutoInput
+	ctx            context.Context
+	c              *contract.Contract
+	cfg            *providers.Config
+	cfgPath        string
+	cfgHash        string
+	pol            *contract.Selection
+	budgetProf     *contract.Profile
+	class          *Class
+	reviewBase     string
+	reviewRevision string
+	profileRaw     []byte
+	attempt        string
+	now            func() time.Time
+	prices         map[string]ledger.Rates
+	poolMode       map[string]string
+	baseExpiry     time.Time
+	res            *AutoResult
 
 	// per decision
 	inv    map[string]*providers.Inventory
@@ -317,7 +318,7 @@ func PrepareAuto(ctx context.Context, in AutoInput) (*AutoResult, error) {
 	if in.Run == "" || in.Timeout <= 0 {
 		return nil, errors.New("explicit run and positive timeout required")
 	}
-	unlock, err := run.LockFile(filepath.Join(dir(), "prepare", c.Name+".lock"), 0)
+	unlock, err := lockTaskDecision(c.Name, 0)
 	if err != nil {
 		return nil, fmt.Errorf("another preparation of task %s is running: %w", c.Name, err)
 	}
@@ -778,7 +779,7 @@ func releaseUnused(path string) error {
 	if err != nil {
 		return fmt.Errorf("ledger unreadable, cannot release the previous reservation: %w", err)
 	}
-	if attemptRan(rows, old.Attempt) {
+	if ReceiptUsed(old.Attempt) || attemptRan(rows, old.Attempt) {
 		return nil // it ran: whoever ran it settles it with `rein route settle`
 	}
 	if _, err = SettleAttempt(old.Attempt); err != nil {
@@ -822,6 +823,7 @@ func (a *auto) receiptFor(round *Round, cd *cand, hold *budget.Hold, res provide
 		PolicyHash: a.pol.Hash(), Hold: hold.ID}
 	if a.class.Phase == "review" {
 		d.WorkerModel = a.reviewedWorker()
+		d.ReviewBase, d.ReviewRevision = a.reviewBase, a.reviewRevision
 	}
 	var err error
 	if d.QualityHash, err = qualityHashFor(a.rows, d, a.cfg, a.pol, a.now()); err != nil {
@@ -868,12 +870,12 @@ func (a *auto) persist(path string, d *Decision, round *Round, ordered []*cand) 
 
 // baselineOrder is the explicit unscored fallback (selection.baseline_chain). In the first decision, or while it is already in
 // use, when no candidate qualified and some were blocked only for want of evidence, those candidates are tried in the chain's
-// order. It relaxes the evidence qualification and the reviewer plan and nothing else: a candidate any other gate excluded, or
+// order. It relaxes worker quality evidence only; complete bounded execution costs and a qualified reviewer plan are still required: a candidate any other gate excluded, or
 // that was disqualified on its record, stays out; and the reservation, probe bound, availability probe and receipt are the scored
 // path's. It is reported as baseline_insufficient_evidence and is never scored selection.
 func (a *auto) baselineOrder(round *Round) []*cand {
 	chain := a.pol.BaselineChain
-	if chain == "" || !strings.HasPrefix(chain, a.class.Phase+":") {
+	if chain == "" || a.class.Phase != "worker" || !strings.HasPrefix(chain, "worker:") {
 		return nil
 	}
 	var out []*cand
@@ -896,6 +898,41 @@ func (a *auto) baselineOrder(round *Round) []*cand {
 					cd.exclude("maker_already_reviewed", "maker %s already has a verdict for this revision", cd.Maker)
 					continue
 				}
+			}
+			if cd.Role == "worker" {
+				if cd.WorkerCost == nil || !cd.WorkerCost.Available {
+					cd.exclude("baseline_funding_unavailable", "baseline needs measured bounded worker funding")
+					continue
+				}
+				var revs []*cand
+				for _, r := range round.cands {
+					if r.Role == "reviewer" {
+						revs = append(revs, r)
+					}
+				}
+				plan, why := a.plan(cd.Maker, revs)
+				if why != "" {
+					cd.exclude("baseline_review_funding_unavailable", "%s", why)
+					continue
+				}
+				if err := a.pair(cd, plan); err != nil {
+					cd.exclude("unit_conflict", "%v", err)
+					continue
+				}
+			} else {
+				if cd.ReviewCost == nil || !cd.ReviewCost.Available {
+					cd.exclude("baseline_funding_unavailable", "baseline needs measured bounded review funding")
+					continue
+				}
+				cd.fund = newVec()
+				if err := cd.fund.addAll(cd.ReviewCost.MaxReview, cd.ReviewCost.Units, 1); err != nil {
+					cd.exclude("unit_conflict", "%v", err)
+					continue
+				}
+			}
+			if u, ok := cd.fund.Unit[cd.p.Billing.Pool]; ok && u != cd.p.Billing.Unit {
+				cd.exclude("unit_conflict", "billing unit differs from funding")
+				continue
 			}
 			cd.BaselineReason, cd.Excluded, cd.Eligible, cd.insufficient = cd.Excluded, "", true, false
 			out = append(out, cd)

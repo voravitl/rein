@@ -17,6 +17,8 @@ import (
 // evidence (thin or incomplete data), as opposed to a record that is bad: only the former may fall back to an explicit baseline.
 func qualifyWorker(ev ledger.WorkerEvidence, p contract.WorkerPolicy) (why string, insufficient bool) {
 	switch {
+	case p.MaxFalseClaims != nil && ev.FalseClaims > *p.MaxFalseClaims:
+		return fmt.Sprintf("%d false claims > allowed %d", ev.FalseClaims, *p.MaxFalseClaims), false
 	case ev.Settled == 0:
 		return fmt.Sprintf("no settled attempts, need %d", p.MinCompleteAttempts), true
 	case ev.Coverage < 1:
@@ -27,8 +29,6 @@ func qualifyWorker(ev ledger.WorkerEvidence, p contract.WorkerPolicy) (why strin
 		return "false-claim assessments are unknown", true
 	case p.MaxFalseClaims == nil:
 		return "max_false_claims not configured", true
-	case ev.FalseClaims > *p.MaxFalseClaims:
-		return fmt.Sprintf("%d false claims > allowed %d", ev.FalseClaims, *p.MaxFalseClaims), false
 	case ev.Lower95 < p.MinApprovalRate:
 		return fmt.Sprintf("Q=%.1f (95%% Wilson lower bound %.3f) below floor %.3f", ev.Q, ev.Lower95, p.MinApprovalRate), false
 	}

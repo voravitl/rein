@@ -2,6 +2,7 @@ package budget
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1151,14 +1152,17 @@ func TestReserveHandoverOfReviewReserve(t *testing.T) {
 	for _, it := range hs[wh.ID].Items {
 		kinds = append(kinds, it.Kind)
 	}
-	if strings.Join(kinds, ",") != "probe,funding" {
-		t.Fatalf("worker hold after the handover holds %v, want its probe and funding only", kinds)
+	if strings.Join(kinds, ",") != "probe,funding,review_reserve" {
+		t.Fatalf("worker hold after the handover holds %v, want probe, funding and remaining review reserve", kinds)
+	}
+	if hs[wh.ID].Items[2].Amount != 3 {
+		t.Fatalf("remaining review reserve = %+v, want 3", hs[wh.ID].Items)
 	}
 	if hs[rh.ID].State != "reserved" || len(hs[rh.ID].Items) != 2 {
 		t.Fatalf("review hold: %+v", hs[rh.ID])
 	}
-	if r := remaining(t, marker, p, ""); r["claude"] != 5 {
-		t.Fatalf("remaining after the handover = %v, want claude 5 (10 - review 1 + 4)", r)
+	if r := remaining(t, marker, p, ""); r["claude"] != 2 {
+		t.Fatalf("remaining after the handover = %v, want claude 2 (10 - review 5 - remaining reserve 3)", r)
 	}
 
 	// another task's reserve is never taken over
@@ -1172,5 +1176,66 @@ func TestReserveHandoverOfReviewReserve(t *testing.T) {
 		if h.Task == "t2" && (len(h.Items) != 1 || h.Items[0].Kind != "review_reserve") {
 			t.Fatalf("a handover reached another task: %+v", h)
 		}
+	}
+}
+
+func TestBudgetRejectsConflictingCharges(t *testing.T) {
+	for _, field := range []string{"amount", "pool", "unit", "run", "task"} {
+		t.Run(field, func(t *testing.T) {
+			marker := reserveEnv(t)
+			p := capProfile("p", 0, 10)
+			r, _ := ledger.NewChargeRow("a", "x", "worker", "p", "tokens", "w", "m", 1)
+			r.Run = testRun
+			r.Task = "t1"
+			if err := ledger.Append(r); err != nil {
+				t.Fatal(err)
+			}
+			r.RecordedAt = time.Now().Format(time.RFC3339)
+			switch field {
+			case "amount":
+				n := 9.0
+				r.Amount = &n
+			case "pool":
+				r.Pool = "q"
+			case "unit":
+				r.Unit = "usd"
+			case "run":
+				r.Run = "other"
+			case "task":
+				r.Task = "t2"
+			}
+			raw, _ := json.Marshal(r)
+			f, err := os.OpenFile(ledger.Path(), os.O_APPEND|os.O_WRONLY, 0600)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = f.Write(append(raw, '\n'))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = f.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Remaining(marker, p, ""); err == nil {
+				t.Fatal("remaining accepted conflicting charges")
+			}
+			if _, err := Reserve(marker, p, request("t1", fund("p", 9))); err == nil {
+				t.Fatal("reserved against conflicting charges")
+			}
+		})
+	}
+}
+
+func TestHandoverOnlyTransfersMatchingReviewPoolUnit(t *testing.T) {
+	marker := reserveEnv(t)
+	worker := request("t1", Item{Pool: "p", Unit: "tokens", Amount: 8, Kind: "review_reserve"}, Item{Pool: "q", Unit: "usd", Amount: 7, Kind: "review_reserve"})
+	worker.Attempt = "w"
+	h := mustReserve(t, marker, nil, worker)
+	review := request("t1", Item{Pool: "p", Unit: "usd", Amount: 5, Kind: "review_funding"}, Item{Pool: "q", Unit: "usd", Amount: 2, Kind: "review_funding"})
+	review.Handover = "w"
+	mustReserve(t, marker, nil, review)
+	items := allHolds(t)[h.ID].Items
+	if len(items) != 2 || items[0].Amount != 8 || items[1].Amount != 5 {
+		t.Fatalf("handover pooled mismatched units: %+v", items)
 	}
 }

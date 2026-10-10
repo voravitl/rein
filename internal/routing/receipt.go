@@ -45,7 +45,7 @@ func qualityHashFor(rows []ledger.Row, d *Decision, cfg *providers.Config, pol *
 	reviewer := func(name string, rp providers.Provider, effort, fp string) {
 		o := opts(pol.Reviewer.MaxEvidenceAgeDays)
 		k := ledger.CohortKey{Agent: rp.Agent, Model: rp.Model, Effort: effort, Config: fp, Kind: d.Kind, Tier: d.Tier, Suite: d.Suite}
-		add(ledger.EvaluateReviewer(rows, k, o).Hash, ledger.EvaluateReviewCost(rows, name, rp.Model, o).Hash)
+		add(ledger.EvaluateReviewer(rows, k, o).Hash, ledger.EvaluateReviewCost(rows, name, rp.Model, effort, fp, o).Hash)
 	}
 	if strings.HasPrefix(d.Chain, "review:") {
 		reviewer(d.Provider, p, d.Effort, d.ConfigFingerprint)
@@ -162,6 +162,9 @@ func validateAuto(c *contract.Contract, d *Decision, cfg *providers.Config) erro
 		return errors.New("pricing, billing or cost basis changed since preparation")
 	}
 	if cl.Phase == "review" {
+		if revision, err := reviewRevision(c.Worktree, d.ReviewBase); err != nil || d.ReviewBase == "" || revision != d.ReviewRevision {
+			return errors.New("review checkout changed since preparation; prepare again")
+		}
 		// the reviewer's independence rests on the worker that ACTUALLY ran
 		if _, model, err := ledger.WorkerIdentity(rows, d.Run, d.Task); err != nil || model != d.WorkerModel {
 			return errors.New("the worker identity proven by the ledger changed since preparation")

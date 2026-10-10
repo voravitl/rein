@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"reflect"
 	"slices"
 )
 
@@ -45,6 +46,28 @@ func NewChargeRow(attempt, chargeID, component, pool, unit, provider, model stri
 		Provider: provider, Model: model, Amount: &amount}, nil
 }
 
+// sameCharge ignores recording time and prose, but preserves every accounting and cohort field.
+func sameCharge(a, b Row) bool {
+	a.RecordedAt, b.RecordedAt = "", ""
+	a.Notes, b.Notes = "", ""
+	return reflect.DeepEqual(a, b)
+}
+
+func validateCharges(rows []Row) error {
+	seen := map[[2]string]Row{}
+	for _, r := range rows {
+		if r.Kind != "cost" || r.ChargeID == "" {
+			continue
+		}
+		k := [2]string{r.Attempt, r.ChargeID}
+		if first, ok := seen[k]; ok && !sameCharge(first, r) {
+			return fmt.Errorf("conflicting duplicate charge %q of attempt %q", r.ChargeID, r.Attempt)
+		}
+		seen[k] = r
+	}
+	return nil
+}
+
 type charge struct {
 	row *Row
 	amt float64
@@ -64,7 +87,7 @@ func charges(rows []Row, o EvidenceOptions) (out []charge, conflicted map[string
 		}
 		k := [2]string{r.Attempt, r.ChargeID}
 		if first := seen[k]; first != nil {
-			if first.Pool != r.Pool || first.Unit != r.Unit || first.Component != r.Component || *first.Amount != *r.Amount {
+			if !sameCharge(*first, *r) {
 				conflicted[r.Attempt] = true
 			}
 			continue
@@ -170,6 +193,8 @@ func joinReasons(r []string) string {
 // has cost per review charge.
 type ReviewCostEvidence struct {
 	Provider  string             `json:"provider"`
+	Effort    string             `json:"effort"`
+	Config    string             `json:"config"`
 	Model     string             `json:"model"`
 	Reviews   int                `json:"reviews"`
 	PerReview map[string]float64 `json:"per_review"` // pool -> mean charge
@@ -182,19 +207,22 @@ type ReviewCostEvidence struct {
 }
 
 // EvaluateReviewCost averages the in-window "review" charges of one reviewer provider. A charge counts only when it names that
-// provider and model: without them it could belong to another harness or effort, and pooling it would misprice this reviewer.
-func EvaluateReviewCost(rows []Row, provider, model string, o EvidenceOptions) ReviewCostEvidence {
-	ev := ReviewCostEvidence{Provider: provider, Model: model, PerReview: map[string]float64{}, MaxReview: map[string]float64{}, Units: map[string]string{}}
-	all, _ := charges(rows, o)
+// provider, model, effort and configuration. Unattributed or older configuration charges cannot price the current reviewer.
+func EvaluateReviewCost(rows []Row, provider, model, effort, config string, o EvidenceOptions) ReviewCostEvidence {
+	ev := ReviewCostEvidence{Provider: provider, Model: model, Effort: effort, Config: config, PerReview: map[string]float64{}, MaxReview: map[string]float64{}, Units: map[string]string{}}
+	all, conflicted := charges(rows, o)
 	count, sum := map[string]int{}, map[string]float64{}
 	var reasons []string
 	for _, c := range all {
 		r := c.row
-		if r.Component != "review" || r.Model != model || r.Provider != provider {
+		if r.Component != "review" || r.Model != model || r.Provider != provider || config == "" || r.Config != config || r.Effort != effort {
 			continue
 		}
 		if _, ok := inWindow(r.RecordedAt, o); !ok {
 			continue
+		}
+		if conflicted[r.Attempt] && !slices.Contains(reasons, "conflicting duplicate charge") {
+			reasons = append(reasons, "conflicting duplicate charge")
 		}
 		if u, ok := ev.Units[r.Pool]; ok && u != r.Unit && !slices.Contains(reasons, "unit conflict") {
 			reasons = append(reasons, "unit conflict")

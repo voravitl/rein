@@ -100,7 +100,7 @@ func cmdRoute(args []string) int {
 				if want := strings.ToLower(d.Effort); strings.ToLower(strings.TrimSpace(*effort)) != want {
 					err = fmt.Errorf("launch effort %q differs from the prepared effort %q: pass --effort %s", *effort, d.Effort, d.Effort)
 				} else if *phase == "review" {
-					err = routing.ConsumeReceipt(d) // one receipt, one review: a retry is a new decision, refresh and reservation
+					err = routing.ConsumeReview(c, d) // one receipt, one review: a retry is a new decision, refresh and reservation
 				}
 			}
 			if err == nil {

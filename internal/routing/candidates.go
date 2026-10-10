@@ -250,13 +250,13 @@ func (a *auto) evalWorker(cd *cand) {
 	o := a.evOpts(a.pol.Worker.MaxEvidenceAgeDays)
 	ev := ledger.EvaluateWorker(a.rows, cd.key, o)
 	cd.Worker = &ev
+	cost := ledger.EvaluateWorkerCost(a.rows, cd.key, o)
+	cd.WorkerCost = &cost
 	if why, insufficient := qualifyWorker(ev, a.pol.Worker); why != "" {
 		cd.insufficient = insufficient
 		cd.exclude("unqualified", "%s", why)
 		return
 	}
-	cost := ledger.EvaluateWorkerCost(a.rows, cd.key, o)
-	cd.WorkerCost = &cost
 	if !cost.Available {
 		cd.insufficient = true
 		cd.exclude("cost_unavailable", "%s (unknown cost is never zero)", cost.Reason)
@@ -278,13 +278,13 @@ func (a *auto) evalReviewer(cd *cand) {
 	o := a.evOpts(a.pol.Reviewer.MaxEvidenceAgeDays)
 	ev := ledger.EvaluateReviewer(a.rows, cd.key, o)
 	cd.Reviewer = &ev
+	rc := ledger.EvaluateReviewCost(a.rows, cd.name, p.Model, p.Effort, fingerprint(p), o)
+	cd.ReviewCost = &rc
 	if why, insufficient := qualifyReviewer(ev, a.pol.Reviewer); why != "" {
 		cd.insufficient = insufficient
 		cd.exclude("unqualified", "reviewer: %s", why)
 		return
 	}
-	rc := ledger.EvaluateReviewCost(a.rows, cd.name, p.Model, o)
-	cd.ReviewCost = &rc
 	if !rc.Available {
 		cd.insufficient = true
 		cd.exclude("cost_unavailable", "review cost: %s", rc.Reason)

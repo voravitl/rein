@@ -321,6 +321,17 @@ func (x *ctx) call(args []string) string {
 		for i < len(rest) {
 			a := rest[i]
 			if name == "env" {
+				switch {
+				case a == "-S" || a == "--split-string":
+					if i+1 >= len(rest) {
+						return "env split-string needs a literal argument to check"
+					}
+					return x.envSplit(rest[i+1], rest[i+2:])
+				case strings.HasPrefix(a, "--split-string="):
+					return x.envSplit(strings.TrimPrefix(a, "--split-string="), rest[i+1:])
+				case strings.HasPrefix(a, "-S"):
+					return x.envSplit(a[2:], rest[i+1:])
+				}
 				take, why := x.coordEnvOption(rest, i)
 				if why != "" {
 					return why
@@ -331,15 +342,6 @@ func (x *ctx) call(args []string) string {
 				}
 			}
 			switch {
-			case name == "env" && (a == "-S" || a == "--split-string") && i+1 < len(rest):
-				x.deep++
-				r := x.script(rest[i+1])
-				x.deep--
-				if r != "" {
-					return r
-				}
-				i += 2
-				continue
 			case name == "time" && (a == "-o" || a == "--output") && i+1 < len(rest):
 				if r := x.write(rest[i+1]); r != "" {
 					return r
@@ -350,6 +352,9 @@ func (x *ctx) call(args []string) string {
 				i += 2
 				continue
 			case strings.HasPrefix(a, "-"):
+				if name == "env" && x.coord != nil && a != "--" && a != "-v" && a != "--debug" && a != "-0" && a != "--null" && !strings.HasPrefix(a, "--chdir=") && !strings.HasPrefix(a, "-C") {
+					return "env option cannot be checked; use explicit env arguments"
+				}
 				i++
 				continue
 			case name == "env" && strings.Contains(a, "="):
@@ -460,6 +465,23 @@ func (x *ctx) call(args []string) string {
 		}
 	}
 	return ""
+}
+
+func (x *ctx) envSplit(payload string, trailing []string) string {
+	// GNU env splitting differs from shell parsing: only plain literal words are safe to inspect this way.
+	for _, c := range payload {
+		if strings.ContainsRune("\\'\"$", c) || c > '~' || (c < ' ' && c != '\t' && c != '\n') {
+			return "env split-string quoting, escapes or expansion cannot be checked; use explicit env arguments"
+		}
+	}
+	if x.deep >= 4 {
+		return "env split-string nests too deeply to check; use explicit env arguments"
+	}
+	args := append([]string{"env"}, strings.Fields(payload)...)
+	args = append(args, trailing...)
+	x.deep++
+	defer func() { x.deep-- }()
+	return x.call(args)
 }
 
 var numberish = regexp.MustCompile(`^\d+(\.\d+)?[smhd]?$`)

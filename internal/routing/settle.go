@@ -54,6 +54,13 @@ func SettleAttempt(attempt string) ([]budget.Hold, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ledger unreadable: %w", err)
 	}
+	for _, h := range holds {
+		for _, r := range rows {
+			if r.Kind == "cost" && r.Attempt == attempt && (r.Run != h.Run || r.Task != h.Task) {
+				return nil, fmt.Errorf("charge %s run/task contradicts reservation %s", r.ChargeID, h.ID)
+			}
+		}
+	}
 	ran := attemptRan(rows, attempt)
 	have := map[string]map[string]float64{} // pool -> component -> every charge recorded for the attempt
 	proven := map[string]map[string]bool{}  // pool -> component -> a measured, non-zero charge exists

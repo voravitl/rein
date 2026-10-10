@@ -155,6 +155,7 @@ func newE2E(t *testing.T, workerLaunch string) *e2eEnv {
 			seedRows(t, row)
 		}
 		rc, _ := ledger.NewChargeRow(fmt.Sprintf("rv%d", i), "rv", "review", "kiro/credits", "kiro_credits", "r", r.Model, 1)
+		rc.Effort, rc.Config = r.Effort, routing.ProviderFingerprint(r)
 		seedRows(t, rc)
 	}
 

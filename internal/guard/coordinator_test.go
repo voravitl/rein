@@ -3,6 +3,7 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -302,6 +303,38 @@ func TestCoordCannotRedirectThePolicyOrEvidenceItIsJudgedBy(t *testing.T) {
 	}
 	for _, c := range allow {
 		e.expect(false, e.bash(c), c)
+	}
+}
+
+func TestCoordEnvSplitStringChecksEnvArguments(t *testing.T) {
+	e := newCoordEnv(t)
+	for _, form := range []string{"env --split-string='%s'", "env --split-string '%s'", "env -S'%s'", "env -S '%s'"} {
+		for _, payload := range []string{
+			"REIN_PROFILE=/tmp/other.json rein route auto --task t",
+			"PIPELINE_LEDGER=/tmp/other.jsonl rein route settle --attempt a",
+			"-u REIN_PROFILE rein route holds",
+			"--unset=PIPELINE_LEDGER rein route holds",
+			"-i rein route holds",
+			"rein route auto --task t --config /tmp/other.json",
+		} {
+			cmd := fmt.Sprintf(form, payload)
+			e.expect(true, e.bash(cmd), cmd)
+		}
+		for _, payload := range []string{"ls -la", "FOO=1 rein route holds", "-u HOME rein route holds"} {
+			cmd := fmt.Sprintf(form, payload)
+			e.expect(false, e.bash(cmd), cmd)
+		}
+		cmd := fmt.Sprintf(form, "rein route auto") + " --config /tmp/other.json"
+		e.expect(true, e.bash(cmd), cmd)
+	}
+	for _, cmd := range []string{
+		"env --unknown-option rein route holds",
+		"env -S", "env --split-string",
+		`env -S 'REIN_PROFILE=\"/tmp/other.json\" rein route holds'`,
+		`env -S 'REIN_PROFILE=/tmp/other.json\_rein\_route\_holds'`,
+		`env -S '${PAYLOAD}'`,
+	} {
+		e.expect(true, e.bash(cmd), cmd)
 	}
 }
 

@@ -94,8 +94,23 @@ func cmdLedgerCharge(args []string) int {
 		return 2
 	}
 	if launch, ok := ledger.LaunchRow(rows, *attempt); ok {
-		row.Run, row.Task, row.Decision = firstNonEmpty(*runID, launch.Run), launch.Task, launch.Decision
+		if *runID != "" && *runID != launch.Run {
+			fmt.Fprintln(os.Stderr, "[ledger] --run contradicts the attempt's launch run")
+			return 2
+		}
+		row.Run, row.Task, row.Decision = launch.Run, launch.Task, launch.Decision
+		if *component == "review" {
+			if launch.Provider != *provider || launch.Worker == nil || launch.Worker.Model != *model || launch.Role != "review:auto" || launch.Config == "" {
+				fmt.Fprintln(os.Stderr, "[ledger] review charge must match a known reviewer launch and its configuration")
+				return 2
+			}
+			row.Effort, row.Config = launch.Effort, launch.Config
+		}
 	} else {
+		if *component == "review" {
+			fmt.Fprintln(os.Stderr, "[ledger] a review charge needs a known reviewer launch")
+			return 2
+		}
 		row.Run = *runID
 	}
 	if row.Run == "" { // spend is counted per run: an unattributed charge would never reach a cap

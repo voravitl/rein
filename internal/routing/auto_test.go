@@ -68,6 +68,7 @@ func newWorld(t *testing.T) *world {
 			t.Fatal(err)
 		}
 	}
+	initReviewGit(t, wt)
 	rates := `{"opencode-go/glm-w":{"input_per_mtok":1,"output_per_mtok":4,"source":"https://example.com/pricing","as_of":"2026-01-01T00:00:00Z","valid_until":"2099-01-01T00:00:00Z"}}`
 	if err := os.WriteFile(os.Getenv("PIPELINE_PRICES"), []byte(rates), 0o600); err != nil {
 		t.Fatal(err)
@@ -186,6 +187,7 @@ func (w *world) seedReviewer(name string, defect, detected, clean, falsePos int,
 			w.t.Fatal(err)
 		}
 		ch.RecordedAt = ago(time.Hour)
+		ch.Effort, ch.Config = p.Effort, fingerprint(p)
 		w.seed(ch)
 	}
 }
@@ -798,7 +800,7 @@ func TestExplicitBaselineIsLabelledAndOnlyForMissingEvidence(t *testing.T) {
 	w := newWorld(t)
 	w.startRun()
 	w.budget = &contract.Profile{Budget: &contract.Budget{Pools: map[string]contract.PoolCaps{"codex/sub/week": {RunCap: 100}, "claude/max/5h": {RunCap: 100}, "glm/api": {RunCap: 100}, "kiro/team/month": {RunCap: 100}}}}
-	os.Remove(ledger.Path()) // a new project: no evidence for anything
+	w.sel.Worker.MinCompleteAttempts = 6 // thin quality evidence; bounded costs and qualified reviewers remain mandatory
 	w.sel.BaselineChain = "worker:backend"
 	r := mustPrepare(t, w)
 	if r.SelectionMode != modeBaseline || r.Receipt.SelectionMode != modeBaseline || r.Receipt.Provider != "w-sub" || r.Receipt.DecisionID == "" {
@@ -811,8 +813,8 @@ func TestExplicitBaselineIsLabelledAndOnlyForMissingEvidence(t *testing.T) {
 	if holds, _ := budget.HoldsFor(r.Attempt); len(holds) != 1 || r.Receipt.Hold != holds[0].ID || holds[0].State != "reserved" {
 		t.Errorf("a baseline probe is reserved like any other: %+v", holds)
 	}
-	if rem, err := budget.Remaining(w.marker, w.budget, ""); err != nil || rem["codex/sub/week"] != 99.5 {
-		t.Errorf("the probe bound is held against the pool: %v %v", rem, err)
+	if rem, err := budget.Remaining(w.marker, w.budget, ""); err != nil || rem["codex/sub/week"] != 97.5 {
+		t.Errorf("the probe and execution funding are held against the pool: %v %v", rem, err)
 	}
 	if _, err := Validate(w.c, "run", "codex", "gpt-sub"); err != nil {
 		t.Errorf("a baseline receipt validates like any automatic receipt: %v", err)
@@ -823,27 +825,26 @@ func TestExplicitBaselineIsLabelledAndOnlyForMissingEvidence(t *testing.T) {
 	if _, err := w2.prepare(); ErrCode(err) != CodeNoCandidate {
 		t.Errorf("%v", err)
 	}
-	// a model disqualified on its RECORD is not resurrected by the baseline
+	// Known bad claims remain a hard failure even when another assessment is missing.
 	w3 := newWorld(t)
 	w3.sel.BaselineChain = "worker:backend"
+	w3.sel.Worker.MinCompleteAttempts = 6
 	rows, _ := ledger.LoadStrict("")
 	os.Remove(ledger.Path())
-	var keep []ledger.Row
-	for _, x := range rows {
-		if x.Kind != "fixture" {
-			keep = append(keep, x) // reviewers lose their calibration: workers are blocked for want of a qualified reviewer
+	for i := range rows {
+		if rows[i].Kind == "task" && rows[i].Attempt == "seed-w-sub-T1-5-0" {
+			rows[i].FalseClaims = ip(3)
+		}
+		if rows[i].Kind == "task" && rows[i].Attempt == "seed-w-sub-T1-5-1" {
+			rows[i].FalseClaims = nil
 		}
 	}
-	for i := range keep {
-		if keep[i].Kind == "task" && keep[i].Attempt == "seed-w-sub-T1-5-0" {
-			keep[i].FalseClaims = ip(3)
-		}
-	}
-	w3.seed(keep...)
+	w3.seed(rows...)
 	r = mustPrepare(t, w3)
-	if r.SelectionMode != modeBaseline || r.Receipt.Provider == "w-sub" {
-		t.Errorf("the baseline must skip a model disqualified by its record: %s", dump(r))
+	if r.SelectionMode != modeBaseline || r.Receipt.Provider == "w-sub" || !strings.Contains(excluded(r, "w-sub"), "false claims") {
+		t.Fatalf("incomplete coverage must not revive the known bad candidate: %s", dump(r))
 	}
+
 }
 
 // The baseline relaxes the evidence qualification and nothing else. Every other gate still excludes what it excludes: a failed
@@ -851,7 +852,7 @@ func TestExplicitBaselineIsLabelledAndOnlyForMissingEvidence(t *testing.T) {
 func TestBaselineCannotBypassAnyOtherGate(t *testing.T) {
 	fresh := func() *world {
 		w := newWorld(t)
-		os.Remove(ledger.Path())
+		w.sel.Worker.MinCompleteAttempts = 6
 		w.sel.BaselineChain = "worker:backend"
 		return w
 	}
@@ -935,7 +936,7 @@ func TestBaselineCannotBypassAnyOtherGate(t *testing.T) {
 // The baseline stays in force across the fallback rounds it started in, but is never entered after a scored candidate failed.
 func TestBaselineFallsBackWithinItselfOnly(t *testing.T) {
 	w := newWorld(t)
-	os.Remove(ledger.Path())
+	w.sel.Worker.MinCompleteAttempts = 6
 	w.sel.BaselineChain = "worker:backend"
 	w.probes["w-sub"] = "down"
 	r := mustPrepare(t, w)
@@ -1222,7 +1223,7 @@ func TestSameTaskCannotBePreparedTwiceAtOnceAndLeaseNeedsProofOfExit(t *testing.
 	// a receipt is single-use, so every acquisition here stands for a separately prepared attempt
 	acquire := func() (*Lease, error) {
 		d := *r.Receipt
-		d.Attempt = newID("at")
+		d.Attempt, d.DecisionID = newID("at"), "" // isolate legacy lease liveness from automatic receipt binding
 		return AcquireLease(w.c, &d)
 	}
 	l, err := acquire()
@@ -1355,8 +1356,11 @@ func TestOrcaDispatchedLeaseIsHeldUntilSettle(t *testing.T) {
 	if why := TaskBusy("task"); why != "" {
 		t.Errorf("settling ends the dispatched lease: %q", why)
 	}
-	if _, err := AcquireLease(w.c, &next); err != nil {
-		t.Errorf("the task is free after the settlement: %v", err)
+	fresh := mustPrepare(t, w)
+	if lease, err := AcquireLease(w.c, fresh.Receipt); err != nil {
+		t.Errorf("a fresh funded attempt takes the free task: %v", err)
+	} else {
+		lease.Release()
 	}
 }
 
@@ -1535,10 +1539,14 @@ func TestReviewFundingIsNeverBookedAsWorkerSpendAcrossCycles(t *testing.T) {
 			t.Fatalf("cycle %d: %s", i, dump(review))
 		}
 		wholds, _ := budget.HoldsFor(worker.Attempt)
+		remainingReview := 0.0
 		for _, it := range wholds[0].Items {
 			if it.Kind == "review_reserve" {
-				t.Fatalf("cycle %d: the worker still holds the review capacity beside the review's own reservation: %+v", i, wholds[0].Items)
+				remainingReview += it.Amount
 			}
+		}
+		if remainingReview != 3.5 {
+			t.Fatalf("cycle %d: future review funding after transfer of 4 + 0.5 must remain 3.5: %+v", i, wholds[0].Items)
 		}
 		if err := ConsumeReceipt(review.Receipt); err != nil { // route check
 			t.Fatal(err)
@@ -1949,5 +1957,169 @@ func TestReviewerHarnessMustBeLaunchable(t *testing.T) {
 	}
 	if r.Receipt.Provider == "r-agy" {
 		t.Error("a reviewer that advise.sh cannot launch was selected")
+	}
+}
+
+func TestBaselineMissingFundingRefusesBeforeProbe(t *testing.T) {
+	w := newWorld(t)
+	os.Remove(ledger.Path())
+	w.sel.BaselineChain = "worker:backend"
+	r, err := w.prepare()
+	if err == nil || r.Receipt != nil || len(w.probeLog()) != 0 {
+		t.Fatalf("missing execution funding must refuse before probe: err=%v result=%s", err, dump(r))
+	}
+}
+
+func TestBaselineCannotRelaxReviewerQuality(t *testing.T) {
+	w := newWorld(t)
+	w.profile = func(tp *TaskProfile) { tp.Phase, tp.ChangedFiles = "review", []string{"src/api/users.go"} }
+	w.sel.BaselineChain = "review:all"
+	w.sel.Reviewer.MinDefectFixtures = 5 // cost evidence exists, but neither reviewer meets this quality floor
+	if err := ledger.Append(ledger.Row{Kind: "routing_launch", Attempt: "at-w", Run: "run", Task: "task", Worker: &ledger.AgentModel{Agent: "codex", Model: "gpt-sub"}, Type: "backend", Effort: "high", Config: "c", Suite: "s1", Tier: "T1"}); err != nil {
+		t.Fatal(err)
+	}
+	r, err := w.prepare()
+	if err == nil || r.Receipt != nil || len(w.probeLog()) != 0 {
+		t.Fatalf("baseline must never relax reviewer quality or probe an unqualified reviewer: err=%v result=%s probes=%v", err, dump(r), w.probeLog())
+	}
+}
+
+func TestKnownFalseClaimsOverrideIncompleteCoverage(t *testing.T) {
+	why, insufficient := qualifyWorker(ledger.WorkerEvidence{Settled: 2, Coverage: 0.5, FalseClaims: 3, FalseClaimsKnown: false}, contract.WorkerPolicy{QualityFloor: contract.QualityFloor{MaxFalseClaims: ip(0)}})
+	if why == "" || insufficient {
+		t.Fatalf("known false claims must be a hard exclusion: %q insufficient=%v", why, insufficient)
+	}
+}
+
+func TestReplacedReceiptCannotAcquireExecutionLease(t *testing.T) {
+	w := newWorld(t)
+	first := mustPrepare(t, w)
+	mustPrepare(t, w)
+	if l, err := AcquireLease(w.c, first.Receipt); err == nil {
+		l.Release()
+		t.Fatal("stale loaded receipt executed after replacement released its hold")
+	}
+	if ReceiptUsed(first.Attempt) {
+		t.Fatal("refused stale receipt must not be consumed")
+	}
+}
+
+func TestReviewReceiptRejectsPostPrepareCheckoutChanges(t *testing.T) {
+	w := newWorld(t)
+	initReviewGit(t, w.c.Worktree)
+	w.seed(ledger.Row{Kind: "routing_launch", Attempt: "worker-before-review", Run: "run", Task: "task", Worker: &ledger.AgentModel{Agent: "codex", Model: "gpt-sub"}})
+	w.profile = func(tp *TaskProfile) { tp.Phase, tp.ChangedFiles = "review", []string{"src/api/users.go"} }
+	r := mustPrepare(t, w)
+	if _, err := Validate(w.c, "run", r.Receipt.Agent, r.Receipt.Model); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.c.Worktree, "src/api/users.go"), []byte("changed after preparation"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Validate(w.c, "run", r.Receipt.Agent, r.Receipt.Model); err == nil {
+		t.Fatal("changed content under the same path must invalidate review")
+	}
+}
+
+func initReviewGit(t *testing.T, wt string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(wt, ".git")); err == nil {
+		return
+	}
+	for _, args := range [][]string{{"init", "-q"}, {"config", "user.email", "test@example.com"}, {"config", "user.name", "test"}} {
+		if out, err := exec.Command("git", append([]string{"-C", wt}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git: %v %s", err, out)
+		}
+	}
+	os.MkdirAll(filepath.Join(wt, "src/api"), 0700)
+	os.WriteFile(filepath.Join(wt, "src/api/users.go"), []byte("original"), 0600)
+	for _, args := range [][]string{{"add", "."}, {"commit", "-qm", "initial"}, {"update-ref", "refs/remotes/origin/main", "HEAD"}} {
+		if out, err := exec.Command("git", append([]string{"-C", wt}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git: %v %s", err, out)
+		}
+	}
+}
+
+func TestSettlementRejectsChargeIdentityContradictingHold(t *testing.T) {
+	for name, identity := range map[string][2]string{"other run": {"another-run", "task"}, "other task": {"run", "another-task"}, "missing run": {"", "task"}, "missing task": {"run", ""}} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			r := mustPrepare(t, w)
+			ch, err := ledger.NewChargeRow(r.Attempt, "wrong-identity", "worker", "codex/sub/week", "subscription_percent", "codex", "gpt-sub", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ch.Run, ch.Task = identity[0], identity[1]
+			w.seed(ch)
+			if _, err := SettleAttempt(r.Attempt); err == nil {
+				t.Fatal("unattributed or misattributed charge released current hold")
+			}
+			hs, _ := budget.HoldsFor(r.Attempt)
+			if len(hs) != 1 || hs[0].State != "reserved" {
+				t.Fatalf("invalid evidence must preserve funding: %+v", hs)
+			}
+		})
+	}
+}
+
+func TestReceiptConsumptionSharesPreparationLock(t *testing.T) {
+	for _, review := range []bool{false, true} {
+		t.Run(fmt.Sprintf("review=%v", review), func(t *testing.T) {
+			w := newWorld(t)
+			if review {
+				w.seed(ledger.Row{Kind: "routing_launch", Attempt: "worker-proof", Run: "run", Task: "task", Worker: &ledger.AgentModel{Agent: "codex", Model: "gpt-sub"}})
+				w.profile = func(tp *TaskProfile) { tp.Phase, tp.ChangedFiles = "review", []string{"src/api/users.go"} }
+			}
+			r := mustPrepare(t, w)
+			unlock, err := lockTaskDecision(w.c.Name, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() {
+				if review {
+					done <- ConsumeReview(w.c, r.Receipt)
+					return
+				}
+				l, err := AcquireLease(w.c, r.Receipt)
+				if l != nil {
+					l.Release()
+				}
+				done <- err
+			}()
+			select {
+			case err := <-done:
+				unlock()
+				t.Fatalf("consumption escaped preparation lock: %v", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			if ReceiptUsed(r.Attempt) {
+				unlock()
+				t.Fatal("receipt consumed while preparation owns lock")
+			}
+			unlock()
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestReplacedReviewReceiptCannotBeConsumed(t *testing.T) {
+	w := newWorld(t)
+	w.seed(ledger.Row{Kind: "routing_launch", Attempt: "worker-proof", Run: "run", Task: "task", Worker: &ledger.AgentModel{Agent: "codex", Model: "gpt-sub"}})
+	w.profile = func(tp *TaskProfile) { tp.Phase, tp.ChangedFiles = "review", []string{"src/api/users.go"} }
+	first := mustPrepare(t, w)
+	next := mustPrepare(t, w)
+	if err := ConsumeReview(w.c, first.Receipt); err == nil {
+		t.Fatal("stale review consumed after replacement")
+	}
+	if err := ConsumeReview(w.c, next.Receipt); err != nil {
+		t.Fatal(err)
+	}
+	mustPrepare(t, w) // no launch row yet: the consumed review still owns its execution funding
+	hs, _ := budget.HoldsFor(next.Attempt)
+	if len(hs) != 1 || hs[0].State != "reserved" {
+		t.Fatalf("consumed review funding released before launch recording: %+v", hs)
 	}
 }

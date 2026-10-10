@@ -50,6 +50,8 @@ type Decision struct {
 	Effort            string     `json:"effort,omitempty"`
 	ConfigFingerprint string     `json:"config_fingerprint,omitempty"` // harness configuration the evidence belongs to
 	ReviewerPlan      []string   `json:"reviewer_plan,omitempty"`      // reviewers the cost forecast was bound to
+	ReviewBase        string     `json:"review_base,omitempty"`
+	ReviewRevision    string     `json:"review_revision,omitempty"`
 	TaskProfileHash   string     `json:"task_profile_hash,omitempty"`
 	InventoryHash     string     `json:"inventory_hash,omitempty"`
 	PricingHash       string     `json:"pricing_hash,omitempty"`
@@ -220,7 +222,14 @@ func eligible(cfg *providers.Config, chain, worker string) ([]string, error) {
 }
 func record(kind string, d *Decision) error {
 	b, _ := json.Marshal(d)
-	return ledger.Append(ledger.Row{Kind: kind, Task: d.Task, Run: d.Run, Role: d.Chain, Provider: d.Provider, Model: d.Model, Purpose: "contracted routing", Notes: string(b)})
+	r := ledger.Row{Kind: kind, Task: d.Task, Run: d.Run, Role: d.Chain, Provider: d.Provider, Model: d.Model, Purpose: "contracted routing", Notes: string(b)}
+	if kind == "routing_launch" && d.Attempt != "" && strings.HasPrefix(d.Chain, "review:") {
+		r.Attempt, r.Decision = d.Attempt, d.DecisionID
+		r.Worker = &ledger.AgentModel{Agent: d.Agent, Model: d.Model}
+		r.Type, r.Tier, r.Suite = d.Kind, d.Tier, d.Suite
+		r.Effort, r.Config = d.Effort, d.ConfigFingerprint
+	}
+	return ledger.Append(r)
 }
 
 // Prepare probes only eligible providers in chain order and persists a launch receipt after ledger success.

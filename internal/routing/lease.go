@@ -68,8 +68,42 @@ func writeLease(l *Lease) error {
 	return atomic(l.path, l)
 }
 
+// lockTaskDecision serializes preparation/replacement and the final receipt validation/consumption.
+func lockTaskDecision(task string, timeout time.Duration) (func(), error) {
+	return run.LockFile(filepath.Join(dir(), "prepare", task+".lock"), timeout)
+}
+
+func validateCurrentReceipt(c *contract.Contract, d *Decision) error {
+	current, err := Validate(c, d.Run, d.Agent, d.Model)
+	if err != nil {
+		return err
+	}
+	if current.Attempt != d.Attempt || current.DecisionID != d.DecisionID || current.Hold != d.Hold {
+		return errors.New("routing receipt replaced since validation; prepare again")
+	}
+	return nil
+}
+
+// ConsumeReview validates and consumes an automatic review under the same lock as preparation.
+func ConsumeReview(c *contract.Contract, d *Decision) error {
+	unlock, err := lockTaskDecision(c.Name, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("task decision: %w", err)
+	}
+	defer unlock()
+	if err := validateCurrentReceipt(c, d); err != nil {
+		return err
+	}
+	return ConsumeReceipt(d)
+}
+
 // AcquireLease takes the task for the calling process or says why it cannot.
 func AcquireLease(c *contract.Contract, d *Decision) (*Lease, error) {
+	decisionUnlock, err := lockTaskDecision(c.Name, 2*time.Second)
+	if err != nil {
+		return nil, fmt.Errorf("task decision: %w", err)
+	}
+	defer decisionUnlock()
 	p := leasePath(c.Name)
 	unlock, err := run.LockFile(p+".lock", 2*time.Second)
 	if err != nil {
@@ -88,6 +122,11 @@ func AcquireLease(c *contract.Contract, d *Decision) (*Lease, error) {
 		}
 	case !errors.Is(err, os.ErrNotExist):
 		return nil, err
+	}
+	if d.DecisionID != "" {
+		if err := validateCurrentReceipt(c, d); err != nil {
+			return nil, err
+		}
 	}
 	if err := ConsumeReceipt(d); err != nil {
 		return nil, err

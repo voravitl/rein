@@ -79,7 +79,7 @@ type ReserveRequest struct {
 	Items                        []Item
 	Calibration                  *CalibrationCaps // required when any item has Kind "calibration"
 	// Handover names an attempt of the same run and task whose outstanding review_reserve items this request takes over: they are
-	// dropped in the same transaction that records the new hold, so the capacity a worker's plan set aside for reviews funds the
+	// transferred by matching pool/unit up to the requested amount in the same transaction, so the capacity set aside funds the
 	// review instead of being counted twice. A request that does not fit leaves them in place.
 	Handover string
 }
@@ -441,9 +441,25 @@ func Reserve(markerPath string, p *contract.Profile, req ReserveRequest) (*Hold,
 			}
 		}
 		if req.Handover != "" {
-			for _, h := range holds {
+			transfer := map[[2]string]float64{}
+			for _, it := range req.Items {
+				if it.Kind == "probe" || it.Kind == "review_funding" {
+					transfer[[2]string{it.Pool, it.Unit}] += it.Amount
+				}
+			}
+			for _, id := range slices.Sorted(maps.Keys(holds)) {
+				h := holds[id]
 				if h.State == stReserved && h.Run == req.Run && h.Task == req.Task && h.Attempt == req.Handover {
-					h.Items = slices.DeleteFunc(h.Items, func(it Item) bool { return it.Kind == "review_reserve" })
+					for i := range h.Items {
+						it := &h.Items[i]
+						if it.Kind == "review_reserve" {
+							k := [2]string{it.Pool, it.Unit}
+							taken := min(it.Amount, transfer[k])
+							it.Amount -= taken
+							transfer[k] -= taken
+						}
+					}
+					h.Items = slices.DeleteFunc(h.Items, func(it Item) bool { return it.Kind == "review_reserve" && it.Amount == 0 })
 				}
 			}
 		}

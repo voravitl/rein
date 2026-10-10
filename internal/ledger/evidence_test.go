@@ -522,35 +522,35 @@ func TestUnavailableCostIsNeverZero(t *testing.T) {
 func TestReviewCostPerReviewer(t *testing.T) {
 	rc := func(id, model string, amount float64) Row {
 		r := mkCharge("a1", id, "review", "claude/max/5h", "subscription_percent", amount)
-		r.Model, r.Provider = model, "claude"
+		r.Model, r.Provider, r.Effort, r.Config = model, "claude", "high", "cfg"
 		return r
 	}
 	rows := []Row{rc("r1", "claude-opus", 2), rc("r2", "claude-opus", 4), rc("r3", "claude-sonnet", 100)}
-	ev := EvaluateReviewCost(rows, "claude", "claude-opus", opts())
+	ev := EvaluateReviewCost(rows, "claude", "claude-opus", "high", "cfg", opts())
 	if !ev.Available || ev.Reviews != 2 || ev.PerReview["claude/max/5h"] != 3 || ev.MaxReview["claude/max/5h"] != 4 {
 		t.Errorf("%+v", ev)
 	}
-	if ev = EvaluateReviewCost(rows, "kiro", "claude-opus", opts()); ev.Available {
+	if ev = EvaluateReviewCost(rows, "kiro", "claude-opus", "high", "cfg", opts()); ev.Available {
 		t.Errorf("another provider's reviewer must not borrow the charges: %+v", ev)
 	}
 	// a charge that names no provider could belong to any harness or effort: it prices nobody
 	anon := rc("r9", "claude-opus", 50)
 	anon.Provider = ""
-	if ev = EvaluateReviewCost([]Row{anon}, "claude", "claude-opus", opts()); ev.Available {
+	if ev = EvaluateReviewCost([]Row{anon}, "claude", "claude-opus", "high", "cfg", opts()); ev.Available {
 		t.Errorf("an unattributed review charge was used: %+v", ev)
 	}
 	// two providers with the same model (two efforts) keep separate review costs
 	hi, lo := rc("h1", "claude-opus", 10), rc("l1", "claude-opus", 1)
 	hi.Provider, lo.Provider = "claude-high", "claude-low"
-	if ev = EvaluateReviewCost([]Row{hi, lo}, "claude-low", "claude-opus", opts()); ev.PerReview["claude/max/5h"] != 1 {
+	if ev = EvaluateReviewCost([]Row{hi, lo}, "claude-low", "claude-opus", "high", "cfg", opts()); ev.PerReview["claude/max/5h"] != 1 {
 		t.Errorf("effort variants were pooled: %+v", ev)
 	}
-	if ev = EvaluateReviewCost(nil, "claude", "claude-opus", opts()); ev.Available || ev.Reason == "" {
+	if ev = EvaluateReviewCost(nil, "claude", "claude-opus", "high", "cfg", opts()); ev.Available || ev.Reason == "" {
 		t.Errorf("no review charges is unavailable, not free: %+v", ev)
 	}
 	mixed := append(rows, mkCharge("a1", "r4", "review", "claude/max/5h", "usd", 1))
-	mixed[3].Model, mixed[3].Provider = "claude-opus", "claude"
-	if ev = EvaluateReviewCost(mixed, "claude", "claude-opus", opts()); ev.Available {
+	mixed[3].Model, mixed[3].Provider, mixed[3].Effort, mixed[3].Config = "claude-opus", "claude", "high", "cfg"
+	if ev = EvaluateReviewCost(mixed, "claude", "claude-opus", "high", "cfg", opts()); ev.Available {
 		t.Errorf("units must not merge: %+v", ev)
 	}
 }
@@ -672,5 +672,94 @@ func TestRatesLoadValidatePrice(t *testing.T) {
 	}
 	if _, err = LoadRates(p); err == nil {
 		t.Error("bad json")
+	}
+}
+
+func TestReviewCostRejectsConflictingDuplicate(t *testing.T) {
+	a := mkCharge("a", "id", "review", "p", "usd", 1)
+	a.Provider, a.Model, a.Effort, a.Config = "r", "m", "high", "cfg"
+	b := a
+	n := 9.0
+	b.Amount = &n
+	if ev := EvaluateReviewCost([]Row{a, b}, "r", "m", "high", "cfg", opts()); ev.Available {
+		t.Fatalf("conflicting cost available: %+v", ev)
+	}
+	if ev := EvaluateReviewCost([]Row{a, a}, "r", "m", "high", "cfg", opts()); !ev.Available || ev.Reviews != 1 {
+		t.Fatalf("exact duplicate: %+v", ev)
+	}
+}
+
+func TestReviewCostDoesNotCrossEffortOrConfig(t *testing.T) {
+	row := mkCharge("a", "x", "review", "p", "usd", 1)
+	row.Provider = "r"
+	row.Model = "m"
+	row.Effort = "low"
+	row.Config = "old"
+	for _, c := range []struct{ effort, config string }{{"high", "old"}, {"low", "new"}, {"low", ""}} {
+		if ev := EvaluateReviewCost([]Row{row}, "r", "m", c.effort, c.config, opts()); ev.Available {
+			t.Fatalf("borrowed old cohort: %+v", ev)
+		}
+	}
+	if ev := EvaluateReviewCost([]Row{row}, "r", "m", "low", "old", opts()); !ev.Available {
+		t.Fatalf("matching cohort refused: %+v", ev)
+	}
+}
+
+func TestReviewLaunchesPreserveWorkerIdentityAndAttempt(t *testing.T) {
+	for _, role := range []string{"", "worker:auto"} {
+		t.Run(role, func(t *testing.T) {
+			w := launch("worker", "gpt-worker")
+			w.Run, w.Task, w.Role = "r", "t", role
+			rows := []Row{w}
+			for _, id := range []string{"review-one", "review-two"} {
+				r := launch(id, "claude-reviewer")
+				r.Run, r.Task, r.Role = "r", "t", "review:auto"
+				rows = append(rows, r)
+				if _, model, err := WorkerIdentity(rows, "r", "t"); err != nil || model != "gpt-worker" {
+					t.Fatalf("review replaced worker identity: %s, %v", model, err)
+				}
+				if a, ok := WorkerAttempt(rows, "r", "t"); !ok || a != "worker" {
+					t.Fatalf("review took over worker handover: %s", a)
+				}
+				if _, ok := LaunchRow(rows, id); !ok {
+					t.Fatal("reviewer launch no longer attributable by attempt")
+				}
+			}
+		})
+	}
+}
+
+func TestReviewerLaunchDoesNotChangeWorkerEvidence(t *testing.T) {
+	for _, role := range []string{"", "worker:auto"} {
+		t.Run(role, func(t *testing.T) {
+			w := launch("worker", "gpt-x")
+			w.Role = role
+			base := []Row{w, success("worker"), mkCharge("worker", "w", "worker", "p", "usd", 2)}
+			quality := EvaluateWorker(base, key, opts())
+			cost := EvaluateWorkerCost(base, key, opts())
+			if !cost.Available || cost.Attempts != 1 || cost.Successes != 1 {
+				t.Fatalf("invalid control: %+v", cost)
+			}
+			review := launch("reviewer", "gpt-x")
+			review.Role = "review:auto"
+			rows := concat(base, []Row{review, success("reviewer"), mkCharge("reviewer", "r", "worker", "p", "usd", 99)})
+			if got := Attempts(rows, opts()); len(got) != 1 || got[0].ID != "worker" {
+				t.Fatalf("review entered settled worker denominator: %+v", got)
+			}
+			if got := EvaluateWorker(rows, key, opts()); got.Hash != quality.Hash {
+				t.Fatalf("review changed quality evidence: %+v vs %+v", got, quality)
+			}
+			if got := EvaluateWorkerCost(rows, key, opts()); got.Hash != cost.Hash {
+				t.Fatalf("review changed worker cost evidence: %+v vs %+v", got, cost)
+			}
+			review.Attempt = "review-incomplete"
+			rows = concat(base, []Row{review})
+			if got := EvaluateWorker(rows, key, opts()); got.Hash != quality.Hash {
+				t.Fatalf("incomplete review changed quality: %+v", got)
+			}
+			if got := EvaluateWorkerCost(rows, key, opts()); got.Hash != cost.Hash {
+				t.Fatalf("incomplete review changed cost: %+v", got)
+			}
+		})
 	}
 }
