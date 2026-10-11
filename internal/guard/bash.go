@@ -36,17 +36,18 @@ var wrappers = map[string]bool{"env": true, "sudo": true, "nohup": true, "time":
 	"exec": true, "nice": true, "timeout": true, "gtimeout": true, "stdbuf": true, "caffeinate": true}
 
 type ctx struct {
-	c          *contract.Contract
-	top        string // real worktree root
-	cwd        string
-	cwdUnknown bool              // a cd we could not follow: relative writes are no longer judgeable
-	vars       map[string]string // simple VAR=literal assignments seen so far
-	deep       int
-	ports      *regexp.Regexp
-	stdin      stdinKind             // where the statement being checked reads stdin from
-	hdoc       string                // the heredoc body, when stdin == stdinHeredoc
-	pipeRHS    map[*syntax.Stmt]bool // statements that read a pipe
-	coord      *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
+	c           *contract.Contract
+	top         string // real worktree root
+	cwd         string
+	cwdUnknown  bool              // a cd we could not follow: relative writes are no longer judgeable
+	vars        map[string]string // simple VAR=literal assignments seen so far
+	deep        int
+	ports       *regexp.Regexp
+	stdin       stdinKind             // where the statement being checked reads stdin from
+	hdoc        string                // the heredoc body, when stdin == stdinHeredoc
+	pipeRHS     map[*syntax.Stmt]bool // statements that read a pipe
+	specChecked bool                  // current direct call has an adjacent successful source preflight
+	coord       *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
 }
 
 type stdinKind int
@@ -91,6 +92,21 @@ func (x *ctx) script(src string) string {
 	if err != nil {
 		return fmt.Sprintf("could not parse the command (%v); split it into simpler commands", err)
 	}
+	preflight := map[*syntax.CallExpr]bool{}
+	asynchronous := map[*syntax.CallExpr]bool{}
+	if x.coord != nil {
+		syntax.Walk(f, func(n syntax.Node) bool {
+			if stmt, ok := n.(*syntax.Stmt); ok && (stmt.Background || stmt.Negated) {
+				syntax.Walk(stmt, func(child syntax.Node) bool {
+					if call, ok := child.(*syntax.CallExpr); ok {
+						asynchronous[call] = true
+					}
+					return true
+				})
+			}
+			return true
+		})
+	}
 	var reason string
 	syntax.Walk(f, func(n syntax.Node) bool {
 		if reason != "" {
@@ -118,12 +134,17 @@ func (x *ctx) script(src string) string {
 				case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.ClbOut, syntax.RdrInOut:
 					if r.Word != nil {
 						if t := x.word(r.Word); t != "" && !strings.HasPrefix(t, "&") {
-							reason = x.write(t, false)
+							reason = x.write(t)
 						}
 					}
 				}
 			}
 		case *syntax.BinaryCmd:
+			if x.coord != nil && n.Op == syntax.AndStmt {
+				if call, ok := n.Y.Cmd.(*syntax.CallExpr); ok && !asynchronous[call] && x.sourcePreflight(n.X, n.Y) {
+					preflight[call] = true
+				}
+			}
 			if n.Op == syntax.Pipe || n.Op == syntax.PipeAll {
 				x.pipeRHS[n.Y] = true
 			}
@@ -152,6 +173,7 @@ func (x *ctx) script(src string) string {
 			for _, w := range n.Args {
 				args = append(args, x.word(w))
 			}
+			x.specChecked = preflight[n]
 			reason = x.call(args)
 		}
 		return reason == ""
@@ -231,8 +253,13 @@ func base(a string) string {
 
 func nonFlags(args []string) []string {
 	var out []string
+	options := true
 	for _, a := range args {
-		if a != "" && !strings.HasPrefix(a, "-") {
+		if options && a == "--" {
+			options = false
+			continue
+		}
+		if a != "" && (!options || !strings.HasPrefix(a, "-")) {
 			out = append(out, a)
 		}
 	}
@@ -251,6 +278,11 @@ func (x *ctx) call(args []string) string {
 			return r
 		}
 	} else {
+		if (isOrca(name) && strings.Contains(strings.Join(rest, " "), "worker-start")) || harnessLaunch(name, rest) || (name == "rein" && len(rest) >= 2 && rest[0] == "route" && rest[1] == "launch") {
+			if r := x.contractedRouteCall(args[0], name, rest); r != "" {
+				return r
+			}
+		}
 		for _, a := range args {
 			if textOnly[name] {
 				break
@@ -285,21 +317,73 @@ func (x *ctx) call(args []string) string {
 		// skip the wrapper's options (and the values they take), VAR=value pairs and a duration, then judge the rest
 		vo := valueOpts[name]
 		i, sawDuration := 0, false
+		envDir := ""
+		envDirSet := false
+		withEnvDir := func(f func() string) string {
+			if name != "env" || !envDirSet {
+				return f()
+			}
+			oldCwd, oldUnknown := x.cwd, x.cwdUnknown
+			if strings.Contains(envDir, "$?") || (x.cwdUnknown && !filepath.IsAbs(envDir) && !strings.HasPrefix(envDir, "~/")) {
+				x.cwdUnknown = true
+			} else {
+				x.cwd = x.abs(envDir)
+				x.cwdUnknown = false
+			}
+			defer func() { x.cwd, x.cwdUnknown = oldCwd, oldUnknown }()
+			return f()
+		}
 	opts:
 		for i < len(rest) {
 			a := rest[i]
-			switch {
-			case name == "env" && (a == "-S" || a == "--split-string") && i+1 < len(rest):
-				x.deep++
-				r := x.script(rest[i+1])
-				x.deep--
-				if r != "" {
-					return r
+			if name == "env" {
+				switch {
+				case a == "-S" || a == "--split-string":
+					if i+1 >= len(rest) {
+						return "env split-string needs a literal argument to check"
+					}
+					if envDirSet && (envSplitHasChdir(rest[i+1]) || envSplitArgsHaveChdir(rest[i+2:])) {
+						return "env split-string cannot combine with another chdir; use explicit env arguments"
+					}
+					return withEnvDir(func() string { return x.envSplit(rest[i+1], rest[i+2:]) })
+				case strings.HasPrefix(a, "--split-string="):
+					payload := strings.TrimPrefix(a, "--split-string=")
+					if envDirSet && (envSplitHasChdir(payload) || envSplitArgsHaveChdir(rest[i+1:])) {
+						return "env split-string cannot combine with another chdir; use explicit env arguments"
+					}
+					return withEnvDir(func() string { return x.envSplit(payload, rest[i+1:]) })
+				case strings.HasPrefix(a, "-S"):
+					if envDirSet && (envSplitHasChdir(a[2:]) || envSplitArgsHaveChdir(rest[i+1:])) {
+						return "env split-string cannot combine with another chdir; use explicit env arguments"
+					}
+					return withEnvDir(func() string { return x.envSplit(a[2:], rest[i+1:]) })
+				case (a == "-C" || a == "--chdir") && i+1 < len(rest):
+					envDir, envDirSet = rest[i+1], true
+					i += 2
+					continue
+				case strings.HasPrefix(a, "--chdir="):
+					envDir, envDirSet = strings.TrimPrefix(a, "--chdir="), true
+					i++
+					continue
+				case strings.HasPrefix(a, "-C") && len(a) > 2:
+					envDir, envDirSet = a[2:], true
+					i++
+					continue
+				case a == "-C" || a == "--chdir":
+					return "env chdir needs a directory to check"
 				}
-				i += 2
-				continue
+				take, why := x.coordEnvOption(rest, i)
+				if why != "" {
+					return why
+				}
+				if take > 0 {
+					i += take
+					continue
+				}
+			}
+			switch {
 			case name == "time" && (a == "-o" || a == "--output") && i+1 < len(rest):
-				if r := x.write(rest[i+1], false); r != "" {
+				if r := x.write(rest[i+1]); r != "" {
 					return r
 				}
 				i += 2
@@ -308,6 +392,9 @@ func (x *ctx) call(args []string) string {
 				i += 2
 				continue
 			case strings.HasPrefix(a, "-"):
+				if name == "env" && x.coord != nil && a != "--" && a != "-v" && a != "--debug" && a != "-0" && a != "--null" && !strings.HasPrefix(a, "--chdir=") && !strings.HasPrefix(a, "-C") {
+					return "env option cannot be checked; use explicit env arguments"
+				}
 				i++
 				continue
 			case name == "env" && strings.Contains(a, "="):
@@ -324,7 +411,7 @@ func (x *ctx) call(args []string) string {
 			break opts // first positional: the wrapped command starts here
 		}
 		if i < len(rest) {
-			return x.call(rest[i:])
+			return withEnvDir(func() string { return x.call(rest[i:]) })
 		}
 	case name == "bash" || name == "sh" || name == "zsh" || name == "dash" || name == "ksh":
 		return x.shell(rest)
@@ -355,24 +442,39 @@ func (x *ctx) call(args []string) string {
 	case name == "npx" || name == "bunx" || name == "pnpx":
 		return x.call(rest)
 	case name == "tee" || name == "touch" || name == "truncate":
-		for _, t := range nonFlags(rest) {
-			if r := x.write(t, false); r != "" {
+		targets := rest
+		options := true
+		for i := 0; i < len(targets); i++ {
+			a := targets[i]
+			if options && a == "--" {
+				options = false
+				continue
+			}
+			if options && ((name == "truncate" && (a == "-s" || a == "--size" || a == "-r" || a == "--reference")) ||
+				(name == "touch" && (a == "-t" || a == "-d" || a == "--date" || a == "-r" || a == "--reference" || a == "--time"))) {
+				i++
+				continue
+			}
+			if a == "" || (options && strings.HasPrefix(a, "-")) {
+				continue
+			}
+			if r := x.write(a); r != "" {
 				return r
 			}
 		}
 	case name == "rm" || name == "rmdir" || name == "unlink":
 		for _, t := range nonFlags(rest) {
-			if r := x.write(t, true); r != "" {
+			if r := x.write(t); r != "" {
 				return r
 			}
 		}
 	case name == "cp" || name == "ln" || name == "install":
 		if t := nonFlags(rest); len(t) >= 2 {
-			return x.write(t[len(t)-1], false)
+			return x.write(t[len(t)-1])
 		}
 	case name == "mv":
 		for _, t := range nonFlags(rest) { // the source disappears too
-			if r := x.write(t, false); r != "" {
+			if r := x.write(t); r != "" {
 				return r
 			}
 		}
@@ -396,13 +498,43 @@ func (x *ctx) call(args []string) string {
 				files = files[1:] // first non-flag is the script
 			}
 			for _, t := range files {
-				if r := x.write(t, false); r != "" {
+				if r := x.write(t); r != "" {
 					return r
 				}
 			}
 		}
 	}
 	return ""
+}
+
+func (x *ctx) envSplit(payload string, trailing []string) string {
+	// GNU env splitting differs from shell parsing: only plain literal words are safe to inspect this way.
+	for _, c := range payload {
+		if strings.ContainsRune("\\'\"$", c) || c > '~' || (c < ' ' && c != '\t' && c != '\n') {
+			return "env split-string quoting, escapes or expansion cannot be checked; use explicit env arguments"
+		}
+	}
+	if x.deep >= 4 {
+		return "env split-string nests too deeply to check; use explicit env arguments"
+	}
+	args := append([]string{"env"}, strings.Fields(payload)...)
+	args = append(args, trailing...)
+	x.deep++
+	defer func() { x.deep-- }()
+	return x.call(args)
+}
+
+func envSplitHasChdir(payload string) bool {
+	return envSplitArgsHaveChdir(strings.Fields(payload))
+}
+
+func envSplitArgsHaveChdir(args []string) bool {
+	for _, arg := range args {
+		if arg == "-C" || arg == "--chdir" || strings.HasPrefix(arg, "-C") && len(arg) > 2 || strings.HasPrefix(arg, "--chdir=") {
+			return true
+		}
+	}
+	return false
 }
 
 var numberish = regexp.MustCompile(`^\d+(\.\d+)?[smhd]?$`)
@@ -462,13 +594,34 @@ func (x *ctx) git(args []string) string {
 		return r
 	}
 	switch sub {
+	case "rm", "mv":
+		for _, arg := range rest {
+			if arg == "--" {
+				break
+			}
+			// Git accepts unambiguous abbreviations of long options.
+			option := strings.SplitN(arg, "=", 2)[0]
+			if strings.HasPrefix(option, "--") && len(option) > 2 && strings.HasPrefix("--pathspec-from-file", option) {
+				return "git pathspec files cannot be checked for ownership; use literal paths"
+			}
+		}
+		saved := x.cwd
+		if repo != "" {
+			x.cwd = x.abs(repo)
+		}
+		defer func() { x.cwd = saved }()
+		for _, t := range nonFlags(rest) {
+			if r := x.write(t); r != "" {
+				return r
+			}
+		}
 	case "bundle":
 		if len(rest) > 1 && rest[0] == "create" {
-			return x.write(rest[1], false)
+			return x.write(rest[1])
 		}
 	case "clone":
 		if t := nonFlags(rest); len(t) >= 2 {
-			return x.write(t[1], false)
+			return x.write(t[1])
 		}
 	case "push":
 		return "workers never push; the coordinator pushes after the gates"
@@ -521,7 +674,7 @@ func (x *ctx) gitOutputs(sub string, rest []string) string {
 			target = rest[j+1]
 		}
 		if target != "" {
-			if r := x.write(target, false); r != "" {
+			if r := x.write(target); r != "" {
 				return r
 			}
 		}
@@ -634,9 +787,8 @@ func tempDirs() []string {
 	return ds
 }
 
-// write judges one write target. Deletions only need to stay inside the worktree and off the never-edit list;
-// writes to an EXISTING file must also be inside the ownership (new scratch files are left to the drift check).
-func (x *ctx) write(target string, deletion bool) string {
+// write judges every shell write target, including new paths and deletions.
+func (x *ctx) write(target string) string {
 	if target == "" || target == "/dev/null" || strings.HasPrefix(target, "/dev/fd/") ||
 		target == "/dev/stdout" || target == "/dev/stderr" {
 		return ""
@@ -672,10 +824,12 @@ func (x *ctx) write(target string, deletion bool) string {
 	if protectedHook(x.top, rel) {
 		return fmt.Sprintf("%s belongs to the rein guard installed for task %s; workers never change it", rel, x.c.Name)
 	}
-	if !deletion {
-		if _, err := os.Stat(p); err == nil && !glob.Match(rel, x.c.Allow) {
-			return fmt.Sprintf("%s is outside the ownership of task %s (%s); ask the coordinator if the task needs it", rel, x.c.Name, strings.Join(x.c.Allow, ", "))
-		}
+	owned := glob.Match(rel, x.c.Allow)
+	if info, err := os.Stat(p); err == nil && info.IsDir() {
+		owned = owned || glob.Match(rel+"/", x.c.Allow)
+	}
+	if !owned {
+		return fmt.Sprintf("%s is outside the ownership of task %s (%s); ask the coordinator if the task needs it", rel, x.c.Name, strings.Join(x.c.Allow, ", "))
 	}
 	return ""
 }
@@ -832,9 +986,27 @@ func (x *ctx) find(args []string) string {
 	if len(roots) == 0 {
 		roots = []string{"."}
 	}
-	for _, r := range roots {
-		if x.holdsHook(x.abs(r)) {
+	for _, root := range roots {
+		if x.holdsHook(x.abs(root)) {
 			return "find with -delete/-exec over the rein guard files is denied; the installed hook files are not yours to change"
+		}
+		for i := 0; i < len(args); i++ {
+			switch args[i] {
+			case "-delete":
+				if r := x.write(root); r != "" {
+					return r
+				}
+			case "-execdir", "-okdir":
+				return "find directory actions have an unknown execution directory; use -exec with explicit paths"
+			case "-exec", "-ok":
+				var cmd []string
+				for i++; i < len(args) && args[i] != ";" && args[i] != `\;` && args[i] != "+"; i++ {
+					cmd = append(cmd, strings.ReplaceAll(args[i], "{}", x.abs(root)))
+				}
+				if r := x.call(cmd); r != "" {
+					return r
+				}
+			}
 		}
 	}
 	return ""

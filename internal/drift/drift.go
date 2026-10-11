@@ -41,7 +41,7 @@ func withChildren(gs []string) []string {
 }
 
 var (
-	fake = regexp.MustCompile(`(TODO|FIXME|\.skip\(|\.only\(|\[Fact\(Skip|\[Ignore|throw new NotImplementedException|it\.todo|xit\(|xdescribe\()`)
+	fake = regexp.MustCompile(`(TODO|FIXME|\.skip\(|\.only\(|\[Fact\(Skip|\[Ignore|throw new NotImplementedException|it\.todo|\bxit\(|\bxdescribe\()`)
 	// Secrets: known token shapes, private keys, and credential-named keys with a literal value in code,
 	// JSON (`"password": "x"`), YAML (`password: x`) or env files (`PASSWORD=x`).
 	// token shapes that are secrets wherever they appear
@@ -249,7 +249,9 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 			continue
 		}
 		line := l[1:]
-		if fake.MatchString(line) {
+		// The exact scanner declaration contains markers by definition. Other lines still count.
+		scannerDefinition := cur == "internal/drift/drift.go" && strings.TrimSpace(line) == "fake = regexp.MustCompile(`"+fake.String()+"`)"
+		if fake.MatchString(line) && !scannerDefinition {
 			d("FAKE_COMPLETION", "%s: %s", cur, trunc(strings.TrimSpace(line), 100))
 		}
 		if hasSecret(line) {

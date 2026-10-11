@@ -200,7 +200,7 @@ type coordPolicy struct {
 }
 
 // checkTickAndBudget enforces tick staleness and budget caps before worker spawns or agent calls.
-func (p *coordPolicy) checkTickAndBudget() string {
+func (p *coordPolicy) checkTickAndBudget(tasks ...*contract.Contract) string {
 	// Check tick staleness - only deny if tick exists and is stale (not missing)
 	tickPath := run.TickPath(p.loc.Common)
 	tick, err := run.LoadTick(tickPath)
@@ -213,23 +213,37 @@ func (p *coordPolicy) checkTickAndBudget() string {
 
 	// Check budget caps - try to load profile from REIN_PROFILE or default
 	prof, err := contract.LoadProfile("")
-	if err != nil || prof.Budget == nil {
-		// No profile or budget configured - skip budget check
+	if err != nil {
+		return "budget profile cannot be checked: " + err.Error()
+	}
+	task := ""
+	if len(tasks) > 0 {
+		task = tasks[0].Name
+		if tasks[0].Profile.Budget != nil {
+			prof = &tasks[0].Profile
+		}
+	}
+	if prof.Budget == nil {
 		return ""
 	}
 
 	// Run budget check
-	result, err := budget.Check(p.loc.Marker, prof, "")
-	if err != nil {
-		// Budget check failed - but don't block on errors, just on hard limits
-		return ""
+	checks := []string{""}
+	if task != "" {
+		checks = append(checks, task)
 	}
+	for _, checkedTask := range checks {
+		result, err := budget.Check(p.loc.Marker, prof, checkedTask)
+		if err != nil {
+			return "budget cannot be checked: " + err.Error()
+		}
 
-	// Deny on hard limit (exit code 2)
-	if result.Code == budget.ExitHard {
-		return "budget cap or review round limit exceeded for run/task: run rein budget raise --reason <text> in your own terminal"
+		// Deny on hard limit (exit code 2)
+		if result.Code == budget.ExitHard {
+			return "budget cap or review round limit exceeded for run/task: run rein budget raise --reason <text> in your own terminal"
+		}
+
 	}
-
 	return ""
 }
 

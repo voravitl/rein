@@ -34,6 +34,14 @@ func Check(specContentOrPath string, c *contract.Contract, standingPath string) 
 		return result, warnings
 	}
 
+	return CheckText(specContent, c, standingPath)
+}
+
+// CheckText lints literal content without interpreting it as a filesystem path.
+func CheckText(specContent string, c *contract.Contract, standingPath string) (*Result, []string) {
+	result := &Result{Tier: tier.T1, Violations: []string{}}
+	warnings := []string{}
+
 	// Compute pre-start tier from allow globs and sensitive paths
 	sensitivePaths := c.Profile.SensitivePaths
 	result.Tier = tier.EvaluateFromAllowGlobs(c.Allow, sensitivePaths)

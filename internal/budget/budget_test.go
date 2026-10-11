@@ -91,6 +91,7 @@ func TestCheckSoftLimit(t *testing.T) {
 		Run:          "test-run",
 		Task:         "test-task",
 		WorkerTokens: &tokens,
+		Worker:       &ledger.AgentModel{Agent: "claude", Model: "sonnet"},
 		RecordedAt:   time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
 		t.Fatalf("append ledger: %v", err)
@@ -148,6 +149,7 @@ func TestCheckHardLimit(t *testing.T) {
 		Run:          "test-run",
 		Task:         "test-task",
 		WorkerTokens: &tokens,
+		Worker:       &ledger.AgentModel{Agent: "claude", Model: "sonnet"},
 		RecordedAt:   time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
 		t.Fatalf("append ledger: %v", err)
@@ -337,6 +339,7 @@ func TestCheckRedSoftRatio(t *testing.T) {
 		Run:          "test-run",
 		Task:         "test-task",
 		WorkerTokens: &tokens,
+		Worker:       &ledger.AgentModel{Agent: "claude", Model: "sonnet"},
 		RecordedAt:   time.Now().UTC().Format(time.RFC3339),
 	}); err != nil {
 		t.Fatalf("append ledger: %v", err)
@@ -360,4 +363,68 @@ func writeTestMarker(path string, m *run.Marker) error {
 		return err
 	}
 	return os.WriteFile(path, data, 0644)
+}
+
+func TestTokenPoolsUseActualAgent(t *testing.T) {
+	n := 10
+	rows := []ledger.Row{
+		{Run: "r", Task: "t", Worker: &ledger.AgentModel{Agent: "codex"}, WorkerTokens: &n, Reviewer: &ledger.AgentModel{Agent: "claude"}, ReviewerTokens: &n, Tokens: &n},
+		{Run: "r", Task: "t", Provider: "kiro", Tokens: &n},
+		{Run: "r", Task: "t", Provider: "antigravity", Tokens: &n},
+		{Run: "r", Task: "t", Provider: "opencode", Tokens: &n},
+		{Run: "r", Task: "t", WorkerTokens: &n},
+		{Run: "other", Task: "t", Provider: "claude", Tokens: &n},
+	}
+	spend := tallySpend(rows, "r", "t")
+	for pool, want := range map[string]float64{"codex_tokens": 10, "claude_tokens": 10, "kiro_tokens": 10, "antigravity_tokens": 10, "opencode_tokens": 10, "unknown_tokens": 10} {
+		if spend[pool] != want {
+			t.Errorf("%s=%v want %v", pool, spend[pool], want)
+		}
+	}
+	if len(spend) != 6 {
+		t.Errorf("unexpected pools: %v", spend)
+	}
+}
+
+func TestReviewRoundsIgnoreOtherRuns(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("PIPELINE_LEDGER", filepath.Join(tmp, "ledger.jsonl"))
+	marker := filepath.Join(tmp, "rein-run.json")
+	if err := writeTestMarker(marker, &run.Marker{Schema: 1, Run: "r", Root: tmp, SessionID: "session", PID: os.Getpid(), StartTime: time.Now().Unix(), StartedAt: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	n := 3
+	if err := ledger.Append(ledger.Row{Run: "other", Task: "t", ReviewRounds: &n}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := Check(marker, &contract.Profile{Budget: &contract.Budget{MaxReviewRounds: 2}}, "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Code != ExitOK || result.ReviewRounds != 0 || len(result.Approx) != 0 {
+		t.Fatalf("other run affected check: %+v", result)
+	}
+}
+
+func TestCheckRejectsMalformedLedgerButAllowsMissing(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "ledger.jsonl")
+	t.Setenv("PIPELINE_LEDGER", path)
+	marker := filepath.Join(tmp, "rein-run.json")
+	if err := writeTestMarker(marker, &run.Marker{Schema: 1, Run: "r", Root: tmp, SessionID: "session", PID: os.Getpid(), StartTime: time.Now().Unix(), StartedAt: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	profile := &contract.Profile{Budget: &contract.Budget{Pools: map[string]contract.PoolCaps{"claude_tokens": {RunCap: 100}}}}
+	if err := os.WriteFile(path, []byte("broken ledger record\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Check(marker, profile, ""); err == nil {
+		t.Fatal("malformed ledger silently bypassed budget gate")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if result, err := Check(marker, profile, ""); err != nil || result.Code != ExitOK {
+		t.Fatalf("new run with missing ledger rejected: %+v %v", result, err)
+	}
 }

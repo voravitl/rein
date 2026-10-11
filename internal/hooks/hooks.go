@@ -42,17 +42,21 @@ var launch = map[string]string{
 // --dangerously-bypass-hook-trust is needed because codex otherwise skips hooks it has no stored trust hash for,
 // without a message.
 func CodexFlags(bin, task string) string {
+	a := CodexArgs(bin, task)
+	return a[0] + " -c " + shellQuote(a[2]) + " -c " + shellQuote(a[4])
+}
+
+// CodexArgs is also used by the routed launcher, so it cannot omit or replace the worker hook.
+func CodexArgs(bin, task string) []string {
 	h := `[{type="command",command=` + tomlStr(command(bin, "codex", task)) + `,timeout=10}]`
-	return "--dangerously-bypass-hook-trust" +
-		" -c " + shellQuote(`hooks.PreToolUse=[{matcher="*",hooks=`+h+`}]`) +
-		" -c " + shellQuote(`hooks.Stop=[{hooks=`+h+`}]`)
+	return []string{"--dangerously-bypass-hook-trust", "-c", `hooks.PreToolUse=[{matcher="*",hooks=` + h + `}]`, "-c", `hooks.Stop=[{hooks=` + h + `}]`}
 }
 
 // LaunchLine is the exact launch advice for one vendor. Commands are POSIX sh (Git Bash on Windows); PowerShell
 // and cmd.exe quoting are not covered.
 func LaunchLine(vendor, bin, task string) string {
 	if vendor == "codex" {
-		return "codex exec " + CodexFlags(bin, task) + " -C <worktree> ...   (POSIX sh syntax; drop `exec` for the interactive TUI; Orca `worker-start --agent codex` cannot pass these flags: start codex in a shell terminal (preamble route) or with the direct codex exec fallback)"
+		return "codex exec " + CodexFlags(bin, task) + " -C <worktree> ...   (POSIX sh syntax; drop `exec` for the interactive TUI; Orca `worker-start --agent codex` cannot pass these flags: start codex in a shell terminal (preamble route) or with the direct codex exec fallback; both are operator-owned and unsupervised unless an adoption receipt proves otherwise; re-install hooks before every retry/fallback and use the fresh flags before testing a tool call)"
 	}
 	return launch[vendor]
 }

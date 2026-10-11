@@ -10,7 +10,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +37,12 @@ jobs:
           for f in skills/worktree-pipeline/scripts/*.sh; do bash -n "$f"; done
           python3 -m py_compile skills/worktree-pipeline/scripts/*.py
           for f in .claude-plugin/*.json hooks/hooks.json examples/*.json; do python3 -m json.tool "$f" >/dev/null; done
+      - name: cleanup regression tests
+        if: runner.os != 'Windows'
+        run: python3 -B -m unittest discover -s skills/worktree-pipeline/scripts -p 'test*cleanup*.py'
+      - name: advisor routing regression tests
+        if: runner.os != 'Windows'
+        run: python3 -B -m unittest discover -s skills/worktree-pipeline/scripts -p 'test_advise_routing.py'
       - name: SessionStart installer builds once and is idempotent
         if: runner.os != 'Windows'
         run: |

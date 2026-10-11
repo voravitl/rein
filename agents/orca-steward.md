@@ -38,8 +38,10 @@ The playbook and scripts live in `${CLAUDE_PLUGIN_ROOT}/skills/worktree-pipeline
 **stack-test:** follow the isolated-stack recipe in `<pack>/PACK.md` step by step (its own project name and ports, a scratch worktree of main, a read-only data copy with live-side counts before and after, the pod/smoke checks the coordinator lists, the full e2e with triage). Teardown is mandatory even after a failure. Prove that nothing of the isolated stack is left.
 
 **cleanup:**
-1. `python3 <skill>/scripts/orca_cleanup.py <run> [--stop <finished dispatches the coordinator names>]`.
-2. `python3 <skill>/scripts/cleanup_worktrees.py <main> --keep <running tasks | none> --root <worktree root> [--ignore <the profile's local_artifacts, repo-relative>] [--prune-images <test image repo>]` (`--keep` is required).
+1. Archive final verified results first; preserve the main conversation, active work and explicitly retained sessions. Only the coordinator declares operator completion. Follow `SKILL.md` §8 exact launch-identity procedure; never infer completion from idle or close a failed supervised worker manually.
+2. `python3 -B <skill>/scripts/orca_cleanup.py <run> [--stop <proven-exited exact dispatches>] [--close-operator <launch.json> <completed-show.json> <archived-report>] --check-worktree <exact finished selector>`; repeat operator/session-check options for every finished checkout. Inspect receipts. Any nonzero is unfinished cleanup, not permission for fallback.
+3. After session checks succeed, mark only verified finished auxiliary worktrees `completed`; keep running tasks and the integration/review checkout for an open MR. `python3 -B <skill>/scripts/cleanup_worktrees.py <main> --keep <running/open-MR names | none> --root <worktree root> --archive-dir <external run archive dir> [--integrated-into <exact full SHA>] [--ignore <local artifact paths>] [--prune-images <test image repo>]`. No force Git fallback or branch deletion; unknown/failed checks and incomplete removal fail the gate. Keep report/archive history externally and account for every retained checkout with a reason.
+4. Prevent concurrent reuse/writes throughout verification and mutation; the CLI has no atomic conditional-close/removal primitive.
 
 Always do a `--dry-run` first and show it, then run for real.
 

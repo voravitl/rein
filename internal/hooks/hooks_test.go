@@ -367,3 +367,12 @@ func TestBinaryPath(t *testing.T) {
 		t.Errorf("a stable path must not warn: %q", w)
 	}
 }
+
+func TestCodexLaunchAdviceOwnership(t *testing.T) {
+	advice := LaunchLine("codex", "/b/rein", "task")
+	for _, required := range []string{"unsupervised", "receipt", "retry", "re-install"} {
+		if !strings.Contains(advice, required) {
+			t.Errorf("launch advice missing %q: %s", required, advice)
+		}
+	}
+}

@@ -84,3 +84,35 @@ func TestSuggestPrefersApprovedWork(t *testing.T) {
 		t.Errorf("rejected one-round work must not win:\n%s", b.String())
 	}
 }
+
+func TestLoadSinceComparesInstantsNotStrings(t *testing.T) {
+	t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "l.jsonl"))
+	// 08:00 at -05:00 is 13:00Z, i.e. AFTER a 12:00Z run start although "08:00" < "12:00" as text.
+	// 20:00 at +09:00 is 11:00Z, i.e. BEFORE it although "20:00" > "12:00" as text.
+	lines := `{"kind":"call","task":"after","recorded_at":"2026-10-09T08:00:00-05:00"}` + "\n" +
+		`{"kind":"call","task":"before","recorded_at":"2026-10-09T20:00:00+09:00"}` + "\n" +
+		`{"kind":"call","task":"date-only","recorded_at":"2026-10-10T00:00:00Z"}` + "\n"
+	if err := os.WriteFile(Path(), []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := LoadStrict("2026-10-09T12:00:00Z")
+	if err != nil || len(rows) != 2 || rows[0].Task != "after" || rows[1].Task != "date-only" {
+		t.Fatalf("instant comparison: %v %v", rows, err)
+	}
+	if rows, err = Load("2026-10-10"); err != nil || len(rows) != 1 || rows[0].Task != "date-only" { // bare dates keep text comparison
+		t.Fatalf("bare date: %v %v", rows, err)
+	}
+}
+
+func TestLoadStrictRejectsCorruptionWithoutChangingReports(t *testing.T) {
+	t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "ledger.jsonl"))
+	if err := os.WriteFile(Path(), []byte(`{"kind":"call","run":"r","recorded_at":"2026-01-01T00:00:00Z"}`+"\nbroken\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := Load(""); err != nil || len(rows) != 1 {
+		t.Fatalf("legacy reporting changed: %v %v", rows, err)
+	}
+	if _, err := LoadStrict(""); err == nil || !strings.Contains(err.Error(), "line 2") {
+		t.Fatalf("strict corruption result: %v", err)
+	}
+}

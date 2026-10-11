@@ -2,12 +2,65 @@
   "name": "myapp",
   "worktree_root": "~/worktrees/myapp",
   "pack": "~/.config/rein/packs/myapp",
-  "protect_container_prefixes": ["myapp-"],
-  "protect_ports": [8080, 5432],
-  "owner_scripts": ["scripts/release.sh"],
-  "deny_commands": ["docker compose", "docker-compose", "psql", "playwright test"],
-  "deny_paths": ["VERSION", "scripts/release.sh", "**/dist/**"],
-  "local_artifacts": ["node_modules", "tsconfig.tsbuildinfo"],
-  "sandbox_excluded_commands": ["my-orchestrator *", "/abs/path/to/.config/rein/packs/myapp/gates/backend-test.sh *"],
-  "sandbox_allowed_domains": []
+  "protect_container_prefixes": [
+    "myapp-"
+  ],
+  "protect_ports": [
+    8080,
+    5432
+  ],
+  "owner_scripts": [
+    "scripts/release.sh"
+  ],
+  "deny_commands": [
+    "docker compose",
+    "docker-compose",
+    "psql",
+    "playwright test"
+  ],
+  "deny_paths": [
+    "VERSION",
+    "scripts/release.sh",
+    "**/dist/**"
+  ],
+  "local_artifacts": [
+    "node_modules",
+    "tsconfig.tsbuildinfo"
+  ],
+  "sandbox_excluded_commands": [
+    "my-orchestrator *",
+    "/abs/path/to/.config/rein/packs/myapp/gates/backend-test.sh *"
+  ],
+  "sandbox_allowed_domains": [],
+  "sensitive_paths": [
+    "**/auth/**",
+    "**/migrations/prod/**",
+    "**/*secret*"
+  ],
+  "selection": {
+    "objective": "balanced",
+    "accept_freshness": [
+      "client_catalog"
+    ],
+    "inventory_max_age_minutes": 60,
+    "evaluation_suite": "myapp-2026-10",
+    "worker": {
+      "min_approval_rate": 0.6,
+      "max_false_claims": 0,
+      "min_complete_attempts": 8,
+      "max_evidence_age_days": 60
+    },
+    "reviewer": {
+      "min_defect_fixtures": 6,
+      "min_clean_fixtures": 6,
+      "min_recall": 0.5,
+      "min_specificity": 0.5,
+      "max_false_positive_rate": 0.2,
+      "max_evidence_age_days": 90
+    },
+    "cost_basis": {
+      "mode": "monetary_marginal"
+    }
+  },
+  "_selection_doc": "Owner policy for `rein route auto` (docs/ROUTING_SELECTION_DESIGN.md). Nothing here is defaulted: a missing value is refused. accept_freshness lists the catalog evidence classes you accept (remote_verified, client_catalog, unknown). Optional: cost_basis converted {unit, conversions{pool:{per_unit,source,as_of,valid_days}}}, calibration {authorization,max_calls,pool_caps,max_cash_usd}, baseline_chain (an UNSCORED fallback such as worker:backend). Keep this file out of public repositories and out of the coordinator's reach: it is the owner's policy."
 }

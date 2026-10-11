@@ -435,14 +435,14 @@ func TestHookFilesVsGlobsAndFind(t *testing.T) {
 		"rm .codex/*", "rm -rf .*", "rm -rf .[a-z]*", "rm -rf .co*", "mv .agents/* /tmp/x", "echo {} > .codex/h*.json",
 		"sed -i 's/a/b/' .codex/*.json", "tee .agents/hook?.json", "truncate -s0 .codex/hooks.js*",
 		"find . -delete", "find .opencode -exec rm {} +", "find . -name hooks.json -execdir rm {} ;", "find .codex -ok rm {} ;",
-		"find -delete", "git stash -a", "git stash --all", "git stash push --include-untracked", "git stash -u",
+		"find -delete", "rm -rf *", "find backend -delete", "git stash -a", "git stash --all", "git stash push --include-untracked", "git stash -u",
 	}
 	for _, cmd := range deny {
 		if out := bashCase(t, wt, cmd); !strings.Contains(out, `"deny"`) {
 			t.Errorf("%q must be denied, got %q", cmd, out)
 		}
 	}
-	allow := []string{"rm backend/Routing/*.tmp", "rm -rf *", "find . -name '*.go'", "find backend -delete", "git stash", "git stash pop", "ls .codex/*", "cat .*"}
+	allow := []string{"rm backend/Routing/*.tmp", "find . -name '*.go'", "git stash", "git stash pop", "ls .codex/*", "cat .*"}
 	for _, cmd := range allow {
 		if out := bashCase(t, wt, cmd); out != "" {
 			t.Errorf("%q must stay allowed, got %q", cmd, out)

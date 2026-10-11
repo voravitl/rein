@@ -1,6 +1,8 @@
 package providers
 
 import (
+	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -37,5 +39,17 @@ func TestClassifyAndPick(t *testing.T) {
 	p := Pick(c, res, "")
 	if p["worker:backend"] != "kiro-ok" || p["worker:docs"] != "" || p["review:r"] != "" {
 		t.Errorf("picks %v", p)
+	}
+}
+
+func TestProbeRejectsFailedOK(t *testing.T) {
+	if os.Getenv("REIN_FAILED_OK_CHILD") == "1" {
+		fmt.Println("OK")
+		os.Exit(1)
+	}
+	t.Setenv("REIN_FAILED_OK_CHILD", "1")
+	cfg := &Config{Providers: map[string]Provider{"bad": {Agent: "codex", Probe: []string{os.Args[0], "-test.run=TestProbeRejectsFailedOK"}}}}
+	if got := Probe(cfg, "bad", time.Second); got.State == "up" {
+		t.Fatal("failed process counted healthy", got)
 	}
 }
