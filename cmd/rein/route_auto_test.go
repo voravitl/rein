@@ -624,3 +624,49 @@ func TestOrcaDispatchedWorkerHoldsTheTaskUntilSettle(t *testing.T) {
 		t.Errorf("settling ends the attempt and frees the task: %q", why)
 	}
 }
+
+// An Orca acknowledgement failure does not prove that its asynchronous worker never started.
+func TestOrcaFailedAcknowledgementKeepsWriterFence(t *testing.T) {
+	e := newE2E(t, "orca")
+	if out, code := capture(t, func() int {
+		return cmdRoute([]string{"auto", "--task", "task", "--run", "run", "--profile-file", e.profile, "--config", e.cfgPath, "--timeout", "30s"})
+	}); code != 0 {
+		t.Fatalf("prepare (%d): %s", code, out)
+	}
+	pidFile := filepath.Join(e.root, "worker.pid")
+	t.Setenv("TEST_WORKER_PID", pidFile)
+	orca := filepath.Join(e.root, "orca")
+	if err := os.WriteFile(orca, []byte("#!/bin/sh\nsleep 30 >/dev/null 2>&1 &\necho $! > \"$TEST_WORKER_PID\"\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high"}
+	if code := cmdRouteLaunch(args); code != 1 {
+		t.Fatalf("failed acknowledgement: %d", code)
+	}
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pid int
+	if _, err := fmt.Sscan(string(b), &pid); err != nil || pid <= 0 {
+		t.Fatalf("worker pid %q: %v", b, err)
+	}
+	worker, err := os.FindProcess(pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = worker.Kill() })
+	if _, err := run.ProcStart(pid); err != nil {
+		t.Fatalf("async worker must still be alive: %v", err)
+	}
+	if why := routing.TaskBusy("task"); !strings.Contains(why, "no recorded end") {
+		t.Fatalf("failed acknowledgement erased the live worker fence: %q", why)
+	}
+	c, err := contract.Load("task")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := routing.AcquireLease(c, &routing.Decision{Attempt: "second-writer"}); err == nil {
+		t.Fatal("a second writer acquired the checkout while the Orca worker was alive")
+	}
+}

@@ -113,6 +113,13 @@ func cmdRouteLaunch(args []string) int {
 	cmd.Dir = c.Worktree
 	cmd.Env = append(os.Environ(), "ADVISE_RUN="+*runID, "ADVISE_TASK="+c.Name)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	// Orca can dispatch a worker before returning an acknowledgement, including a failed one.
+	if lease != nil && isOrcaLaunch(argv) {
+		if err := lease.MarkDispatchPending(); err != nil {
+			fmt.Fprintln(os.Stderr, "[route] cannot fence the Orca dispatch:", err)
+			return 1
+		}
+	}
 	started := time.Now()
 	err = cmd.Start()
 	if err == nil && lease != nil {
@@ -139,7 +146,7 @@ func cmdRouteLaunch(args []string) int {
 		// worker-start returns once the worker STARTED, not when it ended: the time is not the worker's, and nothing here can
 		// vouch for the worker's process. The task stays held until `rein route settle --attempt` ends it.
 		row.Minutes = nil
-		if lease != nil && code == 0 {
+		if lease != nil {
 			if err := lease.MarkDispatched(); err != nil {
 				fmt.Fprintln(os.Stderr, "[route] cannot hold the task for the dispatched worker:", err)
 				code = 1

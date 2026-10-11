@@ -29,11 +29,6 @@ ROLEFILE="$HERE/../templates/roles/$ROLE.md"
 [ -f "$ROLEFILE" ] || ROLEFILE="$(npm root -g 2>/dev/null)/oh-my-claude-sisyphus/agents/$ROLE.md"
 [ -f "$ROLEFILE" ] || { echo "[advise] role '$ROLE' not found (templates/roles or OMC agents)"; exit 2; }
 [ -d "$DIR" ] && [ -s "$TASK" ] || { echo "[advise] need an existing dir and a non-empty task file"; exit 2; }
-"${REIN:-rein}" route check --task "$TASK_ID" --run "$RUN" --agent "$PROVIDER" --model "$MODEL" --effort "$EFFORT" --phase review --worktree "$DIR" || {
-  echo "[advise] route check failed; advisor was not called"; exit 2;
-}
-LOGDIR="${PIPELINE_LOGDIR:-$HOME/.cache/worktree-pipeline/logs}"; mkdir -p "$LOGDIR" "$(dirname "$OUT")"
-LOG="$LOGDIR/advise-$PROVIDER-$ROLE-$(date +%H%M%S).log"
 ROLETEXT=$(awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {f=0; next} !f' "$ROLEFILE")   # drop YAML frontmatter
 [ -n "$ROLETEXT" ] || { echo "[advise] role file $ROLEFILE is empty or unreadable"; exit 2; }
 RULETEXT=$(DIR="$DIR" python3 -c 'import os,sys;print(open(sys.argv[1]).read().replace("<repo absolute path>",os.environ["DIR"]))' "$RULES")
@@ -50,6 +45,11 @@ elif [ "${ADVISE_NO_PACK:-}" != 1 ]; then
 fi
 TASKTEXT=$(cat "$TASK" 2>/dev/null) && [ -n "$TASKTEXT" ] || { echo "[advise] cannot read the task file $TASK"; exit 2; }
 PROMPT=$(printf '%s\n\n%s\n\nRepo (read-only): %s\n\n%s\n' "$ROLETEXT" "$RULETEXT" "$DIR" "$TASKTEXT")
+"${REIN:-rein}" route check --task "$TASK_ID" --run "$RUN" --agent "$PROVIDER" --model "$MODEL" --effort "$EFFORT" --phase review --worktree "$DIR" || {
+  echo "[advise] route check failed; advisor was not called"; exit 2;
+}
+LOGDIR="${PIPELINE_LOGDIR:-$HOME/.cache/worktree-pipeline/logs}"; mkdir -p "$LOGDIR" "$(dirname "$OUT")"
+LOG="$LOGDIR/advise-$PROVIDER-$ROLE-$(date +%H%M%S).log"
 rm -f "$OUT"   # an old answer must never count as this call's result
 T0=$(date +%s)
 if [ "$PROVIDER" = codex ]; then

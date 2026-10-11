@@ -2151,3 +2151,45 @@ func TestReviewRefusesUntrackedNestedRepository(t *testing.T) {
 		t.Fatalf("nested paths cannot be silently omitted from review classification: %v", err)
 	}
 }
+
+func TestPendingOrcaDispatchSurvivesLauncherCrashAndRefusesLiveSettlement(t *testing.T) {
+	w := newWorld(t)
+	w.startRun()
+	r := mustPrepare(t, w)
+	l, err := AcquireLease(w.c, r.Receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.MarkDispatchPending(); err != nil {
+		t.Fatal(err)
+	}
+	l.Release()
+	if _, err := SettleAttempt(r.Attempt); err == nil || !strings.Contains(err.Error(), "still running") {
+		t.Fatalf("pending live handoff settlement: %v", err)
+	}
+	// Even a dead launcher cannot settle while the local provider process is alive.
+	l.Child, l.ChildStart, l.Pid = l.Pid, l.PidStart, 0
+	if err := writeLease(l); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SettleAttempt(r.Attempt); err == nil || !strings.Contains(err.Error(), "provider process") {
+		t.Fatalf("pending live provider settlement: %v", err)
+	}
+	// A crashed launcher is gone, but its unknown remote worker must keep the checkout fenced.
+	l.Child = 0
+	if err := writeLease(l); err != nil {
+		t.Fatal(err)
+	}
+	if why := TaskBusy("task"); why == "" {
+		t.Fatal("pending dispatch lost its fence when launcher disappeared")
+	}
+	next := *r.Receipt
+	next.Attempt = newID("at")
+	if _, err := AcquireLease(w.c, &next); err == nil {
+		t.Fatal("another writer acquired an uncertain pending dispatch")
+	}
+	// Explicit settlement is permitted once local handoff processes are gone.
+	if _, err := SettleAttempt(r.Attempt); err != nil {
+		t.Fatal(err)
+	}
+}

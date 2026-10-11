@@ -22,16 +22,17 @@ import (
 
 // Lease is the record of the process that currently owns a task's checkout.
 type Lease struct {
-	Task       string    `json:"task"`
-	Attempt    string    `json:"attempt"`
-	Decision   string    `json:"decision"`
-	Pid        int       `json:"pid"`
-	PidStart   int64     `json:"pid_start"`
-	Child      int       `json:"child,omitempty"`
-	ChildStart int64     `json:"child_start,omitempty"`
-	Dispatched bool      `json:"dispatched,omitempty"` // an Orca worker is running that no process of ours can vouch for
-	At         time.Time `json:"at"`
-	path       string
+	Task            string    `json:"task"`
+	Attempt         string    `json:"attempt"`
+	Decision        string    `json:"decision"`
+	Pid             int       `json:"pid"`
+	PidStart        int64     `json:"pid_start"`
+	Child           int       `json:"child,omitempty"`
+	ChildStart      int64     `json:"child_start,omitempty"`
+	DispatchPending bool      `json:"dispatch_pending,omitempty"` // invocation may have started a remote worker; local handoff is unfinished
+	Dispatched      bool      `json:"dispatched,omitempty"`       // an Orca invocation may have started a worker whose exit no local process can prove
+	At              time.Time `json:"at"`
+	path            string
 }
 
 func leasePath(task string) string { return filepath.Join(dir(), "leases", task+".json") }
@@ -60,6 +61,9 @@ func holderBlocks(l Lease) string {
 		default:
 			return fmt.Sprintf("%s pid %d is still running", h.what, h.pid)
 		}
+	}
+	if l.DispatchPending {
+		return fmt.Sprintf("the Orca dispatch for attempt %s has no recorded end: settle explicitly once the worker has finished", l.Attempt)
 	}
 	return ""
 }
@@ -172,9 +176,15 @@ func ReceiptUsed(attempt string) bool {
 	return err == nil || !errors.Is(err, os.ErrNotExist)
 }
 
-// MarkDispatched keeps the task held after an Orca worker-start returned: the worker runs on, and only `rein route settle` ends it.
+// MarkDispatchPending fences an uncertain remote invocation before any process can start.
+func (l *Lease) MarkDispatchPending() error {
+	l.DispatchPending = true
+	return writeLease(l)
+}
+
+// MarkDispatched keeps the task held after worker-start returns: an asynchronous worker may remain until explicit settlement.
 func (l *Lease) MarkDispatched() error {
-	l.Child, l.ChildStart, l.Dispatched = 0, 0, true
+	l.Child, l.ChildStart, l.Dispatched, l.DispatchPending = 0, 0, true, false
 	return writeLease(l)
 }
 
@@ -204,7 +214,9 @@ func EndLease(task, attempt string) error {
 		return nil // another attempt's lease
 	}
 	if !l.Dispatched {
-		if why := holderBlocks(l); why != "" {
+		local := l
+		local.DispatchPending = false // explicit settlement still requires local handoff processes to be gone
+		if why := holderBlocks(local); why != "" {
 			return fmt.Errorf("attempt %s is still running: %s", attempt, why)
 		}
 	}
@@ -239,7 +251,7 @@ func (l *Lease) SetChild(pid int) error {
 
 // Release gives the task back, but only if this process still holds it. A dispatched lease is kept until the attempt is settled.
 func (l *Lease) Release() {
-	if l.Dispatched {
+	if l.Dispatched || l.DispatchPending {
 		return
 	}
 	if b, err := os.ReadFile(l.path); err == nil {

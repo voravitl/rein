@@ -74,6 +74,26 @@ os.execvp(sys.argv[2],sys.argv[2:])
         self.assertFalse(any(call[0] == 'model-call' for call in calls))
         self.assertEqual(self.out.read_text(), 'Previous report\n')
 
+    def test_missing_pack_preserves_receipt_and_prior_answer(self):
+        self.env.pop('ADVISE_NO_PACK')
+        self.env['PIPELINE_PACK'] = str(self.root / 'missing-pack')
+        self.out.write_text('Previous report\n')
+        receipt = self.root / 'receipt.json'
+        receipt.write_text('unconsumed receipt\n')
+        self.write_cli('rein', '''import os,sys
+from pathlib import Path
+Path(os.environ['TEST_CALLS']).write_text('route called')
+Path(os.environ['TEST_RECEIPT']).write_text('consumed receipt')
+''')
+        self.env['TEST_RECEIPT'] = str(receipt)
+        result = subprocess.run(['bash', str(SCRIPT), 'claim-auditor', str(self.root),
+                                 str(self.task), str(self.out)], env=self.env,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertFalse(self.calls.exists(), 'preflight failure must not consume or fund a review')
+        self.assertEqual(receipt.read_text(), 'unconsumed receipt\n')
+        self.assertEqual(self.out.read_text(), 'Previous report\n')
+
     def test_explicit_route_is_checked_before_model_and_attributed_to_ledger(self):
         result, calls = self.invoke()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
