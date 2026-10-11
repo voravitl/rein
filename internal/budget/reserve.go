@@ -39,10 +39,14 @@ var lockWait = 5 * time.Second
 
 // Item is one worst-case claim on one pool.
 type Item struct {
-	Pool   string  `json:"pool"`            // provider/account/pool/window qualifier (the key used in profile budget.pools and in ledger cost rows)
-	Unit   string  `json:"unit"`            // native unit of Pool; one pool is never requested in two units
-	Amount float64 `json:"amount"`          // worst case in Unit, finite >= 0
-	Calls  int     `json:"calls,omitempty"` // worst-case model calls
+	Pool     string  `json:"pool"`            // provider/account/pool/window qualifier (the key used in profile budget.pools and in ledger cost rows)
+	Unit     string  `json:"unit"`            // native unit of Pool; one pool is never requested in two units
+	Amount   float64 `json:"amount"`          // worst case in Unit, finite >= 0
+	Calls    int     `json:"calls,omitempty"` // worst-case model calls
+	Provider string  `json:"provider,omitempty"`
+	Model    string  `json:"model,omitempty"`
+	Effort   string  `json:"effort,omitempty"`
+	Config   string  `json:"config,omitempty"`
 	// Kind: probe (the availability probe), funding (the attempt's own worker work), review_funding (a review that pays for itself),
 	// review_reserve (capacity a worker's plan sets aside for reviews that will reserve and be charged under their own attempts),
 	// calibration.
@@ -311,14 +315,14 @@ func (s runState) check(b *contract.Budget, task string, need map[string]float64
 // cost rows (each distinct charge once) + this run's outstanding calibration holds.
 // ponytail: caps are per run (rows since the run started); a lifetime cap needs an all-time tally.
 func (s runState) checkCalibration(c *CalibrationCaps, items []Item) error {
-	// A row that Settle/Reconcile wrote at the reserved bound stands for every call its hold reserved, not for one.
-	reservedCalls := map[string]int{}
+	calibrationCalls := map[string]int{}
 	for _, h := range s.holds {
-		if h.State != stReserved {
-			for _, it := range h.Items {
-				if it.Kind == "calibration" {
-					reservedCalls[h.ID+":"+it.Pool] += it.Calls
-				}
+		if h.Run != s.run {
+			continue
+		}
+		for _, it := range h.Items {
+			if it.Kind == "calibration" {
+				calibrationCalls[h.Attempt] += it.Calls
 			}
 		}
 	}
@@ -332,11 +336,22 @@ func (s runState) checkCalibration(c *CalibrationCaps, items []Item) error {
 		}
 	}
 	seen := map[[2]string]bool{}
+	counted := map[string]bool{}
 	for _, r := range s.rows {
-		if r.Run != s.run || r.Kind != "cost" || r.Component != "calibration" || !newCharge(seen, r) {
+		if r.Run != s.run || r.Kind != "cost" || !newCharge(seen, r) {
 			continue
 		}
-		calls += max(1, reservedCalls[r.ChargeID])
+		if r.Component != "calibration" && (r.Component != "review" || calibrationCalls[r.Attempt] == 0) {
+			continue
+		}
+		if calibrationCalls[r.Attempt] > 0 {
+			if !counted[r.Attempt] {
+				calls += calibrationCalls[r.Attempt]
+				counted[r.Attempt] = true
+			}
+		} else if r.Component == "calibration" {
+			calls++
+		}
 		if r.Pool != "" && r.Amount != nil {
 			use(r.Pool, r.Unit, max(*r.Amount, 0))
 		}

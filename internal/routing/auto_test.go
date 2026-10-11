@@ -995,6 +995,21 @@ func TestCalibrationObeysFixedCapsAndStopsAtExhaustion(t *testing.T) {
 	}
 }
 
+func TestReviewerCalibrationFreezesCostCohort(t *testing.T) {
+	w := newWorld(t)
+	w.sel.Calibration = &contract.Calibration{Authorization: "standing order", MaxCalls: 2, PoolCaps: map[string]float64{"codex/sub/week": 3}, MaxCashUSD: fl(0)}
+	in := CalibrationInput{Contract: w.c, Run: "run", ConfigPath: w.in().ConfigPath, Provider: "r-gpt", Amount: 1, Calls: 2}
+	hold, err := ReserveCalibration(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	item := hold.Items[0]
+	p := w.cfg.Providers["r-gpt"]
+	if item.Provider != "r-gpt" || item.Model != p.Model || item.Effort != p.Effort || item.Config != fingerprint(p) || item.Calls != 2 {
+		t.Fatalf("review calibration lost its frozen cohort: %+v", item)
+	}
+}
+
 // ---- receipts bind their evidence (acceptance test 7) ----
 
 func TestReceiptsAreInvalidatedByAnyChangeOfTheirEvidence(t *testing.T) {
@@ -2121,5 +2136,18 @@ func TestReplacedReviewReceiptCannotBeConsumed(t *testing.T) {
 	hs, _ := budget.HoldsFor(next.Attempt)
 	if len(hs) != 1 || hs[0].State != "reserved" {
 		t.Fatalf("consumed review funding released before launch recording: %+v", hs)
+	}
+}
+
+func TestReviewRefusesUntrackedNestedRepository(t *testing.T) {
+	w := newWorld(t)
+	nested := filepath.Join(w.c.Worktree, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initReviewGit(t, nested)
+	w.profile = func(tp *TaskProfile) { tp.Phase = "review" }
+	if _, err := PrepareAuto(context.Background(), w.in()); ErrCode(err) != CodeClassification {
+		t.Fatalf("nested paths cannot be silently omitted from review classification: %v", err)
 	}
 }

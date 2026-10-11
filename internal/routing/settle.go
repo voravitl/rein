@@ -26,7 +26,7 @@ var settleKinds = []struct {
 }{
 	{"funding", "worker", []string{"worker", "repair", "fallback"}},
 	{"review_funding", "review", []string{"review"}},
-	{"calibration", "calibration", []string{"calibration"}},
+	{"calibration", "calibration", []string{"calibration", "review"}},
 }
 
 // usageComponents are the charges that count as the attempt's own usage in a settled hold's Used.
@@ -187,6 +187,10 @@ func ReserveCalibration(in CalibrationInput) (*budget.Hold, error) {
 	if why := billingProblem(p); why != "" {
 		return nil, refuse(CodeSelectionPolicy, "provider %s: %s", in.Provider, why)
 	}
+	reviewer := false
+	for _, chain := range cfg.ReviewChains {
+		reviewer = reviewer || slices.Contains(chain, in.Provider)
+	}
 	if in.Calls < 1 {
 		in.Calls = 1
 	}
@@ -195,8 +199,12 @@ func ReserveCalibration(in CalibrationInput) (*budget.Hold, error) {
 		prof = &in.Contract.Profile
 	}
 	cal := sel.Calibration
+	item := budget.Item{Pool: p.Billing.Pool, Unit: p.Billing.Unit, Amount: in.Amount, Calls: in.Calls, Kind: "calibration"}
+	if reviewer && slices.Contains(reviewLaunchable, p.Agent) {
+		item.Provider, item.Model, item.Effort, item.Config = in.Provider, p.Model, p.Effort, fingerprint(p)
+	}
 	hold, err := budget.Reserve(in.MarkerPath, prof, budget.ReserveRequest{Run: in.Run, Task: in.Contract.Name, Attempt: newID("cal"),
-		Items:       []budget.Item{{Pool: p.Billing.Pool, Unit: p.Billing.Unit, Amount: in.Amount, Calls: in.Calls, Kind: "calibration"}},
+		Items:       []budget.Item{item},
 		Calibration: &budget.CalibrationCaps{MaxCalls: cal.MaxCalls, PoolCaps: cal.PoolCaps, MaxCashUSD: *cal.MaxCashUSD}})
 	var short *budget.ErrInsufficient
 	if errors.As(err, &short) {

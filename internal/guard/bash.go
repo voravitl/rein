@@ -317,6 +317,22 @@ func (x *ctx) call(args []string) string {
 		// skip the wrapper's options (and the values they take), VAR=value pairs and a duration, then judge the rest
 		vo := valueOpts[name]
 		i, sawDuration := 0, false
+		envDir := ""
+		envDirSet := false
+		withEnvDir := func(f func() string) string {
+			if name != "env" || !envDirSet {
+				return f()
+			}
+			oldCwd, oldUnknown := x.cwd, x.cwdUnknown
+			if strings.Contains(envDir, "$?") || (x.cwdUnknown && !filepath.IsAbs(envDir) && !strings.HasPrefix(envDir, "~/")) {
+				x.cwdUnknown = true
+			} else {
+				x.cwd = x.abs(envDir)
+				x.cwdUnknown = false
+			}
+			defer func() { x.cwd, x.cwdUnknown = oldCwd, oldUnknown }()
+			return f()
+		}
 	opts:
 		for i < len(rest) {
 			a := rest[i]
@@ -326,11 +342,35 @@ func (x *ctx) call(args []string) string {
 					if i+1 >= len(rest) {
 						return "env split-string needs a literal argument to check"
 					}
-					return x.envSplit(rest[i+1], rest[i+2:])
+					if envDirSet && (envSplitHasChdir(rest[i+1]) || envSplitArgsHaveChdir(rest[i+2:])) {
+						return "env split-string cannot combine with another chdir; use explicit env arguments"
+					}
+					return withEnvDir(func() string { return x.envSplit(rest[i+1], rest[i+2:]) })
 				case strings.HasPrefix(a, "--split-string="):
-					return x.envSplit(strings.TrimPrefix(a, "--split-string="), rest[i+1:])
+					payload := strings.TrimPrefix(a, "--split-string=")
+					if envDirSet && (envSplitHasChdir(payload) || envSplitArgsHaveChdir(rest[i+1:])) {
+						return "env split-string cannot combine with another chdir; use explicit env arguments"
+					}
+					return withEnvDir(func() string { return x.envSplit(payload, rest[i+1:]) })
 				case strings.HasPrefix(a, "-S"):
-					return x.envSplit(a[2:], rest[i+1:])
+					if envDirSet && (envSplitHasChdir(a[2:]) || envSplitArgsHaveChdir(rest[i+1:])) {
+						return "env split-string cannot combine with another chdir; use explicit env arguments"
+					}
+					return withEnvDir(func() string { return x.envSplit(a[2:], rest[i+1:]) })
+				case (a == "-C" || a == "--chdir") && i+1 < len(rest):
+					envDir, envDirSet = rest[i+1], true
+					i += 2
+					continue
+				case strings.HasPrefix(a, "--chdir="):
+					envDir, envDirSet = strings.TrimPrefix(a, "--chdir="), true
+					i++
+					continue
+				case strings.HasPrefix(a, "-C") && len(a) > 2:
+					envDir, envDirSet = a[2:], true
+					i++
+					continue
+				case a == "-C" || a == "--chdir":
+					return "env chdir needs a directory to check"
 				}
 				take, why := x.coordEnvOption(rest, i)
 				if why != "" {
@@ -371,7 +411,7 @@ func (x *ctx) call(args []string) string {
 			break opts // first positional: the wrapped command starts here
 		}
 		if i < len(rest) {
-			return x.call(rest[i:])
+			return withEnvDir(func() string { return x.call(rest[i:]) })
 		}
 	case name == "bash" || name == "sh" || name == "zsh" || name == "dash" || name == "ksh":
 		return x.shell(rest)
@@ -482,6 +522,19 @@ func (x *ctx) envSplit(payload string, trailing []string) string {
 	x.deep++
 	defer func() { x.deep-- }()
 	return x.call(args)
+}
+
+func envSplitHasChdir(payload string) bool {
+	return envSplitArgsHaveChdir(strings.Fields(payload))
+}
+
+func envSplitArgsHaveChdir(args []string) bool {
+	for _, arg := range args {
+		if arg == "-C" || arg == "--chdir" || strings.HasPrefix(arg, "-C") && len(arg) > 2 || strings.HasPrefix(arg, "--chdir=") {
+			return true
+		}
+	}
+	return false
 }
 
 var numberish = regexp.MustCompile(`^\d+(\.\d+)?[smhd]?$`)

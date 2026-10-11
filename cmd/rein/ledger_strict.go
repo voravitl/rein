@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/voravitl/rein/internal/budget"
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/ledger"
 	"github.com/voravitl/rein/internal/providers"
@@ -108,8 +109,40 @@ func cmdLedgerCharge(args []string) int {
 		}
 	} else {
 		if *component == "review" {
-			fmt.Fprintln(os.Stderr, "[ledger] a review charge needs a known reviewer launch")
-			return 2
+			if *amount <= 0 {
+				fmt.Fprintln(os.Stderr, "[ledger] a calibration review charge must be measured and greater than zero")
+				return 2
+			}
+			holds, err := budget.HoldsFor(*attempt)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "[ledger]", err)
+				return 2
+			}
+			matched := false
+			for _, h := range holds {
+				if h.State != "reserved" || (*runID != "" && *runID != h.Run) {
+					continue
+				}
+				for _, it := range h.Items {
+					if it.Kind != "calibration" || it.Provider != *provider || it.Model != *model || it.Pool != *pool || it.Unit != *unit || *amount > it.Amount || it.Config == "" {
+						continue
+					}
+					if matched {
+						fmt.Fprintln(os.Stderr, "[ledger] calibration attempt has ambiguous reviewer reservations")
+						return 2
+					}
+					matched = true
+					row.Run, row.Task, row.Effort, row.Config = h.Run, h.Task, it.Effort, it.Config
+				}
+			}
+			if !matched {
+				fmt.Fprintln(os.Stderr, "[ledger] review charge needs a matching outstanding reviewer calibration hold")
+				return 2
+			}
+			row.ChargeID = "calibration-review:" + *attempt
+			row.Source = "measured"
+			row.Notes = note
+			return save(row)
 		}
 		row.Run = *runID
 	}
