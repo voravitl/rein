@@ -183,16 +183,7 @@ func Check(c *Config, names []string, timeout time.Duration) map[string]Result {
 		wg.Add(1)
 		go func(n string, p Provider) {
 			defer wg.Done()
-			r := probe(context.Background(), n, p, c.QuotaSignals[p.Agent], timeout)
-			if r.State == "down" && strings.HasPrefix(r.Detail, "timeout") {
-				// one slow answer must not drop a working provider from the chain: retry a timeout once
-				r2 := probe(context.Background(), n, p, c.QuotaSignals[p.Agent], timeout)
-				r2.Seconds += r.Seconds
-				if r2.State == "down" && strings.HasPrefix(r2.Detail, "timeout") {
-					r2.Detail += " (twice)"
-				}
-				r = r2
-			}
+			r := probeWithRetry(context.Background(), n, p, c.QuotaSignals[p.Agent], timeout)
 			mu.Lock()
 			out[n] = r
 			mu.Unlock()
@@ -281,4 +272,32 @@ func Probe(c *Config, name string, timeout time.Duration) Result {
 		return Result{Name: name, State: "down", Detail: "unknown provider"}
 	}
 	return probe(context.Background(), name, p, c.QuotaSignals[p.Agent], timeout)
+}
+
+// ProbeWithRetry probes one provider and retries a timeout once, so one slow
+// answer does not drop a working provider from an ordered chain. It is the
+// single-shot counterpart of Check's parallel retry: same trigger (a "down"
+// whose detail starts with "timeout"), same single retry, same "(twice)"
+// marker and the same accumulated Seconds.
+func ProbeWithRetry(c *Config, name string, timeout time.Duration) Result {
+	p, ok := c.Providers[name]
+	if !ok {
+		return Result{Name: name, State: "down", Detail: "unknown provider"}
+	}
+	return probeWithRetry(context.Background(), name, p, c.QuotaSignals[p.Agent], timeout)
+}
+
+// probeWithRetry runs one probe and retries a timeout once.
+func probeWithRetry(ctx context.Context, name string, p Provider, signals []string, timeout time.Duration) Result {
+	r := probe(ctx, name, p, signals, timeout)
+	if r.State == "down" && strings.HasPrefix(r.Detail, "timeout") {
+		// one slow answer must not drop a working provider from the chain: retry a timeout once
+		r2 := probe(ctx, name, p, signals, timeout)
+		r2.Seconds += r.Seconds
+		if r2.State == "down" && strings.HasPrefix(r2.Detail, "timeout") {
+			r2.Detail += " (twice)"
+		}
+		r = r2
+	}
+	return r
 }

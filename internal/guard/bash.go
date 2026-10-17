@@ -77,6 +77,8 @@ var textOnly = map[string]bool{"git": true, "echo": true, "printf": true, "grep"
 
 // CheckBash returns a non-empty reason when the command must be denied.
 func CheckBash(cmd string, c *contract.Contract, top, cwd string) string {
+	top = contract.Real(top)
+	cwd = contract.Real(cwd)
 	x := &ctx{c: c, top: top, cwd: cwd, vars: map[string]string{}, ports: portRx(c.Profile.ProtectPorts), pipeRHS: map[*syntax.Stmt]bool{}}
 	if h, err := os.UserHomeDir(); err == nil {
 		x.vars["HOME"] = h

@@ -7,7 +7,18 @@ NOISE = ("heartbeat", "status")
 STATUS_LOG = os.path.join(os.environ.get("PIPELINE_LOGDIR", os.path.expanduser("~/.cache/worktree-pipeline/logs")), "orca-status.log")
 os.makedirs(os.path.dirname(STATUS_LOG), exist_ok=True)
 def check(*args):
-    out = subprocess.run(["orca", "orchestration", "check", "--run", run, *args, "--json"], capture_output=True, text=True).stdout
+    # The Rein wrapper holds the shared legacy lock through check/ACK; schema 2 refuses this waiter.
+    repo = os.environ.get("ORCA_REPO_DIR", os.getcwd())
+    try:
+        result = subprocess.run([os.environ.get("REIN", "rein"), "run", "controller-exec", repo,
+                                 "--run", run, "--", *args], capture_output=True, text=True, timeout=65)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print("controller check failed:", exc, file=sys.stderr)
+        sys.exit(1)
+    if result.returncode:
+        print("controller check failed:", result.stderr[-1500:], file=sys.stderr)
+        sys.exit(1)
+    out = result.stdout
     try: return json.loads(out)["result"]
     except Exception: return {"raw": out[-1500:]}
 while time.time() < end:

@@ -39,7 +39,7 @@ func attemptRan(rows []ledger.Row, attempt string) bool {
 }
 
 // SettleAttempt closes the reservations still held for an attempt once its work and its charges are recorded, and ends the
-// task lease an Orca-dispatched worker kept. It refuses while the attempt's worker is still running.
+// local task lease. Remote workers and uncertain handoffs remain fenced without independent termination proof.
 //
 // Per pool: the probe is charged at its declared bound (its actual usage is unknown). A worker's own funding, a review's
 // funding or a calibration call is released beyond the charges the ledger holds when a measured, non-zero charge of that kind
@@ -80,11 +80,11 @@ func SettleAttempt(attempt string) ([]budget.Hold, error) {
 	}
 	var out []budget.Hold
 	for _, h := range holds {
-		if h.State != "reserved" {
-			continue
-		}
 		if err := EndLease(h.Task, attempt); err != nil {
 			return out, err
+		}
+		if h.State != "reserved" {
+			continue
 		}
 		unit, kinds := map[string]string{}, map[string]map[string]float64{}
 		for _, it := range h.Items {

@@ -25,12 +25,33 @@ EFFORT=${ADVISE_EFFORT:-}
 [ "$PROVIDER" != kiro ] || [ -z "$EFFORT" ] || { echo "[advise] kiro has no effort setting; leave ADVISE_EFFORT empty"; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"; RULES="$HERE/../templates/advisor-rules.md"
 # Pipeline roles (templates/roles: blast-radius, claim-auditor) first, then OMC agent prompts.
+ROLE_SOURCE=pipeline
 ROLEFILE="$HERE/../templates/roles/$ROLE.md"
-[ -f "$ROLEFILE" ] || ROLEFILE="$(npm root -g 2>/dev/null)/oh-my-claude-sisyphus/agents/$ROLE.md"
+if [ ! -f "$ROLEFILE" ]; then
+  ROLE_SOURCE=omc
+  ROLEFILE="$(npm root -g 2>/dev/null)/oh-my-claude-sisyphus/agents/$ROLE.md"
+fi
 [ -f "$ROLEFILE" ] || { echo "[advise] role '$ROLE' not found (templates/roles or OMC agents)"; exit 2; }
 [ -d "$DIR" ] && [ -s "$TASK" ] || { echo "[advise] need an existing dir and a non-empty task file"; exit 2; }
 ROLETEXT=$(awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {f=0; next} !f' "$ROLEFILE")   # drop YAML frontmatter
 [ -n "$ROLETEXT" ] || { echo "[advise] role file $ROLEFILE is empty or unreadable"; exit 2; }
+# Pin the loaded text, and the package that supplied this role rather than another omc on PATH.
+ROLEMETA=$(ROLETEXT="$ROLETEXT" python3 - "$ROLE_SOURCE" "$ROLEFILE" <<'PYROLE'
+import hashlib, json, os, pathlib, sys
+try:
+    version = "unknown"
+    if sys.argv[1] == "omc":
+        package = pathlib.Path(sys.argv[2]).resolve().parent.parent / "package.json"
+        version = json.loads(package.read_text())["version"]
+        if not isinstance(version, str) or not version or any(c.isspace() for c in version):
+            raise ValueError("invalid package version")
+    print(version, hashlib.sha256(os.environ["ROLETEXT"].encode()).hexdigest())
+except (OSError, ValueError, KeyError, TypeError) as error:
+    sys.exit("[advise] cannot pin role version: " + str(error))
+PYROLE
+) || exit 2
+OMC_VERSION=${ROLEMETA%% *}; ROLE_DIGEST=${ROLEMETA#* }
+
 RULETEXT=$(DIR="$DIR" python3 -c 'import os,sys;print(open(sys.argv[1]).read().replace("<repo absolute path>",os.environ["DIR"]))' "$RULES")
 # Project pack addendum (protected containers, ports, DB of this project): $PIPELINE_PACK/advisor-rules.md
 [ -n "$RULETEXT" ] || { echo "[advise] could not read $RULES (python3 missing?); refusing to call an advisor without rules"; exit 2; }
@@ -63,9 +84,14 @@ elif [ "$PROVIDER" = claude ]; then
   [ "$RC" -ne 0 ] || cp "$LOG" "$OUT"
 else
   # kiro prints the answer on stdout; keep the raw stream in the log and the cleaned answer in $OUT.
+  # The log carries tool-status preamble lines (`[tool] ...`, `[denied] ...`)
+  # before the markdown answer; the answer itself never uses those prefixes.
+  # Older kiro-cli echoed the prompt with `> ` lines — no current output has
+  # any, so the `> ` gate is gone: with no marker, everything that is not
+  # preamble IS the answer.
   (cd "$DIR" && timeout "${ADVISE_TIMEOUT:-1500}" kiro-cli chat --no-interactive --model "$MODEL" --trust-tools=read,grep,glob "$PROMPT") </dev/null >"$LOG" 2>&1
   RC=$?
-  perl -pe 's/\e\[[0-9;?]*[a-zA-Z]//g' "$LOG" | awk '/^> /{p=1} p' | grep -v 'Credits:' > "$OUT"
+  perl -pe 's/\e\[[0-9;?]*[a-zA-Z]//g' "$LOG" | grep -v '^\[tool\]' | grep -v '^\[denied\]' | grep -v 'Credits:' | awk 'NF{p=1} p' > "$OUT"
 fi
 # Record the call in the model ledger (tokens come from codex's "tokens used" footer; missing = unknown).
 TOK=""; CRED=""
@@ -75,7 +101,7 @@ elif [ "$PROVIDER" = kiro ]; then
   CRED=$(sed -n 's/.*Credits: *\([0-9.]*\).*/\1/p' "$LOG" | tail -1)
 fi
 MIN=$(awk -v s="$T0" -v e="$(date +%s)" 'BEGIN{printf "%.1f", (e-s)/60}')
-"${REIN:-rein}" ledger call --role "$ROLE" --model "$MODEL" --purpose "${ADVISE_PURPOSE:-}" ${TOK:+--tokens "$TOK"} ${CRED:+--credits "$CRED"} --provider "$PROVIDER" --minutes "$MIN" --run "$RUN" --task "$TASK_ID" \
+"${REIN:-rein}" ledger call --role "$ROLE" --role-source "$ROLE_SOURCE" --omc-version "$OMC_VERSION" --role-digest "$ROLE_DIGEST" --model "$MODEL" --purpose "${ADVISE_PURPOSE:-}" ${TOK:+--tokens "$TOK"} ${CRED:+--credits "$CRED"} --provider "$PROVIDER" --minutes "$MIN" --run "$RUN" --task "$TASK_ID" \
   $([ "$RC" -eq 0 ] && [ -s "$OUT" ] || echo --failed) >/dev/null 2>&1 || {
   echo "[advise] ledger write failed after advisor call; output retained at $OUT, retry recording before another call"; exit 1;
 }

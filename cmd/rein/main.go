@@ -36,6 +36,9 @@ var version = "dev" // set with -ldflags "-X main.version=..."
 
 func main() {
 	if len(os.Args) < 2 {
+		if fi, err := os.Stdin.Stat(); err == nil && (fi.Mode()&os.ModeCharDevice) == 0 {
+			os.Exit(cmdHook(nil))
+		}
 		usage()
 		os.Exit(2)
 	}
@@ -72,6 +75,14 @@ func main() {
 		os.Exit(cmdAdvise(os.Args[2:]))
 	case "e2e":
 		os.Exit(cmdE2E(os.Args[2:]))
+	case "orca":
+		os.Exit(cmdOrca(os.Args[2:]))
+	case "supervisor":
+		os.Exit(cmdSupervisor(os.Args[2:]))
+	case "checkpoint":
+		os.Exit(cmdCheckpoint(os.Args[2:]))
+	case "hunter":
+		os.Exit(cmdHunter(os.Args[2:]))
 	case "version", "--version", "-v":
 		fmt.Println("rein", version)
 	default:
@@ -81,9 +92,13 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|advise|e2e|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|advise|orca|checkpoint|hunter|supervisor|e2e|version> [args]
+  rein supervisor validate|run --plan FILE             bounded authorized monitor (no auto dispatch/settle)
+  rein checkpoint finalize|verify|restore              durable local snapshot and restore into a new directory
+  rein hunter report|get|list|reproduce                 report-only findings and isolated local reproduction
+  rein orca launch|wait|drain|close|tidy|census              native Orca orchestration, worker management and census verify
   rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
-  rein hooks install <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
+  rein hooks install|uninstall <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
   rein contract show|path <name>
   rein spec check <spec> <contract> [--standing PATH] [--repo PATH]    exits 0 (pass), 1 (lint failures), 2 (file/arg error)
@@ -140,13 +155,17 @@ func cmdHook(args []string) (code int) {
 }
 
 func cmdHooks(args []string) int {
-	if len(args) < 2 || args[0] != "install" || strings.HasPrefix(args[1], "-") {
+	if len(args) < 2 || (args[0] != "install" && args[0] != "uninstall") || strings.HasPrefix(args[1], "-") {
 		usage()
 		return 2
 	}
-	fs := flag.NewFlagSet("hooks install", flag.ContinueOnError)
-	vendors := fs.String("vendors", strings.Join(hooks.Default, ","), "comma list of "+strings.Join(hooks.All, "|"))
-	if fs.Parse(args[2:]) != nil {
+	fs := flag.NewFlagSet("hooks "+args[0], flag.ContinueOnError)
+	defaults := hooks.Default
+	if args[0] == "uninstall" {
+		defaults = hooks.All
+	}
+	vendors := fs.String("vendors", strings.Join(defaults, ","), "comma list of "+strings.Join(hooks.All, "|"))
+	if fs.Parse(args[2:]) != nil || len(fs.Args()) != 0 {
 		return 2
 	}
 	c, err := contract.Load(args[1])
@@ -154,7 +173,10 @@ func cmdHooks(args []string) int {
 		fmt.Fprintln(os.Stderr, "[hooks]", err)
 		return 2
 	}
-	bin, warn, err := hooks.BinaryPath()
+	bin, warn := "", ""
+	if args[0] == "install" {
+		bin, warn, err = hooks.BinaryPath()
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[hooks] cannot resolve the rein binary:", err)
 		return 2
@@ -168,7 +190,17 @@ func cmdHooks(args []string) int {
 			list = append(list, v)
 		}
 	}
-	res, saved, err := hooks.Install(c, bin, list)
+	if len(list) == 0 {
+		fmt.Fprintln(os.Stderr, "[hooks] --vendors must not be empty")
+		return 2
+	}
+	var res []hooks.Result
+	var saved []string
+	if args[0] == "uninstall" {
+		res, saved, err = hooks.Uninstall(c, list)
+	} else {
+		res, saved, err = hooks.Install(c, bin, list)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[hooks]", err)
 		return 2
@@ -180,7 +212,15 @@ func cmdHooks(args []string) int {
 			code = 2
 			continue
 		}
+		if args[0] == "uninstall" {
+			fmt.Printf("[hooks] %s: removed %s\n", r.Vendor, strings.Join(r.Files, ", "))
+			continue
+		}
 		fmt.Printf("[hooks] %s: wrote %s (kept out of git status via info/exclude)\n        launch: %s\n", r.Vendor, strings.Join(r.Files, ", "), r.Launch)
+	}
+	if code == 0 && args[0] == "uninstall" {
+		fmt.Printf("[hooks] uninstall recorded in %s; remaining vendors: %s\n", strings.Join(saved, " and "), strings.Join(c.HooksInstalled, ","))
+		return code
 	}
 	if code == 0 {
 		fmt.Printf("[hooks] recorded in the contract (%s): %s. `rein drift %s` now reports GUARD_INACTIVE if no hook call of this install shows up in %s\n",
@@ -445,6 +485,9 @@ func cmdLedger(args []string) int {
 		fs := flag.NewFlagSet("ledger call", flag.ContinueOnError)
 		fs.StringVar(&r.Task, "task", "", "contract task attribution")
 		fs.StringVar(&r.Role, "role", "", "")
+		fs.StringVar(&r.RoleSource, "role-source", "", "pipeline|omc")
+		fs.StringVar(&r.OMCVersion, "omc-version", "", "role package version; unknown for pipeline roles")
+		fs.StringVar(&r.RoleDigest, "role-digest", "", "SHA256 of the loaded role prompt")
 		fs.StringVar(&r.Provider, "provider", "codex", "")
 		fs.StringVar(&r.Model, "model", "", "")
 		fs.StringVar(&r.Purpose, "purpose", "", "")

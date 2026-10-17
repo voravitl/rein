@@ -1,4 +1,4 @@
-# OMC toolkit for the pipeline (OMC 5.6.2, verified 2026-10-08)
+# OMC toolkit for the pipeline (OMC 5.7.1, verified 2026-10-08)
 
 OMC adds cheap helpers around the Orca loop. Use each one at the step named below; none of them replaces a gate, a reviewer or the user's approval. Check once per run that `omc --version` (the npm CLI `oh-my-claude-sisyphus`) matches the installed OMC plugin version.
 

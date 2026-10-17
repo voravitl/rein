@@ -53,6 +53,9 @@ type Row struct {
 	Approx         bool        `json:"approx,omitempty"`
 	Notes          string      `json:"notes,omitempty"`
 	// advisor calls
+	RoleSource string `json:"role_source,omitempty"`
+	OMCVersion string `json:"omc_version,omitempty"`
+	RoleDigest string `json:"role_digest,omitempty"`
 	Role       string `json:"role,omitempty"`
 	Provider   string `json:"provider,omitempty"`
 	Model      string `json:"model,omitempty"`
@@ -129,8 +132,14 @@ func contains(s []string, v string) bool {
 	return false
 }
 
+var syncLedgerFile = (*os.File).Sync
+
 func Append(r Row) error {
-	unlock, err := run.LockFile(Path()+".lock", 10*time.Second)
+	path, err := filepath.Abs(Path())
+	if err != nil {
+		return err
+	}
+	unlock, err := run.LockFile(path+".lock", 10*time.Second)
 	if err != nil {
 		return err
 	}
@@ -150,16 +159,41 @@ func Append(r Row) error {
 	if err != nil {
 		return fmt.Errorf("not recorded: %w", err)
 	}
-	if err := os.MkdirAll(filepath.Dir(Path()), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(Path(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	_, err = f.Write(append(b, '\n'))
-	return err
+	if _, err := f.Write(append(b, '\n')); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if err := syncAndCloseLedger(f); err != nil {
+		return err
+	}
+	return syncLedgerDirectories(path)
+}
+
+func syncLedgerDirectories(path string) error {
+	// LockFile may create several parents; persist their entries before releasing a budget hold.
+	for dir := filepath.Dir(path); ; dir = filepath.Dir(dir) {
+		d, err := os.Open(dir)
+		if err != nil {
+			return err
+		}
+		if err := syncAndCloseLedger(d); err != nil {
+			return err
+		}
+		if filepath.Dir(dir) == dir {
+			return nil
+		}
+	}
+}
+
+func syncAndCloseLedger(f *os.File) error {
+	syncErr := syncLedgerFile(f)
+	return errors.Join(syncErr, f.Close())
 }
 
 func Load(since string) ([]Row, error) {
@@ -210,6 +244,17 @@ func load(since string, strict bool) ([]Row, error) {
 	}
 	if strict {
 		if err := validateCharges(costRows); err != nil {
+			return nil, err
+		}
+		// A failed Append sync can leave readable charges; do not settle holds against them until durable.
+		if err := syncAndCloseLedger(f); err != nil {
+			return nil, err
+		}
+		path, err := filepath.Abs(Path())
+		if err != nil {
+			return nil, err
+		}
+		if err := syncLedgerDirectories(path); err != nil {
 			return nil, err
 		}
 	}

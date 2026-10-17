@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,12 +18,18 @@ import (
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/hooks"
 	"github.com/voravitl/rein/internal/ledger"
+	"github.com/voravitl/rein/internal/providers"
 	"github.com/voravitl/rein/internal/routing"
 	"github.com/voravitl/rein/internal/run"
 )
 
+var stopGraphQuotaProcess = stopGraphProcess
+
 // cmdRouteLaunch runs an argv, never shell text, after validating its prepared routing decision.
-func cmdRouteLaunch(args []string) int {
+func cmdRouteLaunch(args []string) int { return routeLaunch(context.Background(), args, nil, nil, nil) }
+
+// Only an in-process controller capability may bypass the legacy ownership gate.
+func routeLaunch(ctx context.Context, args []string, controller *run.Controller, result *graphExecution, expected *routing.Decision) int {
 	for _, name := range []string{"--task", "--run"} {
 		if _, err := launchFlag(args, name); err != nil {
 			fmt.Fprintln(os.Stderr, "[route]", err)
@@ -38,13 +48,40 @@ func cmdRouteLaunch(args []string) int {
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
 	}
+	if controller != nil {
+		if err := graphLaunchAuthority(controller, c, *runID); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+	}
+	// A supervised run has one controller; legacy launch must stop before consuming a receipt.
+	loc, found := run.Find(c.Worktree)
+	var locateErr error
+	if !found {
+		loc, locateErr = run.Locate(c.Worktree)
+	}
+	if locateErr == nil && controller == nil {
+		unlock, err := run.AcquireLegacyController(loc.Top, *runID)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		defer unlock()
+	}
 	argv := fs.Args()
+	if controller != nil && isOrcaLaunch(argv) {
+		fmt.Fprintln(os.Stderr, "[route] supervised graph requires a local process group; remote worker death cannot be proven")
+		return 1
+	}
 	agent, model, err := launchIdentity(argv, c, *runID)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
 	}
 	d, err := routing.Validate(c, *runID, agent, model)
+	if err == nil && controller != nil && (expected == nil || d.Attempt != expected.Attempt || d.DecisionID != expected.DecisionID || d.Hold != expected.Hold) {
+		err = fmt.Errorf("supervised receipt changed after graph preparation")
+	}
 	if err == nil && !strings.HasPrefix(d.Chain, "worker:") {
 		err = fmt.Errorf("implementation launch requires a worker route; use rein advise for read-only review")
 	}
@@ -75,7 +112,9 @@ func cmdRouteLaunch(args []string) int {
 			fmt.Fprintln(os.Stderr, "[route]", err)
 			return 1
 		}
-		defer lease.Release()
+		if controller == nil {
+			defer lease.Release()
+		}
 	}
 	if !isOrcaLaunch(argv) && agent == "codex" {
 		bin, binErr := os.Executable()
@@ -109,10 +148,57 @@ func cmdRouteLaunch(args []string) int {
 		fmt.Fprintln(os.Stderr, "[route] cannot record launch:", err)
 		return 1
 	}
-	cmd := exec.Command(argv[0], argv[1:]...)
+	if controller != nil {
+		if err := graphLaunchAuthority(controller, c, *runID); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+	}
+	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = c.Worktree
 	cmd.Env = append(os.Environ(), "ADVISE_RUN="+*runID, "ADVISE_TASK="+c.Name)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	var captured dispatchReceiptBuffer
+	var quota *graphQuotaWriter
+	if controller != nil {
+		cfg, err := providers.Load(d.ConfigPath)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		provider, exists := cfg.Providers[d.Provider]
+		if !exists {
+			return 1
+		}
+		quota = &graphQuotaWriter{capture: &captured, matched: make(chan string, 1)}
+		for _, signal := range cfg.QuotaSignals[provider.Agent] {
+			signal = strings.ToLower(signal)
+			if strings.TrimSpace(signal) == "" {
+				continue
+			}
+			if len(signal) > 4096 || len(quota.signals) >= 64 {
+				fmt.Fprintln(os.Stderr, "quota signal configuration exceeds bounds")
+				return 1
+			}
+			quota.signals = append(quota.signals, signal)
+		}
+		cmd.Env, err = graphHandoffEnv(cmd.Env, result)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if err := configureGraphProcess(cmd); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		cmd.Stdin = nil
+		cmd.Stdout = quota
+		cmd.Stderr = quota
+	}
+	var workerReceipt dispatchReceiptBuffer
+	if isOrcaLaunch(argv) {
+		cmd.Stdout = io.MultiWriter(os.Stdout, &workerReceipt)
+	}
 	// Orca can dispatch a worker before returning an acknowledgement, including a failed one.
 	if lease != nil && isOrcaLaunch(argv) {
 		if err := lease.MarkDispatchPending(); err != nil {
@@ -123,14 +209,59 @@ func cmdRouteLaunch(args []string) int {
 	started := time.Now()
 	err = cmd.Start()
 	if err == nil && lease != nil {
-		if lerr := lease.SetChild(cmd.Process.Pid); lerr != nil { // an unrecorded provider process could hide a writer after a crash
-			_ = cmd.Process.Kill()
+		setChild := lease.SetChild
+		if controller != nil {
+			setChild = lease.SetChildGroup
+		}
+		if lerr := setChild(cmd.Process.Pid); lerr != nil { // an unrecorded provider process could hide a writer after a crash
+			if controller != nil {
+				stopGraphProcess(cmd)
+			} else {
+				_ = cmd.Process.Kill()
+			}
 			_ = cmd.Wait()
 			err = fmt.Errorf("cannot record the provider process in the task lease: %w", lerr)
 		}
 	}
+	quotaSignal := ""
+	stopRecorded := true
 	if err == nil {
-		err = cmd.Wait()
+		if quota == nil {
+			err = cmd.Wait()
+		} else {
+			waited := make(chan error, 1)
+			go func() { waited <- cmd.Wait() }()
+			select {
+			case err = <-waited:
+				select {
+				case quotaSignal = <-quota.matched:
+				default:
+				}
+			case quotaSignal = <-quota.matched:
+				stopRow := row
+				stopRow.Kind = "routing_stop_requested"
+				stopNote, _ := json.Marshal(map[string]any{"signal": quotaSignal, "pgid": cmd.Process.Pid, "child_start": lease.ChildStart})
+				stopRow.Notes = string(stopNote)
+				if lerr := ledger.Append(stopRow); lerr != nil {
+					stopRecorded = false
+					fmt.Fprintln(os.Stderr, "[route] cannot persist quota stop intent:", lerr)
+				}
+				childStart, identityErr := run.ProcStart(cmd.Process.Pid)
+				if errors.Is(identityErr, run.ErrNoProc) {
+					err = <-waited
+					break
+				}
+				if identityErr != nil || childStart != lease.ChildStart {
+					fmt.Fprintln(os.Stderr, "[route] quota stop process identity unknown")
+					return 1
+				}
+				if stopErr := stopGraphQuotaProcess(cmd); stopErr != nil {
+					fmt.Fprintln(os.Stderr, "[route] quota stop failed:", stopErr)
+					return 1
+				}
+				err = <-waited
+			}
+		}
 	}
 	code := 0
 	if err != nil {
@@ -147,7 +278,13 @@ func cmdRouteLaunch(args []string) int {
 		// vouch for the worker's process. The task stays held until `rein route settle --attempt` ends it.
 		row.Minutes = nil
 		if lease != nil {
-			if err := lease.MarkDispatched(); err != nil {
+			var holdErr error
+			if taskID, dispatchID, ready := workerReceipt.identity(); code == 0 && ready {
+				holdErr = lease.MarkDispatchIdentity(taskID, dispatchID)
+			} else {
+				holdErr = lease.MarkDispatched()
+			}
+			if err := holdErr; err != nil {
 				fmt.Fprintln(os.Stderr, "[route] cannot hold the task for the dispatched worker:", err)
 				code = 1
 			}
@@ -156,6 +293,33 @@ func cmdRouteLaunch(args []string) int {
 	if err := ledger.Append(row); err != nil {
 		fmt.Fprintln(os.Stderr, "[route] cannot record provider exit:", err)
 		return 1
+	}
+	if controller != nil && result != nil {
+		if cmd.Process == nil || lease == nil || !stopRecorded {
+			return 1
+		}
+		if err := lease.CompleteLocal(); err != nil {
+			fmt.Fprintln(os.Stderr, "[route] local writer state unknown:", err)
+			return 1
+		}
+		if !captured.overflow {
+			result.QuotaSignal = quotaSignal
+		}
+		result.Run = *runID
+		result.Task = c.Name
+		result.Attempt = d.Attempt
+		result.Decision = d.DecisionID
+		result.Worktree = c.Worktree
+		result.Pool = d.Pool
+		result.PID = cmd.Process.Pid
+		result.PIDStart = lease.ChildStart
+		result.PIDStartUnknown = lease.ChildStartUnknown
+		result.ExitCode = code
+		result.Output = captured.String()
+		result.Provider = d.Provider
+		result.CompletedAt = time.Now().UTC()
+		result.Gone = true
+		result.Truncated = captured.overflow
 	}
 	return code
 }
@@ -353,4 +517,51 @@ func launchEffort(argv []string) (string, error) {
 		return cfgVal, nil
 	}
 	return flagVal, nil
+}
+
+// The full stdout still reaches the caller; oversized receipts retain the uncertain lease.
+type dispatchReceiptBuffer struct {
+	bytes.Buffer
+	overflow bool
+}
+
+func (b *dispatchReceiptBuffer) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := (1 << 20) - b.Len()
+	if len(p) > remaining {
+		b.overflow = true
+		p = p[:remaining]
+	}
+	_, _ = b.Buffer.Write(p)
+	return n, nil
+}
+
+func (b *dispatchReceiptBuffer) identity() (string, string, bool) {
+	if b.overflow {
+		return "", "", false
+	}
+	var receipt struct {
+		Error  json.RawMessage `json:"error"`
+		OK     bool            `json:"ok"`
+		Result struct {
+			State    string `json:"state"`
+			Task     string `json:"taskId"`
+			Dispatch string `json:"dispatchId"`
+			Effects  []struct {
+				Kind  string `json:"kind"`
+				Role  string `json:"role"`
+				ID    string `json:"id"`
+				State string `json:"state"`
+			} `json:"effects"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(b.Bytes(), &receipt) != nil || (len(receipt.Error) != 0 && string(bytes.TrimSpace(receipt.Error)) != "null") || !receipt.OK || receipt.Result.State != "ready" || strings.TrimSpace(receipt.Result.Task) == "" || strings.TrimSpace(receipt.Result.Dispatch) == "" {
+		return "", "", false
+	}
+	for _, effect := range receipt.Result.Effects {
+		if effect.Kind == "dispatch_input" && effect.Role == "agent" && effect.State == "accepted" && strings.TrimSpace(effect.ID) != "" {
+			return receipt.Result.Task, receipt.Result.Dispatch, true
+		}
+	}
+	return "", "", false
 }

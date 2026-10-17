@@ -17,6 +17,10 @@ var ErrLockBusy = errors.New("lock busy")
 // lock. It returns ErrLockBusy (wrapped; use errors.Is) when wait elapsed. unlock is idempotent. The lock file is never
 // removed: unlinking it would let two holders lock different inodes of the same path.
 func LockFile(path string, wait time.Duration) (unlock func(), err error) {
+	return lockFile(path, wait, false)
+}
+
+func lockFile(path string, wait time.Duration, shared bool) (unlock func(), err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
@@ -28,7 +32,13 @@ func LockFile(path string, wait time.Duration) (unlock func(), err error) {
 	// ponytail: polling try-lock, no queue or fairness (a waiter can lose every race and time out); the ceiling is ~10ms of
 	// wake-up latency per hand-off. Upgrade path: a blocking flock in a goroutine if holders ever get long.
 	for {
-		locked, err := lockFileExclusive(f)
+		var locked bool
+		var err error
+		if shared {
+			locked, err = lockFileShared(f)
+		} else {
+			locked, err = lockFileExclusive(f)
+		}
 		if err != nil {
 			f.Close()
 			return nil, fmt.Errorf("lock %s: %w", path, err)

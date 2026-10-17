@@ -25,8 +25,8 @@ Run `sh scripts/doctor.sh` in a clone (or `/rein:setup` after installing) to che
 | Tool | Why | Install | Tested |
 |---|---|---|---|
 | **Orca** app + `orca` CLI | runs, worktrees, workers in visible terminals, messages (`worker_done`, questions) | the Orca desktop app; its CLI must be on `PATH` | 1.4.219 |
-| **OMC plugin** (oh-my-claudecode) | MCP tools the coordinator uses: `notepad_write_priority` (run pointer), `session_search` (resume), `wiki_add` (run log) | `/plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode.git`, then `/plugin install oh-my-claudecode@omc` | 5.6.2 |
-| **OMC CLI** `omc` (npm `oh-my-claude-sisyphus`) | the agent prompts `advise.sh` uses as advisor roles (`critic`, `tracer`, `code-reviewer`, ...) from `$(npm root -g)/oh-my-claude-sisyphus/agents/` | `npm i -g oh-my-claude-sisyphus && omc setup` (Node.js + npm) | 5.6.2 |
+| **OMC plugin** (oh-my-claudecode) | MCP tools the coordinator uses: `notepad_write_priority` (run pointer), `session_search` (resume), `wiki_add` (run log) | `/plugin marketplace add https://github.com/Yeachan-Heo/oh-my-claudecode.git`, then `/plugin install oh-my-claudecode@omc` | 5.7.1 |
+| **OMC CLI** `omc` (npm `oh-my-claude-sisyphus`) | the agent prompts `advise.sh` uses as advisor roles (`critic`, `tracer`, `code-reviewer`, ...) from `$(npm root -g)/oh-my-claude-sisyphus/agents/` | `npm i -g oh-my-claude-sisyphus && omc setup` (Node.js + npm) | 5.7.1 |
 | python3 | waiter (`ocloop2.py`), `orca_cleanup.py`, `cleanup_worktrees.py`, `advise.sh` | system package | 3.12 |
 | bash, GNU `timeout` | `advise.sh`, `rebase_proof.sh`, `push_merge_pinned.sh` | macOS: `brew install coreutils`, and put `$(brew --prefix)/opt/coreutils/libexec/gnubin` on `PATH` if only `gtimeout` exists | bash 3.2, coreutils 9.11 |
 | perl | `advise.sh` with the kiro provider (strips ANSI codes) | system package | 5.34 |
@@ -247,3 +247,19 @@ hooks) and opencode's `execute` code-mode tool. agy treats any tool with a path-
 
 **Not verified:** Linux and Windows runs of any vendor hook; kiro and agy behaviour on a version other than the ones
 listed; whether codex honours `hooks.state` trust given through `CODEX_HOME` (not tried).
+
+
+## 9. Rein-only install/uninstall lifecycle
+
+For existing task contracts, use the task-scoped commands; installation resolves the executable and generates the actual vendor files inside that contract's worktree:
+
+```sh
+rein hooks install <task> --vendors codex,agy,kiro,opencode,claude
+rein hooks uninstall <task>  # all supported vendors, including stale metadata
+```
+
+Removal preserves other owners' settings, namespaces, sibling hooks and plugin files. It refuses ambiguous/modified artifacts, tracked files and symlink destinations. Repeated install/remove is supported; rerun install to obtain fresh Codex launch flags. An OpenCode plugin includes its own generated package metadata and script, both removed on uninstall.
+
+`scripts/install-harness.sh` handles separate native plugin registrations. Claude uses its native CLI and SessionStart binary bootstrap. AGY requires a runnable Rein binary on PATH before native registration. Codex/OpenCode/Kiro must use task-scoped hooks; a global alias to a task-bound artifact would apply the wrong contract to other projects. Native removal names only Rein and propagates errors; legacy symlink removal checks exact ownership. It does not delete foreign registrations or settings.
+
+Restart an already-running harness before treating a cached plugin or supplied launch flags as unloaded. Source/config removal on disk does not prove in-memory unload. Local lifecycle tests execute generated hooks and an OpenCode plugin callback in disposable repositories; this is separate from a full session on every vendor/version/OS.

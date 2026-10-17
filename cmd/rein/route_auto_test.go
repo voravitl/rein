@@ -97,6 +97,7 @@ func newE2E(t *testing.T, workerLaunch string) *e2eEnv {
 	if err := os.Mkdir(wt, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	gitIn(t, wt, "init", "-q", "-b", "main")
 	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "contracts"))
 	t.Setenv("PIPELINE_LEDGER", filepath.Join(root, "ledger.jsonl"))
 	t.Setenv("PIPELINE_PRICES", filepath.Join(root, "prices.json"))
@@ -533,6 +534,14 @@ func TestReconcileRefusesWhileTheTaskHasAWriter(t *testing.T) {
 	t.Setenv("PIPELINE_LEDGER", filepath.Join(root, "ledger.jsonl"))
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CLAUDE_PID", "")
+	gitIn(t, root, "init", "-q")
+	if err := os.MkdirAll(contract.IndexDir(), 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(contract.Contract{Name: "busy", Worktree: root, Allow: []string{"**"}, Scope: []string{"S1"}, ReportPath: filepath.Join(root, "report")})
+	if err := os.WriteFile(contract.PathOf("busy"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
 	h, err := budget.Reserve("", nil, budget.ReserveRequest{Run: "run", Task: "busy", Attempt: "at-1", Items: []budget.Item{{Pool: "p", Unit: "tokens", Amount: 1, Kind: "funding"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -574,7 +583,7 @@ func TestReconcileRefusesWhileTheTaskHasAWriter(t *testing.T) {
 }
 
 // worker-start returns once an Orca worker STARTED: the launcher cannot vouch for the worker afterwards, so the task stays held
-// until the attempt is settled, and the exit row claims no duration.
+// without independent termination proof, and the exit row claims no duration.
 func TestOrcaDispatchedWorkerHoldsTheTaskUntilSettle(t *testing.T) {
 	e := newE2E(t, "orca")
 	root, wt := e.root, e.wt
@@ -617,11 +626,24 @@ func TestOrcaDispatchedWorkerHoldsTheTaskUntilSettle(t *testing.T) {
 	if code := cmdRoute([]string{"reconcile", "--hold", holds[0].ID, "--reason", "test"}); code != 1 || routing.TaskBusy("task") == "" {
 		t.Errorf("reconcile under a dispatched worker: %d", code)
 	}
-	if _, code := capture(t, func() int { return cmdRoute([]string{"settle", "--attempt", res.Attempt}) }); code != 0 {
-		t.Fatalf("settle: %d", code)
+	leasePath := filepath.Join(contract.IndexDir(), "routes", "leases", "task.json")
+	before, err := os.ReadFile(leasePath)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if why := routing.TaskBusy("task"); why != "" {
-		t.Errorf("settling ends the attempt and frees the task: %q", why)
+	if _, code := capture(t, func() int { return cmdRoute([]string{"settle", "--attempt", res.Attempt}) }); code != 1 {
+		t.Fatalf("settlement without remote termination proof must refuse: %d", code)
+	}
+	if why := routing.TaskBusy("task"); why == "" {
+		t.Error("refused settlement erased the dispatched worker fence")
+	}
+	after, err := os.ReadFile(leasePath)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("refused settlement changed its lease: %v", err)
+	}
+	retained, err := budget.HoldsFor(res.Attempt)
+	if err != nil || len(retained) != 1 || retained[0].ID != holds[0].ID || retained[0].State != "reserved" {
+		t.Fatalf("refused settlement released its reservation: %+v, %v", retained, err)
 	}
 }
 

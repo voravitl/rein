@@ -291,7 +291,7 @@ func TestInstallRefusesSymlinkedDestinations(t *testing.T) {
 func TestMergeKeepsSiblingHooksAndMetadata(t *testing.T) {
 	root, wt, c := setup(t)
 	_ = os.MkdirAll(filepath.Join(wt, ".codex"), 0o755)
-	old := `{"hooks":{"PreToolUse":[{"matcher":"Bash","note":"mine","hooks":[{"type":"command","command":"audit.sh"},{"type":"command","command":"/old/rein hook --vendor codex"}]}]}}`
+	old := `{"hooks":{"PreToolUse":[{"matcher":"Bash","note":"mine","hooks":[{"type":"command","command":"audit.sh"},{"type":"command","command":"'/old/rein' hook --vendor codex --task w"}]}]}}`
 	_ = os.WriteFile(filepath.Join(wt, ".codex/hooks.json"), []byte(old), 0o644)
 	for i := 0; i < 2; i++ {
 		if _, _, err := Install(c, filepath.Join(root, "rein"), []string{"codex"}); err != nil {

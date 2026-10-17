@@ -9,18 +9,18 @@
     "PreToolUse": [
       {
         "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Agent|AskUserQuestion",
-        "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_DATA}/bin/rein", "args": ["hook"], "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_DATA}/bin/rein\" hook", "timeout": 10 }]
       }
     ],
     "PostToolUse": [
       {
         "matcher": "AskUserQuestion",
-        "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_DATA}/bin/rein", "args": ["hook"], "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_DATA}/bin/rein\" hook", "timeout": 10 }]
       }
     ],
     "Stop": [
       {
-        "hooks": [{ "type": "command", "command": "${CLAUDE_PLUGIN_DATA}/bin/rein", "args": ["hook"], "timeout": 10 }]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_DATA}/bin/rein\" hook", "timeout": 10 }]
       }
     ]
   }

@@ -68,6 +68,12 @@ func cmdRoute(args []string) int {
 		if err != nil {
 			break
 		}
+		unlock, lockErr := acquireRouteMutation(c, *run)
+		if lockErr != nil {
+			err = lockErr
+			break
+		}
+		defer unlock()
 		if args[0] == "check" && *phase != "worker" && *phase != "review" {
 			err = fmt.Errorf("phase must be worker or review")
 			break
@@ -111,6 +117,12 @@ func cmdRoute(args []string) int {
 	case "status":
 		out, err = routing.Status()
 	case "cooldown", "clear":
+		unlock, lockErr := acquireRouteMutation(nil, *run)
+		if lockErr != nil {
+			err = lockErr
+			break
+		}
+		defer unlock()
 		var reset *time.Time
 		if *until != "" {
 			var parsed time.Time

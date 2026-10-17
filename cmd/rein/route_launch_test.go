@@ -98,7 +98,7 @@ func TestRouteLaunchExecutesOnlyPreparedWorker(t *testing.T) {
 	if cmdRouteLaunch(args) == 0 {
 		t.Fatal("launch without route accepted")
 	}
-	if _, err := routing.Prepare(c, "run", "review:backend", "claude-sonnet", path, false, time.Second); err != nil {
+	if _, err := routing.Prepare(c, "run", "review:backend", "claude-sonnet", path, false, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if cmdRouteLaunch(args) == 0 {
@@ -107,7 +107,7 @@ func TestRouteLaunchExecutesOnlyPreparedWorker(t *testing.T) {
 	if _, err := os.Stat(log); !os.IsNotExist(err) {
 		t.Fatal("rejected launch executed provider")
 	}
-	if _, err := routing.Prepare(c, "run", "worker:backend", "", path, false, time.Second); err != nil {
+	if _, err := routing.Prepare(c, "run", "worker:backend", "", path, false, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if cmdRouteLaunch(args) != 0 {
@@ -119,7 +119,7 @@ func TestRouteLaunchExecutesOnlyPreparedWorker(t *testing.T) {
 			t.Fatalf("launched argv missing %q: %s", required, b)
 		}
 	}
-	if _, err := routing.Prepare(c, "run", "worker:ordinary", "", path, false, time.Second); err != nil {
+	if _, err := routing.Prepare(c, "run", "worker:ordinary", "", path, false, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	args = []string{"--task", c.Name, "--run", "run", "--", filepath.Join(root, "kiro-cli"), "chat", "--model", "claude-sonnet", "prompt"}
@@ -190,5 +190,102 @@ func TestRouteLaunchRejectsDuplicateScope(t *testing.T) {
 		if code := cmdRouteLaunch(args); code != 2 {
 			t.Fatalf("duplicate scope returned %d", code)
 		}
+	}
+}
+
+func TestWorkerStartReceiptIdentityIsBoundedAndReady(t *testing.T) {
+	ready := `{"ok":true,"result":{"state":"ready","taskId":"ot-1","dispatchId":"d-1","effects":[{"kind":"dispatch_input","role":"agent","state":"accepted","id":"worker"}]}}`
+	for _, tc := range []struct {
+		name, body string
+		valid      bool
+	}{
+		{"ready", ready, true},
+		{"contradictory error", strings.Replace(ready, `"ok":true`, `"ok":true,"error":{"message":"failed"}`, 1), false},
+		{"null error", strings.Replace(ready, `"ok":true`, `"ok":true,"error":null`, 1), true},
+		{"failed", strings.Replace(ready, `"ok":true`, `"ok":false`, 1), false},
+		{"pending", strings.Replace(ready, `"ready"`, `"pending"`, 1), false},
+		{"missing dispatch", strings.Replace(ready, `"d-1"`, `""`, 1), false},
+		{"rejected", strings.Replace(ready, `"accepted"`, `"rejected"`, 1), false},
+		{"text injection", "log\n" + ready, false},
+		{"multiple objects", ready + ready, false},
+		{"overflow", strings.Repeat(" ", 1<<20) + ready, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var capture dispatchReceiptBuffer
+			if n, err := capture.Write([]byte(tc.body)); n != len(tc.body) || err != nil {
+				t.Fatalf("write=%d %v", n, err)
+			}
+			task, dispatch, ok := capture.identity()
+			if ok != tc.valid || (ok && (task != "ot-1" || dispatch != "d-1")) {
+				t.Fatalf("identity=%q %q %v", task, dispatch, ok)
+			}
+			if capture.Len() > 1<<20 {
+				t.Fatal("unbounded capture")
+			}
+		})
+	}
+}
+
+func TestRouteLaunchSupervisedRunRefusesBeforeReceiptOrProvider(t *testing.T) {
+	root := contract.Real(t.TempDir())
+	gitIn(t, root, "init", "-q", "-b", "main")
+	gitIn(t, root, "commit", "-q", "--allow-empty", "-m", "init")
+	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(t.TempDir(), "contracts"))
+	t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "ledger.jsonl"))
+	c := &contract.Contract{Name: "guarded-task", Worktree: root, Allow: []string{"**"}, Scope: []string{"S1"}, ReportPath: filepath.Join(root, "report")}
+	if _, err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run.StartSupervised(root, "r", nil, run.Owner{SessionID: "guard-test", PID: os.Getpid()}, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	stderr := os.Stderr
+	capture, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capture.Close()
+	os.Stderr = capture
+	defer func() { os.Stderr = stderr }()
+	code := cmdRouteLaunch([]string{"--task", c.Name, "--run", "r", "--", "codex", "exec", "-m", "gpt-test", "prompt"})
+	os.Stderr = stderr
+	b, err := os.ReadFile(capture.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code != 1 || !strings.Contains(string(b), "legacy controller") {
+		t.Fatalf("code=%d stderr=%s", code, b)
+	}
+	if _, err := os.Stat(os.Getenv("PIPELINE_LEDGER")); !os.IsNotExist(err) {
+		t.Fatalf("refused launch wrote ledger: %v", err)
+	}
+}
+
+func TestRouteLaunchRecordsReadyDispatchIdentity(t *testing.T) {
+	e := newE2E(t, "orca")
+	if out, code := capture(t, func() int {
+		return cmdRoute([]string{"auto", "--task", "task", "--run", "run", "--profile-file", e.profile, "--config", e.cfgPath, "--timeout", "30s"})
+	}); code != 0 {
+		t.Fatalf("prepare (%d): %s", code, out)
+	}
+	orca := filepath.Join(e.root, "orca")
+	body := "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"result\":{\"state\":\"ready\",\"taskId\":\"actual-task\",\"dispatchId\":\"actual-dispatch\",\"effects\":[{\"kind\":\"dispatch_input\",\"role\":\"agent\",\"state\":\"accepted\",\"id\":\"worker\"}]}}'\n"
+	if err := os.WriteFile(orca, []byte(body), 0700); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high"}
+	if code := cmdRouteLaunch(args); code != 0 {
+		t.Fatalf("launch: %d", code)
+	}
+	b, err := os.ReadFile(filepath.Join(contract.IndexDir(), "routes", "leases", "task.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lease routing.Lease
+	if err := json.Unmarshal(b, &lease); err != nil {
+		t.Fatal(err)
+	}
+	if lease.OrcaTask != "actual-task" || lease.Dispatch != "actual-dispatch" || !lease.Dispatched || lease.DispatchPending {
+		t.Fatalf("identity not recorded: %+v", lease)
 	}
 }

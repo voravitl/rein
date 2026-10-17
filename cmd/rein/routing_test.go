@@ -48,6 +48,7 @@ func TestRouteCheckPhaseAndWorktree(t *testing.T) {
 	wt := filepath.Join(root, "worktree")
 	os.MkdirAll(index, 0700)
 	os.MkdirAll(wt, 0700)
+	gitIn(t, wt, "init", "-q")
 	t.Setenv("PIPELINE_CONTRACTS", index)
 	t.Setenv("PIPELINE_LEDGER", filepath.Join(root, "ledger.jsonl"))
 	c := &contract.Contract{Name: "task", Worktree: wt, Allow: []string{"**"}, Scope: []string{"S1"}, ReportPath: filepath.Join(root, "report"), HooksInstalled: []string{"codex"}, HooksGeneration: "g"}
@@ -59,7 +60,7 @@ func TestRouteCheckPhaseAndWorktree(t *testing.T) {
 	path := filepath.Join(root, "config.json")
 	b, _ = json.Marshal(cfg)
 	os.WriteFile(path, b, 0600)
-	if _, err := routing.Prepare(c, "run", "review:backend", "claude-sonnet", path, false, time.Second); err != nil {
+	if _, err := routing.Prepare(c, "run", "review:backend", "claude-sonnet", path, false, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	base := []string{"check", "--task", "task", "--run", "run", "--agent", "codex", "--model", "gpt-test"}

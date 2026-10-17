@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -244,7 +245,10 @@ func prepare(wt, rel string) (string, error) {
 // uncommitted work in the worker's diff and the drift check would blame the worker.
 func refuseTracked(wt, rel string) error {
 	out, err := exec.Command("git", "-C", wt, "ls-files", "--", rel).Output()
-	if err == nil && strings.TrimSpace(string(out)) != "" {
+	if err != nil {
+		return fmt.Errorf("cannot check tracked destination %s: %w", rel, err)
+	}
+	if strings.TrimSpace(string(out)) != "" {
 		return fmt.Errorf("%s is tracked by git; installing would dirty the worktree (add the hook to that file in the repository instead)", rel)
 	}
 	return nil
@@ -261,6 +265,38 @@ func readJSON(path string) (map[string]any, error) {
 	}
 	if err := json.Unmarshal(b, &doc); err != nil {
 		return nil, fmt.Errorf("%s exists but is not valid JSON: %w", path, err)
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("%s: expected JSON object", path)
+	}
+	if value, exists := doc["hooks"]; exists {
+		if hooks, ok := value.(map[string]any); !ok {
+			return nil, fmt.Errorf("%s: hooks must be an object", path)
+		} else {
+			for _, event := range []string{"PreToolUse", "PostToolUse", "Stop"} {
+				if groups, exists := hooks[event]; exists {
+					list, ok := groups.([]any)
+					if !ok {
+						return nil, fmt.Errorf("%s: %s must be an array", path, event)
+					}
+					for _, group := range list {
+						gm, ok := group.(map[string]any)
+						if !ok {
+							return nil, fmt.Errorf("%s: malformed %s group", path, event)
+						}
+						entries, ok := gm["hooks"].([]any)
+						if !ok {
+							return nil, fmt.Errorf("%s: malformed %s hooks", path, event)
+						}
+						for _, entry := range entries {
+							if _, ok := entry.(map[string]any); !ok {
+								return nil, fmt.Errorf("%s: malformed hook entry", path)
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 	return doc, nil
 }
@@ -279,6 +315,9 @@ func writeJSON(path string, doc any) error {
 func mergeGroups(doc map[string]any, event, marker string, group map[string]any) {
 	hooks, _ := doc["hooks"].(map[string]any)
 	if hooks == nil {
+		if group == nil {
+			return
+		}
 		hooks = map[string]any{}
 	}
 	var keep []any
@@ -292,19 +331,38 @@ func mergeGroups(doc map[string]any, event, marker string, group map[string]any)
 		entries, _ := gm["hooks"].([]any)
 		var rest []any
 		for _, e := range entries {
-			if b, _ := json.Marshal(e); !strings.Contains(string(b), marker) {
+			if m, ok := e.(map[string]any); !ok || !ownedCommand(m["command"], marker) {
 				rest = append(rest, e)
 			}
 		}
 		if len(rest) == len(entries) {
 			keep = append(keep, g)
-		} else if len(rest) > 0 {
+		} else if len(rest) > 0 || hasGroupMetadata(gm) {
+			if rest == nil {
+				rest = []any{}
+			}
 			gm["hooks"] = rest
 			keep = append(keep, gm)
 		}
 	}
-	hooks[event] = append(keep, group)
+	if group != nil {
+		keep = append(keep, group)
+	}
+	if len(keep) == 0 {
+		delete(hooks, event)
+	} else {
+		hooks[event] = keep
+	}
 	doc["hooks"] = hooks
+}
+
+func hasGroupMetadata(group map[string]any) bool {
+	for key := range group {
+		if key != "matcher" && key != "hooks" {
+			return true
+		}
+	}
+	return false
 }
 
 // claudeStyle writes PreToolUse + PostToolUse + Stop groups in the Claude settings format (codex and Claude share it).
@@ -317,8 +375,11 @@ func claudeStyle(wt, rel, vendor, task, bin, matcher string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := cleanShared(doc, vendor, task); err != nil {
+		return nil, err
+	}
 	h := []any{map[string]any{"type": "command", "command": command(bin, vendor, task), "timeout": 10}}
-	marker := "hook --vendor " + vendor
+	marker := vendor + "\x00" + task
 	mergeGroups(doc, "PreToolUse", marker, map[string]any{"matcher": matcher, "hooks": h})
 	mergeGroups(doc, "PostToolUse", marker, map[string]any{"matcher": "AskUserQuestion", "hooks": h})
 	mergeGroups(doc, "Stop", marker, map[string]any{"hooks": h})
@@ -344,10 +405,18 @@ func writeAgy(wt string, c *contract.Contract, bin string) ([]string, error) {
 		return nil, err
 	}
 	cmd := map[string]any{"type": "command", "command": command(bin, "agy", c.Name), "timeout": 10}
-	doc["rein"] = map[string]any{ // Stop is flat in agy: no matcher/hooks wrapper
+	next := map[string]any{ // Stop is flat in agy: no matcher/hooks wrapper
 		"PreToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{cmd}}},
 		"Stop":       []any{cmd},
 	}
+	if old, exists := doc["rein"]; exists && !ownedObject(old, "agy", c.Name) {
+		return nil, fmt.Errorf("%s: foreign rein namespace; refusing replacement", rel)
+	}
+	delete(doc, "rein")
+	if err := noTaskCommands(doc, "agy", c.Name); err != nil {
+		return nil, err
+	}
+	doc["rein"] = next
 	return []string{rel}, writeJSON(path, doc)
 }
 
@@ -365,6 +434,11 @@ func writeKiro(wt string, c *contract.Contract, bin string) ([]string, error) {
 			"stop":       []any{map[string]any{"command": cmd}},
 		},
 	}
+	if old, err := readJSON(path); err != nil {
+		return nil, err
+	} else if _, statErr := os.Lstat(path); !errors.Is(statErr, os.ErrNotExist) && !ownedObject(old, "kiro", c.Name) {
+		return nil, fmt.Errorf("%s: foreign agent; refusing replacement", rel)
+	}
 	return []string{rel}, writeJSON(path, agent)
 }
 
@@ -381,7 +455,7 @@ const WORKTREE = %s;
 export default {
   id: "rein-guard",
   setup(ctx) {
-    ctx.tool.hook("execute.before", async (i) => {
+    const guard = (i) => {
       const r = spawnSync(REIN, ["hook", "--vendor", "opencode", "--task", REIN_TASK], {
         input: JSON.stringify({ tool: i.tool, input: i.input, cwd: WORKTREE }),
         encoding: "utf8",
@@ -389,23 +463,350 @@ export default {
       });
       if (r.error) throw new Error("rein: guard did not run (" + r.error.message + ")");
       if (r.status !== 0) throw new Error((r.stderr || "").trim() || "rein: guard exited " + r.status);
-    });
+    };
+    ctx.tool.hook("execute.before", guard);
+    ctx.shell.hook("create.before", (i) => guard({ tool: "shell", input: { command: i.command, workdir: i.cwd } }));
   },
 };
 `
 
 func writeOpencode(wt string, c *contract.Contract, bin string) ([]string, error) {
-	const rel = ".opencode/plugins/rein/server.js"
+	rels := []string{".opencode/plugins/rein/server.js", ".opencode/plugins/rein/package.json"}
+	for _, rel := range rels {
+		if _, err := prepare(wt, rel); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkPlugin(wt, c.Name); err != nil {
+		return nil, err
+	}
+	binLit, _ := json.Marshal(bin)
+	taskLit, _ := json.Marshal(c.Name)
+	wtLit, _ := json.Marshal(wt)
+	path := filepath.Join(wt, rels[0])
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(path, []byte(fmt.Sprintf(pluginJS, binLit, taskLit, wtLit)), 0644); err != nil {
+		return nil, err
+	}
+	return rels, os.WriteFile(filepath.Join(wt, rels[1]), []byte(pluginPackage), 0644)
+}
+
+const pluginPackage = `{
+  "type": "module",
+  "main": "server.js"
+}
+`
+
+// Match the complete generated command, never incidental mentions in another tool's hook.
+func ownedCommand(value any, identity string) bool {
+	parts := strings.SplitN(identity, "\x00", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	_, ok := commandBinary(value, parts[0], parts[1])
+	return ok
+}
+
+func commandBinary(value any, vendor, task string) (string, bool) {
+	cmd, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	suffix := " hook --vendor " + vendor + " --task " + quoteWord(task)
+	if !strings.HasSuffix(cmd, suffix) {
+		return "", false
+	}
+	quoted := strings.TrimSuffix(cmd, suffix)
+	if len(quoted) < 3 || quoted[0] != '\'' || quoted[len(quoted)-1] != '\'' {
+		return "", false
+	}
+	bin := strings.ReplaceAll(quoted[1:len(quoted)-1], `'\''`, "'")
+	return bin, filepath.IsAbs(bin) && shellQuote(bin) == quoted
+}
+
+func objectCommand(value any) any {
+	switch v := value.(type) {
+	case map[string]any:
+		if cmd, ok := v["command"]; ok {
+			return cmd
+		}
+		for _, child := range v {
+			if cmd := objectCommand(child); cmd != nil {
+				return cmd
+			}
+		}
+	case []any:
+		for _, child := range v {
+			if cmd := objectCommand(child); cmd != nil {
+				return cmd
+			}
+		}
+	}
+	return nil
+}
+
+func ownedObject(value any, vendor, task string) bool {
+	bin, ok := commandBinary(objectCommand(value), vendor, task)
+	if !ok {
+		return false
+	}
+	cmd := command(bin, vendor, task)
+	var expected any
+	if vendor == "agy" {
+		expected = map[string]any{"PreToolUse": []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": cmd, "timeout": 10}}}}, "Stop": []any{map[string]any{"type": "command", "command": cmd, "timeout": 10}}}
+	} else {
+		expected = map[string]any{"name": "rein", "description": "rein guard for task " + task, "prompt": nil, "tools": []string{"*"}, "hooks": map[string]any{"preToolUse": []any{map[string]any{"matcher": "*", "command": cmd}}, "stop": []any{map[string]any{"command": cmd}}}}
+	}
+	b, _ := json.Marshal(expected)
+	var normalized any
+	json.Unmarshal(b, &normalized)
+	return reflect.DeepEqual(value, normalized)
+}
+
+func checkPlugin(wt, task string) error {
+	if _, err := prepare(wt, ".opencode/plugins/rein/server.js"); err != nil {
+		return err
+	}
+	if _, err := prepare(wt, ".opencode/plugins/rein/package.json"); err != nil {
+		return err
+	}
+	dir := filepath.Join(wt, ".opencode/plugins/rein")
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		if _, err := os.Lstat(filepath.Join(dir, "server.js")); err != nil {
+			return fmt.Errorf("OpenCode plugin has no owned server.js: %w", err)
+		}
+	}
+	for _, e := range entries {
+		if e.Name() != "server.js" && e.Name() != "package.json" {
+			return fmt.Errorf("foreign OpenCode plugin file %s", e.Name())
+		}
+		rel := ".opencode/plugins/rein/" + e.Name()
+		if _, err := prepare(wt, rel); err != nil {
+			return err
+		}
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return err
+		}
+		if e.Name() == "package.json" {
+			var got, want any
+			json.Unmarshal(b, &got)
+			json.Unmarshal([]byte(pluginPackage), &want)
+			if !reflect.DeepEqual(got, want) {
+				return fmt.Errorf("foreign OpenCode package.json")
+			}
+			continue
+		}
+		pattern := regexp.MustCompile(`(?m)^const REIN = (.+);$`)
+		match := pattern.FindSubmatch(b)
+		var bin string
+		if len(match) != 2 || json.Unmarshal(match[1], &bin) != nil {
+			return fmt.Errorf("foreign OpenCode server.js")
+		}
+		binLit, _ := json.Marshal(bin)
+		taskLit, _ := json.Marshal(task)
+		wtLit, _ := json.Marshal(wt)
+		if string(b) != fmt.Sprintf(pluginJS, binLit, taskLit, wtLit) {
+			return fmt.Errorf("foreign or modified OpenCode server.js")
+		}
+	}
+	return nil
+}
+
+// Uninstall removes only generated hooks belonging to this contract, preserving other owners.
+func Uninstall(c *contract.Contract, vendors []string) ([]Result, []string, error) {
+	wt, err := filepath.EvalSymlinks(c.Worktree)
+	if err != nil {
+		return nil, nil, err
+	}
+	var results []Result
+	removed := map[string]bool{}
+	for _, v := range vendors {
+		r := Result{Vendor: v}
+		if _, ok := writers[v]; !ok {
+			r.Err = fmt.Errorf("unknown vendor %q", v)
+		} else {
+			r.Files, r.Err = uninstallVendor(wt, c.Name, v)
+		}
+		if r.Err == nil {
+			removed[v] = true
+		}
+		results = append(results, r)
+	}
+	if len(removed) == 0 {
+		return results, nil, nil
+	}
+	var remaining []string
+	for _, v := range c.HooksInstalled {
+		if !removed[v] {
+			remaining = append(remaining, v)
+		}
+	}
+	c.HooksInstalled = remaining
+	if len(remaining) == 0 {
+		c.HooksInstalledAt = ""
+		c.HooksGeneration = ""
+	} else {
+		c.HooksGeneration = newGeneration()
+	}
+	saved, err := c.Save()
+	return results, saved, err
+}
+
+func uninstallVendor(wt, task, vendor string) ([]string, error) {
+	rels := map[string]string{"codex": ".codex/hooks.json", "claude": ".claude/settings.local.json", "agy": ".agents/hooks.json", "kiro": ".kiro/agents/rein.json"}
+	if vendor == "opencode" {
+		if err := checkPlugin(wt, task); err != nil {
+			return nil, err
+		}
+		var removed []string
+		for _, name := range []string{"server.js", "package.json"} {
+			rel := ".opencode/plugins/rein/" + name
+			if err := os.Remove(filepath.Join(wt, rel)); err == nil {
+				removed = append(removed, rel)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return removed, err
+			}
+		}
+		_ = os.Remove(filepath.Join(wt, ".opencode/plugins/rein"))
+		return removed, nil
+	}
+	rel := rels[vendor]
 	path, err := prepare(wt, rel)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
 		return nil, err
 	}
-	// the plugin runs the binary without a shell: the raw path, as JS string literals
-	binLit, _ := json.Marshal(bin)
-	taskLit, _ := json.Marshal(c.Name)
-	wtLit, _ := json.Marshal(wt)
-	return []string{rel}, os.WriteFile(path, []byte(fmt.Sprintf(pluginJS, binLit, taskLit, wtLit)), 0o644)
+	doc, err := readJSON(path)
+	if err != nil {
+		return nil, err
+	}
+	if vendor == "kiro" {
+		if !ownedObject(doc, vendor, task) {
+			return nil, fmt.Errorf("foreign or modified Kiro agent; refusing removal")
+		}
+		return []string{rel}, os.Remove(path)
+	}
+	before, _ := json.Marshal(doc)
+	if vendor == "agy" {
+		if value, ok := doc["rein"]; ok {
+			if !ownedObject(value, vendor, task) {
+				return nil, fmt.Errorf("foreign or modified rein namespace; refusing removal")
+			}
+			delete(doc, "rein")
+		}
+		if err := noTaskCommands(doc, vendor, task); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := cleanShared(doc, vendor, task); err != nil {
+			return nil, err
+		}
+	}
+	after, _ := json.Marshal(doc)
+	if string(before) == string(after) {
+		return nil, nil
+	}
+	return []string{rel}, writeJSON(path, doc)
+}
+
+// A modified executable hook is a conflict, not proof that this task is uninstalled.
+func modifiedCommand(value any, vendor, task string) bool {
+	cmd, ok := value.(string)
+	if !ok || ownedCommand(cmd, vendor+"\x00"+task) {
+		return false
+	}
+	suffix := " hook --vendor " + vendor + " --task " + quoteWord(task)
+	for start := 0; start < len(cmd); start++ {
+		if cmd[start] != '\'' {
+			continue
+		}
+		end := strings.Index(cmd[start:], suffix)
+		if end < 0 {
+			continue
+		}
+		end += start + len(suffix)
+		if _, ok := commandBinary(cmd[start:end], vendor, task); !ok {
+			continue
+		}
+		if end == len(cmd) || strings.ContainsRune(" \t\r\n;|&<>#()", rune(cmd[end])) {
+			return true
+		}
+	}
+	return false
+}
+
+func walkCommands(value any, visit func(any) error) error {
+	switch value := value.(type) {
+	case map[string]any:
+		if cmd, ok := value["command"]; ok {
+			if err := visit(cmd); err != nil {
+				return err
+			}
+		}
+		for _, child := range value {
+			if err := walkCommands(child, visit); err != nil {
+				return err
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if err := walkCommands(child, visit); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func cleanShared(doc map[string]any, vendor, task string) error {
+	if err := walkCommands(doc, func(cmd any) error {
+		if modifiedCommand(cmd, vendor, task) {
+			return fmt.Errorf("modified %s Rein command for task %s; refusing to change hooks", vendor, task)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	events, _ := doc["hooks"].(map[string]any)
+	for event, groups := range events {
+		found := false
+		_ = walkCommands(groups, func(cmd any) error {
+			if ownedCommand(cmd, vendor+"\x00"+task) {
+				found = true
+			}
+			return nil
+		})
+		if _, ok := groups.([]any); ok && found {
+			mergeGroups(doc, event, vendor+"\x00"+task, nil)
+		}
+	}
+	return walkCommands(doc, func(cmd any) error {
+		if ownedCommand(cmd, vendor+"\x00"+task) {
+			return fmt.Errorf("Rein command outside supported hook group; refusing false uninstall")
+		}
+		return nil
+	})
+}
+
+func noTaskCommands(doc map[string]any, vendor, task string) error {
+	return walkCommands(doc, func(cmd any) error {
+		if ownedCommand(cmd, vendor+"\x00"+task) || modifiedCommand(cmd, vendor, task) {
+			return fmt.Errorf("residual Rein command outside owned %s namespace; refusing to change hooks", vendor)
+		}
+		return nil
+	})
 }

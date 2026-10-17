@@ -1365,17 +1365,11 @@ func TestOrcaDispatchedLeaseIsHeldUntilSettle(t *testing.T) {
 	if err := EndLease("task", "another-attempt"); err != nil || TaskBusy("task") == "" {
 		t.Errorf("another attempt's settlement must not end this lease: %v", err)
 	}
-	if _, err := SettleAttempt(r.Attempt); err != nil {
-		t.Fatal(err)
+	if _, err := SettleAttempt(r.Attempt); err == nil {
+		t.Fatal("remote termination cannot be inferred from explicit settlement")
 	}
-	if why := TaskBusy("task"); why != "" {
-		t.Errorf("settling ends the dispatched lease: %q", why)
-	}
-	fresh := mustPrepare(t, w)
-	if lease, err := AcquireLease(w.c, fresh.Receipt); err != nil {
-		t.Errorf("a fresh funded attempt takes the free task: %v", err)
-	} else {
-		lease.Release()
+	if why := TaskBusy("task"); why == "" {
+		t.Error("dispatched worker lost its lease without remote liveness proof")
 	}
 }
 
@@ -2188,8 +2182,8 @@ func TestPendingOrcaDispatchSurvivesLauncherCrashAndRefusesLiveSettlement(t *tes
 	if _, err := AcquireLease(w.c, &next); err == nil {
 		t.Fatal("another writer acquired an uncertain pending dispatch")
 	}
-	// Explicit settlement is permitted once local handoff processes are gone.
-	if _, err := SettleAttempt(r.Attempt); err != nil {
-		t.Fatal(err)
+	// Local handoff termination does not prove termination of the remote worker.
+	if _, err := SettleAttempt(r.Attempt); err == nil {
+		t.Fatal("pending remote worker was released without liveness proof")
 	}
 }

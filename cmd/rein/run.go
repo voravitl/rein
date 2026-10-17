@@ -11,6 +11,7 @@ import (
 
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/run"
+	"github.com/voravitl/rein/internal/supervisor"
 )
 
 const userOnlyMsg = "[run] %s is for the user: run it in your own terminal, not from a Claude Code session (the coordinator never authorizes itself)\n"
@@ -41,6 +42,9 @@ func cmdRun(args []string) int {
 		usage()
 		return 2
 	}
+	if args[0] == "controller-exec" {
+		return cmdControllerExec(args[1:])
+	}
 	sub := args[0]
 	repo, rest := splitRepo(args[1:])
 	fs := flag.NewFlagSet("run "+sub, flag.ContinueOnError)
@@ -54,6 +58,7 @@ func cmdRun(args []string) int {
 	commit := fs.String("commit", "", "allow: commit audit accepts")
 	pinned := fs.String("pinned", "", "end/audit: comma shas the drift check approved")
 	asJSON := fs.Bool("json", false, "audit/end: JSON output")
+	supervisorPlan := fs.String("supervisor-plan", "", "start: opt in to supervised control with this JSON plan")
 	if fs.Parse(rest) != nil {
 		return 2
 	}
@@ -65,6 +70,12 @@ func cmdRun(args []string) int {
 		return 2
 	}
 	switch sub {
+	case "controller-check":
+		unlock, err := run.AcquireLegacyController(repo, *name)
+		if err != nil {
+			return fail(err)
+		}
+		unlock()
 	case "start":
 		if *name == "" {
 			fmt.Fprintln(os.Stderr, "[run] --run is required")
@@ -87,7 +98,31 @@ func cmdRun(args []string) int {
 				who.PID = env.PID
 			}
 		}
-		m, err := run.Start(repo, *name, prof, who)
+		var m *run.Marker
+		if *supervisorPlan != "" {
+			if run.UnderClaude() {
+				fmt.Fprintf(os.Stderr, userOnlyMsg, "rein run start --supervisor-plan")
+				return 2
+			}
+			plan, hash, planErr := supervisor.Load(*supervisorPlan)
+			if planErr != nil {
+				return fail(planErr)
+			}
+			loc, locateErr := run.Locate(repo)
+			if locateErr != nil {
+				return fail(locateErr)
+			}
+			planLoc, locateErr := run.Locate(plan.Repo)
+			if locateErr != nil {
+				return fail(locateErr)
+			}
+			if plan.Run != *name || planLoc.Common != loc.Common {
+				return fail(errors.New("supervisor plan run/repository differs from start request"))
+			}
+			m, err = run.StartSupervised(repo, *name, prof, who, hash)
+		} else {
+			m, err = run.Start(repo, *name, prof, who)
+		}
 		if err != nil {
 			return fail(err)
 		}

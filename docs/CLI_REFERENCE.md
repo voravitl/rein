@@ -9,7 +9,7 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | Command | Primary User | Purpose | When to Call | Exit Codes |
 |---|---|---|---|---|
 | `rein contract` | Coordinator | Create/inspect task boundary | Before starting worker | `0` = ok, `1` = error, `2` = invalid flag |
-| `rein hooks install` | Coordinator | Install guard hooks in worktree | While setting up worker worktree | `0` = installed, `1` = failed |
+| `rein hooks install/uninstall` | Coordinator | Manage Rein guard hooks in one worktree | Worker setup/teardown | `0` = success, `2` = refused/failed |
 | `rein hook` | AI Harness | Hook event inspector | Auto-invoked by Claude/Codex/AGY | `0` = allow, `1` = bad flag (deny via stderr) |
 | `rein sandbox` | Coordinator | Write OS sandbox profile | Before worker starts | `0` = written, `1` = failed |
 | `rein drift` | Coordinator / Worker | Verify scope, claims, commits | Before saying `worker_done` or merging | `0` = clean, `1` = DRIFT, `2` = cannot judge |
@@ -22,8 +22,12 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | `rein verdict` | Reviewer | Record/check multi-model reviews | After code review on an MR | `0` = pass, `1` = fail, `2` = arg error |
 | `rein approve` | Human / Coordinator | Human approval merge gate | Gating merge approval | `0` = approved, `1` = refused |
 | `rein advise` | Coordinator | Dispatch read-only advisor | Second opinion on claims/defects | `0` = ok, `1` = failed |
+| `rein orca` | Coordinator | Native Orca worker lifecycle | Launch, wait, drain, close, tidy | `0` = ok, 1 = error, 3 = dirty, 4 = unique commit |
 | `rein e2e` | Coder / Reviewer | Orca Browser E2E verification | Testing UI routes & compiling PDF | `0` = pass, `1` = test fail, `2` = error |
 | `rein spec check` | Coordinator | Lint task spec & tier | Before spawning worker | `0` = pass, `1` = lint fail, `2` = error |
+| `rein checkpoint` | Controller | Finalize, verify or restore a snapshot | Safe recovery boundary | `0` = success, `1` = refused/error, `2` = bad arguments |
+| `rein hunter` | Investigator / Reviewer / Owner | Report, reproduce, verify, review and approve findings | Evidence-based bug workflow | `0` = recorded, `1` = refused/error, `2` = bad arguments |
+| `rein supervisor` | Authorized controller | Validate and execute bounded plans | Explicit supervised runs | `0` = verified/waiting result, `1` = blocked/error, `2` = bad arguments |
 | `rein version` | Anyone | Print binary version | Verification / diagnostics | `0` = ok |
 
 ---
@@ -65,6 +69,16 @@ Installs vendor hook configuration into the worker's worktree so tool calls are 
 ```sh
 rein hooks install <TASK_ID> [--vendors codex,agy,kiro,opencode,claude]
 ```
+
+### `rein hooks uninstall`
+
+```sh
+rein hooks uninstall <TASK_ID> [--vendors codex,agy,kiro,opencode,claude]
+```
+
+Removes only identifiable Rein task hooks and updates both contract copies. Default removal scans all five supported vendors and every shared hook event; modified executable commands or residual copies outside the owned layout return exit 2 and retain that vendor's metadata. Other owners' hooks, settings and sibling files remain. Conflicting or modified artifacts and symlink destinations fail closed; inspect the error instead of deleting the parent directory. Repeated removal is safe. Reinstall with `rein hooks install` and use the newly printed launch flags. Restart an already-running harness to unload cached hooks; removal on disk cannot revoke a running process's launch arguments.
+
+Codex, OpenCode and Kiro hooks are task-bound project artifacts, not global plugin registrations. Native plugin registration is a separate operation (`scripts/install-harness.sh`); failures return nonzero rather than printing success.
 
 ### `rein hook`
 Invoked automatically on every tool call by the agent harness via stdin:
@@ -110,7 +124,7 @@ rein run audit [repo] [--pinned sha,..] [--json]
 # End coordinator run cleanly
 rein run end [repo] [--pinned sha,..]
 
-# Resume run after session disconnect
+# Resume after disconnect only while the original owner process is still alive
 rein run resume [repo] [--session <ID> --pid <PID>]
 
 # Allow exception for a task or commit (User-only; refused inside Claude Code)
@@ -119,6 +133,8 @@ rein run allow [repo] (--task <ID> | --commit <SHA>) --reason "<REASON>"
 # Single-flight periodic tick (flock protected)
 rein run tick [repo]
 ```
+
+`rein run resume` rebinds the session only for the same live owner process (same PID and process-start identity). A new process cannot take over by supplying the old PID. If the coordinator dies, the supervisor must verify the repository and recorded run identity, execute `rein run end <repo>`, then `rein run start <repo> --run <new-run> --session <new-session> --pid <new-owner-pid>`. Preserve the previous run's evidence and reconcile outstanding workers before redispatching; resume is not crash failover.
 
 - **Rule:** `COORDINATOR_DRIFT` is raised if coordinator writes code outside `coordinator_writable` allowlist.
 
@@ -345,3 +361,107 @@ A review charge names the reviewer provider (`--provider`, its name in `fallback
 **Not implemented**: a Claude Code catalog adapter, `remote_verified` freshness, agy quota refresh, automatic rate refresh, the calibration runner (the gate only bounds the spend), a context-conditioned cost forecast with uncertainty, a shared-overhead allocation rule (shared charges are reported once and excluded), and pinning of the owner's policy at `rein run start`. See the design document's "Implementation status".
 
 Untracked embedded Git repositories are refused during automatic review classification. Track them as submodules or move them outside the reviewed checkout; Rein does not classify only the directory name while omitting its nested sensitive paths.
+
+---
+
+## 16. `rein orca` — Native Orca Multi-Agent Orchestration
+
+Governs the complete Orca worker lifecycle natively in Go without external scripts. Incorporates operational safety gates learned from production runs:
+
+```sh
+# Execute deterministic Orca tool call (JSON in/out, for AI agents and MCP)
+rein orca call <status|launch|wait|drain|close|tidy|send|read|terminals|worktrees> [flags]
+rein orca call '{"action": "status"}'
+rein orca call --input request.json
+echo '{"action": "status"}' | rein orca call --stdin
+
+# Emit official JSON Schema for function-calling & MCP integration
+rein orca schema
+rein orca call --schema
+
+# Launch an agent worker inside Orca on a clean worktree
+rein orca launch <name> <base-branch> <spec-file> <kiro|agy|claude|codex> [--model M] [--effort E] [--run R] [--coord H] [--repo ID] [--repo-dir D]
+
+# Wait in background for worker_done, escalation, or question
+rein orca wait [--terminal <coord>] [--timeout-ms 600000] [--rounds 60] [--json]
+
+# Drain pending deliveries and acknowledge them cleanly in loop
+rein orca drain [--terminal <coord>] [--no-ack] [--json]
+
+# Interactive terminal control
+rein orca call send --terminal <handle> --text "go test ./..." --enter
+rein orca call read --terminal <handle> --limit 50
+
+# Close finished worker (enforces clean tree and no unanchored unique commits)
+rein orca close --worktree <path> [--terminal <handle>] [--dispatch <id>] [--check-only] [--json]
+rein orca call close --worktree <path> --terminal <worker-handle> [--dispatch <id>] [--check-only]
+
+# Audit Orca sessions (shell candidates remain report-only, including --apply)
+rein orca tidy [--apply] [--workspaces <dir>] [--coord-wt <name>] [--json]
+```
+
+### Safety Rules & Operational Gates
+1. **Never guess coordinator handle**: Orchestration calls require explicit `--coord` (`ORCA_COORD`).
+2. **Preserve unproven terminals**: Launch does not prune other tabs. Tidy reports path-title shells as `shell_candidate`; even `--apply` preserves them because titles do not prove idle state or ownership.
+3. **Dirty tree protection**: `rein orca close` exits `3` if the worktree has uncommitted files.
+4. **Unique commit retention**: `rein orca close` exits `4` if HEAD is not reachable from another ref (e.g. `keep/<name>`).
+5. **Bounded drain**: Drain summarizes messages and ACKs preceding deliveries. At 25 deliveries it returns a partial-drain error with the last delivery unacknowledged; retry rather than claiming the queue is empty.
+6. **Deterministic Tool Interface**: `rein orca call` guarantees structured JSON responses (`{"ok": true/false, "action": "...", "result": ...}`) for cross-harness autonomous agents.
+
+`rein orca call close`, `send`, and `read` require an explicit worker `--terminal`; they refuse the handle in `ORCA_COORD`. The same checks apply to inline JSON, `--input`, and `--stdin`. Wait and drain may still use `ORCA_COORD` when no terminal is supplied. `rein orca call` without arguments prints usage and exits 2 without reading piped input; JSON stdin is consumed only with `--stdin`.
+
+Call exit codes: **0** success, **2** invalid request or protected/missing target, **3** dirty-worktree refusal, **4** unique-commit refusal, **1** runtime/API failure (including Git safety-check failures). Safety checks fail closed before release, terminal close, or worktree removal. A launch failure includes the created worktree/terminal/task/dispatch identifiers; inspect those resources before retrying because launch does not automatically delete them.
+
+Close honors `worker-release`: `retained`, `release_pending`, unknown/error receipts, or an unproven/nonempty terminal inventory block worktree removal. `released` and `already_released` avoid a second raw terminal close. The direct close command also protects `ORCA_COORD`; removal cancellation or timeout is an error.
+
+Claude/Codex launches use the authoritative `worker-start` task/dispatch receipt rather than creating a preliminary task. A ready worker with an unconfirmed terminal surface returns an error containing its identifiers; inspect it before retrying. Launch flags may precede or follow positional operands.
+
+Drain returns an error on a failed initial check. Later check failures return the partial result with an error, so callers must not report a complete drain. Without ACK, drain reads one delivery without advancing the queue. Wait detects signals only in `result.messages[].type`; logs and metadata do not constitute completion.
+
+`rein orca call status` retains daemon status fields and adds a `terminal` envelope from `orca terminal show` when an explicit terminal or `ORCA_COORD` is available. With neither, it reports daemon-wide status.
+
+
+## Checkpoint, report-only hunter and bounded supervisor
+
+```sh
+rein checkpoint finalize --task T --attempt A --run R --worktree /absolute/source --base main --contract-hash HASH [--untracked path1,path2]
+rein checkpoint verify --task T --attempt A
+rein checkpoint restore --task T --attempt A --dest /absolute/new-directory
+rein hunter report --input finding.json
+rein hunter get --id H-0001
+rein hunter list
+rein hunter scan-report --task T --baseline FULL_SHA --covered-json '["internal/hunter/**"]' --skipped-json '["live provider calls"]'
+rein hunter reproduce --id H-0001 --repo /absolute/repo --attempt repro-1 --timeout 5m --expect-exit 1 -- go test ./...
+rein hunter verify --id H-0001 --repo /absolute/repo --attempt verify-1 --fixed FULL_SHA --red-attempt repro-1 --test-paths-json '["path_test.go"]' -- go test ./...
+rein hunter review --id H-0001 --repo /absolute/repo --attempt verify-1 --verification-digest SHA256 --worker WORKER --reviewer REVIEWER --report /absolute/review.md
+rein hunter approve --id H-0001 --repo /absolute/repo --verification-digest SHA256 --review-digest REVIEW_SHA256 --owner OWNER --reason "accept reviewed fix"
+rein supervisor validate --plan approved-plan.json
+rein run start /absolute/repo --run R --session S --pid PID --supervisor-plan approved-plan.json
+rein supervisor run --plan approved-plan.json
+```
+
+Checkpoint restore uses embedded Git objects and captured bytes; the source can be absent. Restore requires an existing destination parent. Existing destinations, mixed staged/unstaged edits to the same path, tracked deletions/renames/conflicts/submodules, hidden-index flags and unrepresentable checkout conversions are refused. It restores only the supported state into a fresh directory; it does not rewrite contracts, run markers, receipts or source evidence. Each checkpoint stores reachable Git history, so large repositories can produce large snapshots.
+
+Hunter reproduction requires a full baseline SHA matching the source HEAD, a unique attempt and explicit expected nonzero exit. It runs argv without a shell in a disposable clone and records actual exit/output hashes before cleanup. Setup failures do not promote evidence. Unix timeout kills the execution process group; Windows execution is refused pending descendant containment. Each clone receives a distinct test-only contract allowing `hunter-tests/**` and `evidence/**`. Lasting changes to source, Git metadata, modes, symlinks or contract evidence produce `scope-violation` and cannot promote a finding. Clone integrity checking is not an OS sandbox: trusted commands retain normal user access, and writes restored before inspection or outside the clone are outside this proof.
+
+`hunter verify` checks the recorded red evidence hash, replays the same argv on the baseline, then runs that argv and the requested suite on the exact fixed revision. Explicit protected test files must retain their baseline bytes and modes; source HEAD is checked again after execution. Evidence uses a unique attempt and persists even when runtime checks fail. A successful result is `WAITING_INDEPENDENT_REVIEW`; it does not close the finding or grant reviewer/owner approval. Caller-written red/green strings cannot close findings. `hunter review` binds the exact runtime verification digest, unchanged fixed revision, independent worker/reviewer identities and a hashed review report, then waits for owner approval. `hunter approve` rechecks that evidence and requires the owner's terminal plus typed finding/review digest confirmation before `VERIFIED_FIXED`. Identities remain controller assertions under the same-user trust model. `scan-report` records explicit covered/skipped scope and known matching findings; absence of confirmed findings is `NO_CONFIRMED_FINDINGS`, never `BUG_FREE`.
+
+Supervisor plan JSON has exactly these fields (IDs below are placeholders for recorded routing evidence):
+
+```json
+{"schema":1,"run":"R","repo":"/absolute/repo","terminal":"coordinator-handle","source":"orca","version":"1","max_checks":20,"timeout_ms":60000,"poll_interval_ms":1000,"pools":[],"tasks":[{"task":"T","attempt":"A","current_attempt":"A","orca_task":"recorded-task-id","dispatch":"recorded-dispatch-id"}]}
+```
+
+Plan validation rejects unknown/duplicate fields and unbounded budgets. Start checks run/repository identity and binds the exact file bytes to a new schema-2 marker. Existing runs cannot be converted; `run resume` refuses supervised ownership. A supervisor holds exclusive controller authority and rechecks marker, contract, current receipt, consumed attempt and exact dispatched lease before Orca checks/ACKs. Coordinator death does not grant or revoke that separate authority. Legacy launch/wait/drain/send/close paths cooperate with the same lock and refuse schema 2; arbitrary external Orca invocations are outside this boundary.
+
+Schema 1 remains a bounded **monitor**. It does not launch workers or settle/release remote leases. Missing dispatch evidence blocks before polling. Mixed/unbound/noise batches remain unACKed; ambiguous crash windows park for reconciliation. Reported completion still needs worker-gone/accounting proof.
+
+Schema 2 adds bounded task graph execution for explicitly approved **local, non-detaching shell providers**. Each task supplies `contract_hash`, `config_path` (clean absolute path), `config_digest` (SHA256 of exact configuration bytes), embedded routing `profile`, `base`, `max_attempts` (1..3), provider-keyed `launches` argv arrays, and `verify` argv arrays. Optional `depends_on` and `allowed_untracked` declare dependencies and checkpoint scope. Set `process_policy` to `non_detaching`; the CLI refuses missing/other policies and remote Orca launches before preparation. Graph tasks do not prebind attempts or dispatch IDs. Distinct tasks require distinct worktrees in the production adapter.
+
+The plan's `pools` must cover the canonical quota pool of every authorized launch provider (billing pools remain separately governed by routing/budget); missing coverage is refused before preparation. Launch argv may substitute whole-token `{model}`, `{effort}`, `{run}` and `{worktree}` placeholders. `PrepareAuto` selects a fresh receipt; only that provider's approved argv runs, with existing model/effort/hook gates. Launch also rechecks the exact expected attempt/decision/hold before consuming its receipt. Local completion requires the recorded process and its dedicated process group to be gone, followed by checkpoint and conservative reservation settlement. Objective verification checks the captured worktree before and after each command; successful task completion includes durable checkpoint and verification digests. Restart revalidates completed evidence before reusing it. All completed tasks still return `WAITING_HUMAN` for independent review and approval.
+
+The non-detaching policy is a cooperative execution contract, not OS containment: a process that escapes its group is outside that proof. Unknown local registration/liveness, unsupported remote termination, missing evidence and unresolved side effects preserve fences or park for reconciliation. Configured literal quota signals are watched while the provider is alive. Recovery records stop intent, stops/reaps the owned process group and requires gone/checkpoint/accounting proof before cooldown and a fresh receipt within the attempt bound. Retries revalidate checkpoint, execution and handoff hashes before prepare and launch. The bounded continuation receipt is passed as `REIN_HANDOFF_PATH` and `REIN_HANDOFF_SHA256`; the approved cooperative launcher must explicitly read and validate it. Rein does not inject prompts or restore native conversation state. This does not prove real provider exhaustion, remote descendant termination, automatic restoration, native model consumption of the handoff, or a live pilot.
+
+The legacy waiter uses `rein run controller-exec REPO --run R -- <check-options>` (or the executable in `REIN`) for every bounded check/ACK. The wrapper holds a shared legacy lock through Orca and refuses supervised runs. Missing Rein or refusal stops the waiter without falling back to raw Orca. `run controller-check` is a refusal diagnostic, never a reusable authorization token.
+
+Orca structured launch uses exact `worker-show --dispatch` identity (task/run/assignee/worker), not terminal existence. `worker_handle` is emitted for supervised workers; `terminal_handle` is absent for structured workers without a PTY. Close accepts dispatch identity without a terminal; send/read still require a terminal. These launch/close compatibility checks do not enable Orca graph recovery. Installed Orca 1.4.224 lacks a retained process-tree termination proof after session eviction; unsupported recovery remains fenced.

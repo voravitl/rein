@@ -22,6 +22,9 @@ import (
 // Schema is the marker's version. A hook that reads another version denies: it cannot know what the fields mean.
 const Schema = 1
 
+// SchemaSupervised binds a run to one explicitly selected supervisor plan.
+const SchemaSupervised = 2
+
 // MarkerFile is the marker's file name under the git common dir (or under $REIN_RUN_DIR).
 const MarkerFile = "rein-run.json"
 
@@ -57,6 +60,7 @@ type Allowance struct {
 // Marker is the run marker.
 type Marker struct {
 	Schema              int         `json:"schema"`
+	SupervisorPlanHash  string      `json:"supervisor_plan_hash,omitempty"`
 	Run                 string      `json:"run"`
 	StartedAt           string      `json:"started_at"`
 	Root                string      `json:"root"`              // main checkout root (not derivable from the common dir with separate-git-dir)
@@ -269,14 +273,18 @@ func Load(path string) (*Marker, error) {
 	if err != nil {
 		return nil, &BadMarker{Path: path, Reason: err.Error()}
 	}
+	return decodeMarker(path, b)
+}
+
+func decodeMarker(path string, b []byte) (*Marker, error) {
 	var v struct {
 		Schema int `json:"schema"`
 	}
 	if err := json.Unmarshal(b, &v); err != nil {
 		return nil, &BadMarker{Path: path, Reason: "not valid JSON: " + err.Error()}
 	}
-	if v.Schema != Schema {
-		return nil, &BadMarker{Path: path, Reason: fmt.Sprintf("schema %d, this rein reads schema %d", v.Schema, Schema)}
+	if v.Schema != Schema && v.Schema != SchemaSupervised {
+		return nil, &BadMarker{Path: path, Reason: fmt.Sprintf("schema %d, this rein reads schemas %d and %d", v.Schema, Schema, SchemaSupervised)}
 	}
 	var m Marker
 	if err := json.Unmarshal(b, &m); err != nil {
@@ -284,6 +292,9 @@ func Load(path string) (*Marker, error) {
 	}
 	if m.Run == "" || m.Root == "" || m.SessionID == "" || m.PID <= 0 {
 		return nil, &BadMarker{Path: path, Reason: "run, root, session_id and pid are required"}
+	}
+	if m.Schema == SchemaSupervised && !planHashRx.MatchString(m.SupervisorPlanHash) {
+		return nil, &BadMarker{Path: path, Reason: "supervised run requires a 64 character hex supervisor_plan_hash"}
 	}
 	return &m, nil
 }
@@ -400,6 +411,18 @@ func pick(profile, def []string) []string {
 
 // Start writes the marker of a new run for the repository that holds repo. It refuses when a marker exists.
 func Start(repo, name string, prof *contract.Profile, who Owner) (*Marker, error) {
+	return start(repo, name, prof, who, "")
+}
+
+// StartSupervised creates a new run; an existing legacy run is never adopted.
+func StartSupervised(repo, name string, prof *contract.Profile, who Owner, planHash string) (*Marker, error) {
+	if !planHashRx.MatchString(planHash) {
+		return nil, errors.New("supervisor plan hash must be 64 hex characters")
+	}
+	return start(repo, name, prof, who, planHash)
+}
+
+func start(repo, name string, prof *contract.Profile, who Owner, planHash string) (*Marker, error) {
 	if !ValidName(name) {
 		return nil, fmt.Errorf("run name %q: use letters, digits, '.', '_' and '-'", name)
 	}
@@ -413,6 +436,11 @@ func Start(repo, name string, prof *contract.Profile, who Owner) (*Marker, error
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := LockFile(loc.Marker+".controller.lock", 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	switch old, err := Load(loc.Marker); {
 	case err == nil:
 		return nil, &ErrActive{Run: old.Run, Alive: old.OwnerAlive()}
@@ -440,6 +468,9 @@ func Start(repo, name string, prof *contract.Profile, who Owner) (*Marker, error
 		CoordinatorWritable: pick(prof.CoordinatorWritable, DefaultWritable),
 		CoordinatorTools:    pick(prof.CoordinatorTools, DefaultTools),
 		ReadonlyAgents:      pick(prof.ReadonlyAgents, DefaultReadonlyAgents)}
+	if planHash != "" {
+		m.Schema, m.SupervisorPlanHash = SchemaSupervised, planHash
+	}
 	if err := writeMarker(loc.Marker, m, true); err != nil {
 		if errors.Is(err, fs.ErrExist) {
 			return nil, &ErrActive{Run: name, Alive: true}
@@ -465,6 +496,11 @@ func SetRunDir(markerPath, runDir string) error {
 	if runDir == "" {
 		return nil // nothing to set
 	}
+	unlock, err := LockFile(markerPath+".controller.lock", 0)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	m, err := Load(markerPath)
 	if err != nil {
 		return err
@@ -492,9 +528,21 @@ func Resume(repo, newSessionID string, pid int) (*Marker, error) {
 	if newSessionID == "" {
 		return nil, errors.New("session id is empty")
 	}
-	loc, m, err := load(repo)
+	loc, err := Locate(repo)
 	if err != nil {
 		return nil, err
+	}
+	unlock, err := LockFile(loc.Marker+".controller.lock", 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	m, err := Load(loc.Marker)
+	if err != nil {
+		return nil, err
+	}
+	if m.Schema == SchemaSupervised {
+		return nil, errors.New("supervised run cannot rebind its coordinator; end it and start a new run")
 	}
 	if !m.OwnerAlive() {
 		return nil, fmt.Errorf("run %q: the owner process %d is gone; end it with `rein run end` and start a new run", m.Run, m.PID)
@@ -526,7 +574,16 @@ func allow(repo string, a Allowance) (*Marker, error) {
 	if strings.TrimSpace(a.Reason) == "" {
 		return nil, errors.New("--reason is required: the allowance is part of the audit trail")
 	}
-	loc, m, err := load(repo)
+	loc, err := Locate(repo)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := LockFile(loc.Marker+".controller.lock", 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	m, err := Load(loc.Marker)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +607,16 @@ func End(repo string, abandon bool, reason string, o AuditOptions) (*EndResult, 
 	if abandon && strings.TrimSpace(reason) == "" {
 		return nil, errors.New("--abandon needs --reason: it is recorded")
 	}
-	loc, m, err := load(repo)
+	loc, err := Locate(repo)
+	if err != nil {
+		return nil, err
+	}
+	unlock, err := LockFile(loc.Marker+".controller.lock", 0)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	m, err := Load(loc.Marker)
 	if err != nil {
 		var bad *BadMarker
 		if !(abandon && errors.As(err, &bad)) { // a corrupt marker can only be abandoned

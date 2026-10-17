@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "name": "orca_call",
+  "description": "Deterministic tool for executing Orca multi-agent orchestration lifecycle operations (status, launch, wait, drain, close, tidy, send, read, terminals, worktrees).",
+  "type": "object",
+  "properties": {
+    "action": {
+      "type": "string",
+      "enum": [
+        "status",
+        "launch",
+        "wait",
+        "drain",
+        "close",
+        "tidy",
+        "send",
+        "read",
+        "terminals",
+        "worktrees"
+      ],
+      "description": "The Orca orchestration action to execute"
+    },
+    "args": {
+      "type": "object",
+      "description": "Arguments specific to the action",
+      "properties": {
+        "terminal": {
+          "type": "string",
+          "description": "Terminal handle or coordinator handle"
+        },
+        "worktree": {
+          "type": "string",
+          "description": "Worktree path or selector"
+        },
+        "name": {
+          "type": "string",
+          "description": "Task / branch name for launch"
+        },
+        "base": {
+          "type": "string",
+          "description": "Base branch for worktree"
+        },
+        "spec_file": {
+          "type": "string",
+          "description": "Path to spec markdown file"
+        },
+        "spec_content": {
+          "type": "string",
+          "description": "Inline task spec content"
+        },
+        "agent": {
+          "type": "string",
+          "description": "Target agent runner (claude, codex, agy, kiro)"
+        },
+        "model": {
+          "type": "string",
+          "description": "Model override"
+        },
+        "effort": {
+          "type": "string",
+          "description": "Reasoning effort (low, medium, high, max)"
+        },
+        "run": {
+          "type": "string",
+          "description": "ORCA_RUN run container ID"
+        },
+        "coord": {
+          "type": "string",
+          "description": "ORCA_COORD coordinator terminal handle"
+        },
+        "text": {
+          "type": "string",
+          "description": "Text to send to terminal"
+        },
+        "enter": {
+          "type": "boolean",
+          "description": "Append enter after sending text"
+        },
+        "interrupt": {
+          "type": "boolean",
+          "description": "Send interrupt before text"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Timeout in milliseconds"
+        },
+        "rounds": {
+          "type": "integer",
+          "description": "Check rounds count"
+        },
+        "cursor": {
+          "type": "integer",
+          "description": "Cursor offset for read"
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Result limit"
+        },
+        "ack": {
+          "type": "boolean",
+          "description": "Acknowledge message deliveries in drain"
+        },
+        "apply": {
+          "type": "boolean",
+          "description": "Apply destructive cleanup changes in tidy"
+        },
+        "check_only": {
+          "type": "boolean",
+          "description": "Safety check only without mutating in close"
+        }
+      }
+    }
+  },
+  "required": [
+    "action"
+  ]
+}

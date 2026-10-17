@@ -44,24 +44,41 @@ The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](http
 |---|---|---|---|
 | **Claude Code** | Native Plugin | `.claude-plugin/plugin.json`, `hooks/hooks.json` | `/plugin marketplace add voravitl/rein` && `/plugin install rein@rein` |
 | **Antigravity (AGY)** | Plugin Bundle | `plugins/rein/plugin.json`, `plugins/rein/hooks.json` | `agy plugin install ./plugins/rein` (or `sh scripts/install-harness.sh agy`) |
-| **OpenCode** | V2 Plugin | `.opencode/plugins/rein/package.json`, `server.js` | `sh scripts/install-harness.sh opencode` (links to `~/.config/opencode/plugins/rein`) |
-| **OpenAI Codex** | Native Plugin | `.codex/hooks.json`, `plugin.json` | `codex plugin marketplace add ./` && `codex plugin add rein@rein` |
-| **AWS Kiro** | Agent Definition | `.kiro/agents/rein.json` | `sh scripts/install-harness.sh kiro` (copies to `~/.kiro/agents/rein.json`) |
+| **OpenCode** | V2 Plugin | `.opencode/plugins/rein/package.json`, `server.js` | `rein hooks install <task> --vendors opencode` (contracted worktree only) |
+| **OpenAI Codex** | Task hooks | `.codex/hooks.json` | `rein hooks install <task> --vendors codex`; use the printed launch flags |
+| **AWS Kiro** | Agent Definition | `.kiro/agents/rein.json` | `rein hooks install <task> --vendors kiro`; launch with `--agent rein` |
+
+### Quick NPX / Skills CLI Installation
+
+Install rein skills into any agent via community `skills` CLI:
+```sh
+npx skills add voravitl/rein -g
+# or target specific agent and skill:
+npx skills add voravitl/rein --skill worktree-pipeline --agent antigravity
+```
+
+Run `rein` CLI directly via `npx` without manual setup:
+```sh
+npx rein version
+npx rein --help
+```
 
 ### One-Click Harness Setup & Uninstall Script
 
-Register or link the plugin bundle for any harness (or all at once):
+Register native plugin bundles where supported. Task-bound hooks belong in the contract worktree; do not link them globally:
 
 ```sh
-sh scripts/install-harness.sh all          # register into all installed harnesses
+sh scripts/install-harness.sh all          # attempts each target; unsupported/missing targets return nonzero
 # or target a specific harness:
 sh scripts/install-harness.sh agy          # Antigravity (Gemini CLI)
-sh scripts/install-harness.sh codex        # OpenAI Codex
-sh scripts/install-harness.sh opencode     # OpenCode
+rein hooks install <task> --vendors codex   # task hooks + required launch flags
+rein hooks install <task> --vendors opencode # project OpenCode plugin
 sh scripts/install-harness.sh claude       # Claude Code
-sh scripts/install-harness.sh kiro         # AWS Kiro
+rein hooks install <task> --vendors kiro     # task-specific Kiro agent
 
-# Clean uninstall from all harnesses:
+# Remove task-bound Rein hooks (preserves other owners):
+rein hooks uninstall <task>
+# Remove registered Rein native plugins:
 sh scripts/install-harness.sh uninstall all
 ```
 
@@ -76,11 +93,11 @@ Start a new session: the plugin's SessionStart hook builds the binary with Go (o
 | Plugin part | Name |
 |---|---|
 | Guard hooks | SessionStart (install binary), PreToolUse + Stop (`rein hook`, exec form, silent outside a contracted worktree) |
-| Skills | `rein:setup`, `rein:worktree-pipeline` (coordinator playbook for Orca), `rein:orca-e2e` (Orca browser E2E testing & Board-PDF reporting), `rein:cli-reference` (all-in-one CLI command manual) |
-| Agents | `rein:orca-swarm` (Opus coordinator, main session only), `rein:orca-steward` (Sonnet/Haiku mechanical jobs, started as an Orca worker) |
+| Skills | `rein:help` (interactive guide & troubleshooting), `rein:setup`, `rein:worktree-pipeline` (coordinator playbook for Orca), `rein:cli-reference` (all-in-one CLI command manual) |
+| Agents | `rein:rein-orchestration` (Universal Master Coordinator & Swarm Orchestrator), `rein:orca-swarm` (Opus coordinator, main session only), `rein:orca-steward` (Sonnet/Haiku mechanical jobs, started as an Orca worker) |
 
 ### 2. Antigravity (AGY)
-Install natively via `agy` CLI (or link via script):
+Install natively via `agy` CLI:
 ```sh
 agy plugin install ./plugins/rein
 # or: sh scripts/install-harness.sh agy
@@ -88,11 +105,13 @@ agy plugin install ./plugins/rein
 Antigravity automatically loads `plugins/rein/plugin.json`, imports 4 skills, 2 agents, 2 hooks, and enforces `plugins/rein/rules/AGENTS.md`. Verify with `agy plugin list`.
 
 ### 3. OpenCode
-Link or place the OpenCode V2 plugin:
+Generate the OpenCode V2 plugin inside an existing contracted worktree:
 ```sh
-sh scripts/install-harness.sh opencode
+rein hooks install <task> --vendors opencode
+# Start OpenCode inside that contract worktree. To remove:
+rein hooks uninstall <task> --vendors opencode
 ```
-OpenCode automatically executes `server.js` before each tool execution, streaming tool calls directly to `rein hook --vendor opencode`.
+The generated plugin calls the resolved Rein binary with the exact task and worktree. It must not be installed globally: that would judge other projects against the wrong contract. Restart an already-running harness to unload a plugin it has cached in memory.
 
 ### 4. Standalone Static Binary (No Harness Plugin)
 Build the single static Go binary directly (Go 1.26+; zero external dependencies):

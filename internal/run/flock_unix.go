@@ -9,7 +9,15 @@ import (
 )
 
 func lockFileExclusive(f *os.File) (bool, error) {
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	return flock(f, syscall.LOCK_EX)
+}
+
+func lockFileShared(f *os.File) (bool, error) {
+	return flock(f, syscall.LOCK_SH)
+}
+
+func flock(f *os.File, mode int) (bool, error) {
+	if err := syscall.Flock(int(f.Fd()), mode|syscall.LOCK_NB); err != nil {
 		if errors.Is(err, syscall.EWOULDBLOCK) {
 			return false, nil
 		}

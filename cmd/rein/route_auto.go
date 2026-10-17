@@ -84,6 +84,13 @@ func cmdRouteAuto(args []string) int {
 		return 1
 	}
 	c, err := contract.Load(*task)
+	var unlock func()
+	if err == nil {
+		unlock, err = acquireRouteMutation(c, *runID)
+	}
+	if err == nil {
+		defer unlock()
+	}
 	if err == nil {
 		err = routeBudget(c, *runID)
 	}
@@ -118,6 +125,17 @@ func cmdRouteSettle(args []string) int {
 		fmt.Fprintln(os.Stderr, "[route] settle requires --attempt A")
 		return 2
 	}
+	reserved, err := budget.HoldsFor(*attempt)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[route]", err)
+		return 1
+	}
+	unlock, err := acquireRouteHoldMutation(reserved)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[route]", err)
+		return 1
+	}
+	defer unlock()
 	holds, err := routing.SettleAttempt(*attempt)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[route]", err)
@@ -154,16 +172,27 @@ func cmdRouteReconcile(args []string) int {
 		fmt.Fprintln(os.Stderr, "[route] reconcile requires --hold H --reason TEXT [--used pool=amount ...]")
 		return 2
 	}
-	// the hold's owner is the already-exited `route auto`, so "owner gone" proves nothing about the worker: the task's checkout
-	// must have no writer that cannot be proven gone either
-	if holds, err := budget.Outstanding(); err == nil {
-		for _, h := range holds {
-			if h.ID == *hold && h.Task != "" {
-				if why := routing.TaskBusy(h.Task); why != "" {
-					fmt.Fprintf(os.Stderr, "[route] task %s still has a writer: %s; funds are released only once the worker is gone\n", h.Task, why)
-					return 1
-				}
-			}
+	holds, err := budget.Outstanding()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[route]", err)
+		return 1
+	}
+	var selected []budget.Hold
+	for _, h := range holds {
+		if h.ID == *hold {
+			selected = append(selected, h)
+		}
+	}
+	unlock, err := acquireRouteHoldMutation(selected)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[route]", err)
+		return 1
+	}
+	defer unlock()
+	for _, h := range selected {
+		if why := routing.TaskBusy(h.Task); why != "" {
+			fmt.Fprintf(os.Stderr, "[route] task %s still has a writer: %s; funds are released only once the worker is gone\n", h.Task, why)
+			return 1
 		}
 	}
 	h, err := budget.Reconcile(*hold, used, *reason)
@@ -187,6 +216,13 @@ func cmdRouteCalibrate(args []string) int {
 		return 2
 	}
 	c, err := contract.Load(*task)
+	var unlock func()
+	if err == nil {
+		unlock, err = acquireRouteMutation(c, *runID)
+	}
+	if err == nil {
+		defer unlock()
+	}
 	var owner, budgetProf *contract.Profile
 	var marker string
 	if err == nil {
@@ -214,6 +250,12 @@ func cmdRouteDiscover(args []string) int {
 	if fs.Parse(args) != nil || fs.NArg() != 0 {
 		return 2
 	}
+	unlock, err := acquireRouteMutation(nil, "", *dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "[route]", err)
+		return 1
+	}
+	defer unlock()
 	cfg, err := providers.Load(providers.ConfigPath(*cfgPath))
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[route]", err)

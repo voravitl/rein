@@ -260,7 +260,7 @@ func TestPluginMatcherSendsAgentToTheGuard(t *testing.T) {
 			t.Errorf("the PreToolUse matcher must cover %s, got %q", tool, g.Matcher)
 		}
 	}
-	if g.Hooks[0].Command != "${CLAUDE_PLUGIN_DATA}/bin/rein" || len(g.Hooks[0].Args) != 1 || g.Hooks[0].Args[0] != "hook" {
+	if g.Hooks[0].Command != `"${CLAUDE_PLUGIN_DATA}/bin/rein" hook` || len(g.Hooks[0].Args) != 0 {
 		t.Errorf("the PreToolUse hook must stay the rein binary with `hook`, got %+v", g.Hooks[0])
 	}
 
@@ -272,7 +272,7 @@ func TestPluginMatcherSendsAgentToTheGuard(t *testing.T) {
 	if postGroup.Matcher != "AskUserQuestion" {
 		t.Errorf("PostToolUse matcher must be AskUserQuestion, got %q", postGroup.Matcher)
 	}
-	if postGroup.Hooks[0].Command != "${CLAUDE_PLUGIN_DATA}/bin/rein" || len(postGroup.Hooks[0].Args) != 1 || postGroup.Hooks[0].Args[0] != "hook" {
+	if postGroup.Hooks[0].Command != `"${CLAUDE_PLUGIN_DATA}/bin/rein" hook` || len(postGroup.Hooks[0].Args) != 0 {
 		t.Errorf("the PostToolUse hook must be the rein binary with `hook`, got %+v", postGroup.Hooks[0])
 	}
 }

@@ -37,7 +37,7 @@ func fixture(t *testing.T) (*contract.Contract, string, string) {
 }
 func TestSequentialQuotaAndValidation(t *testing.T) {
 	c, p, log := fixture(t)
-	d, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second)
+	d, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestSequentialQuotaAndValidation(t *testing.T) {
 	if _, err = Validate(c, "run", "codex", "gpt-6.1-sol"); err != nil {
 		t.Fatal(err)
 	}
-	_, err = Prepare(c, "run", "worker:backend", "", p, false, time.Second)
+	_, err = Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,14 +71,14 @@ func TestSequentialQuotaAndValidation(t *testing.T) {
 }
 func TestReviewAndFailureInvalidate(t *testing.T) {
 	c, p, _ := fixture(t)
-	if _, err := Prepare(c, "run", "review:backend", "gpt-6.1-sol", p, false, time.Second); err == nil {
+	if _, err := Prepare(c, "run", "review:backend", "gpt-6.1-sol", p, false, 10*time.Second); err == nil {
 		t.Fatal("same-maker fallback accepted")
 	}
-	if _, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second); err != nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PIPELINE_LEDGER", t.TempDir())
-	if _, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second); err == nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err == nil {
 		t.Fatal("ledger failure accepted")
 	}
 	if _, err := Validate(c, "run", "codex", "gpt-6.1-sol"); err == nil {
@@ -87,10 +87,10 @@ func TestReviewAndFailureInvalidate(t *testing.T) {
 }
 func TestUnknownConfigAndCooldownState(t *testing.T) {
 	c, p, _ := fixture(t)
-	if _, err := Prepare(c, "run", "worker:missing", "", p, false, time.Second); err == nil {
+	if _, err := Prepare(c, "run", "worker:missing", "", p, false, 10*time.Second); err == nil {
 		t.Fatal("unknown chain accepted")
 	}
-	if _, err := Prepare(c, "run", "worker:backend", "", p, true, time.Second); err != nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, true, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(p, []byte("{}"), 0600); err != nil {
@@ -102,7 +102,7 @@ func TestUnknownConfigAndCooldownState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(contract.IndexDir(), "routes", "cooldowns.json"), []byte("bad"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second); err == nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err == nil {
 		t.Fatal("malformed accepted")
 	}
 }
@@ -124,7 +124,7 @@ func TestProbeProcess(t *testing.T) {
 
 func TestStaleReceiptAndKnownReset(t *testing.T) {
 	c, p, _ := fixture(t)
-	d, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second)
+	d, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestInvalidProviderAndIndependentPool(t *testing.T) {
 			cfg.Providers["c"] = v
 			b, _ := json.Marshal(cfg)
 			os.WriteFile(p, b, 0600)
-			if _, err = Prepare(c, "run", "worker:backend", "", p, false, time.Second); err == nil {
+			if _, err = Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err == nil {
 				t.Fatal("invalid provider accepted")
 			}
 		})
@@ -199,7 +199,7 @@ func TestInvalidProviderAndIndependentPool(t *testing.T) {
 func TestHooksAndMalformedState(t *testing.T) {
 	c, p, _ := fixture(t)
 	c.HooksGeneration = ""
-	if _, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second); err == nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err == nil {
 		t.Fatal("unhooked worker accepted")
 	}
 	c.HooksGeneration = "g1"
@@ -209,7 +209,7 @@ func TestHooksAndMalformedState(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir(), "cooldowns.json"), []byte("bad"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second); err == nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err == nil {
 		t.Fatal("malformed state accepted")
 	}
 }
@@ -222,7 +222,7 @@ func TestProviderModelNamesAndReservedTask(t *testing.T) {
 	}
 	c, p, _ := fixture(t)
 	c.Name = "cooldowns"
-	if _, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second); err != nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	s, err := Status()
@@ -237,7 +237,7 @@ func TestProviderModelNamesAndReservedTask(t *testing.T) {
 func TestMissingWorkerVendorSkipped(t *testing.T) {
 	c, p, log := fixture(t)
 	c.HooksInstalled = []string{"codex"}
-	d, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second)
+	d, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestMissingWorkerVendorSkipped(t *testing.T) {
 func TestLedgerFailurePreventsProbe(t *testing.T) {
 	c, p, log := fixture(t)
 	t.Setenv("PIPELINE_LEDGER", t.TempDir())
-	if _, err := Prepare(c, "run", "worker:backend", "", p, false, time.Second); err == nil {
+	if _, err := Prepare(c, "run", "worker:backend", "", p, false, 10*time.Second); err == nil {
 		t.Fatal("ledger failure accepted")
 	}
 	if b, err := os.ReadFile(log); err == nil {

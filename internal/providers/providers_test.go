@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -52,4 +53,45 @@ func TestProbeRejectsFailedOK(t *testing.T) {
 	if got := Probe(cfg, "bad", time.Second); got.State == "up" {
 		t.Fatal("failed process counted healthy", got)
 	}
+}
+
+// ProbeWithRetry is the single-shot counterpart of Check's parallel retry:
+// one slow answer must not drop a working provider from an ordered chain.
+func TestProbeWithRetry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("probe fixtures use sh")
+	}
+	t.Run("unknown provider stays down", func(t *testing.T) {
+		cfg := &Config{Providers: map[string]Provider{}}
+		if got := ProbeWithRetry(cfg, "missing", time.Second); got.State != "down" || got.Detail != "unknown provider" {
+			t.Fatalf("ProbeWithRetry = %+v, want down/unknown provider", got)
+		}
+	})
+	t.Run("one timeout is retried and the fast answer wins", func(t *testing.T) {
+		t.Setenv("RETRY_FLAKY", filepath.Join(t.TempDir(), "seen"))
+		cfg := &Config{Providers: map[string]Provider{
+			"flaky": {Agent: "codex", Probe: []string{"sh", "-c", `if [ -f "$RETRY_FLAKY" ]; then echo OK; else touch "$RETRY_FLAKY"; sleep 5; fi`}},
+		}}
+		if got := Probe(cfg, "flaky", 500*time.Millisecond); got.State != "down" || !strings.HasPrefix(got.Detail, "timeout") {
+			t.Fatalf("Probe = %+v, want a single timeout", got)
+		}
+		if err := os.Remove(os.Getenv("RETRY_FLAKY")); err != nil {
+			t.Fatal(err)
+		}
+		if got := ProbeWithRetry(cfg, "flaky", 500*time.Millisecond); got.State != "up" {
+			t.Fatalf("ProbeWithRetry = %+v, want up", got)
+		}
+	})
+	t.Run("persistent timeout is marked twice with accumulated time", func(t *testing.T) {
+		cfg := &Config{Providers: map[string]Provider{
+			"slow": {Agent: "codex", Probe: []string{"sh", "-c", "sleep 5"}},
+		}}
+		got := ProbeWithRetry(cfg, "slow", 300*time.Millisecond)
+		if got.State != "down" || !strings.HasSuffix(got.Detail, "(twice)") {
+			t.Fatalf("ProbeWithRetry = %+v, want down marked (twice)", got)
+		}
+		if got.Seconds < 0.6 {
+			t.Errorf("Seconds = %v, want both attempts accumulated", got.Seconds)
+		}
+	})
 }

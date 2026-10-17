@@ -291,7 +291,7 @@ func Prepare(c *contract.Contract, run, chain, workerModel, configPath string, s
 		if err = record("routing_probe", &pending); err != nil {
 			return nil, fmt.Errorf("probe ledger: %w", err)
 		}
-		r := providers.Probe(cfg, n, timeout)
+		r := providers.ProbeWithRetry(cfg, n, timeout)
 		pending.Attempts[len(pending.Attempts)-1] = r
 		if err = record("routing_probe_result", &pending); err != nil {
 			return nil, fmt.Errorf("probe result ledger: %w", err)

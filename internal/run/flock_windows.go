@@ -20,10 +20,18 @@ const (
 )
 
 func lockFileExclusive(f *os.File) (bool, error) {
+	return lockFileWindows(f, lockfileExclusiveLock|lockfileFailImmediately)
+}
+
+func lockFileShared(f *os.File) (bool, error) {
+	return lockFileWindows(f, lockfileFailImmediately)
+}
+
+func lockFileWindows(f *os.File, flags uintptr) (bool, error) {
 	var overlapped syscall.Overlapped
 	r1, _, err := procLockFileEx.Call(
 		f.Fd(),
-		uintptr(lockfileExclusiveLock|lockfileFailImmediately),
+		flags,
 		0,
 		1, 0,
 		uintptr(unsafe.Pointer(&overlapped)),

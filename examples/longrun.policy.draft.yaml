@@ -1,0 +1,26 @@
+# longrun policy — DRAFT (CLI ปัจจุบันอ่านไม่ได้ ห้ามอ้างว่าใช้ได้)
+
+# enabled: false เป็น default เสมอจนกว่า Phase B–D เสร็จ + เจ้าของอนุมัติ
+enabled: false
+
+# --- supported (มีใน CLI/config ปัจจุบันอยู่แล้ว อ้างอิงเฉยๆ ไม่ใช่ค่าของไฟล์นี้) ---
+# fallback-chain.json: providers/worker_chains/review_chains/quota_signals (+ effort/capabilities/context_tokens/billing/probe_bound สำหรับ auto)
+# profile selection: objective/accept_freshness/inventory_max_age/worker+reviewer floors/cost_basis/calibration/baseline_chain/allow_manual_chains
+# budget: task/run caps, max_review_rounds (default 2)
+
+# --- proposed (ยังไม่ implement — required owner fields เว้นว่าง ห้ามใส่ค่าปลอม) ---
+supervisor:
+  max_active_writers: 1
+  max_investigation_jobs: 1
+  max_provider_switches_per_task: 3   # initial + replacements รวมไม่เกิน 3
+  max_retry_attempts_total: null      # เจ้าของกำหนด (เพดานกัน loop อีกชั้น)
+  max_repair_rounds_per_task: 2
+  paid_overage: false
+  auto_fix: false
+  budgets: null                       # เงินจริง/credits/token budget — เจ้าของกำหนด ไม่สมมติ
+
+hunter:
+  mode: report-only
+  default_scope: diff
+  default_permission: scan
+  roles: [code-reviewer, tracer, test-engineer, security-reviewer]  # OMC prompts ผ่าน advise.sh

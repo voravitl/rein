@@ -1,0 +1,50 @@
+{
+  "name": "rein",
+  "version": "0.7.0",
+  "description": "Deterministic multi-agent worktree guardrails, contract locking, and orchestration for AI coding harnesses",
+  "main": "bin/rein.js",
+  "bin": {
+    "rein": "bin/rein.js"
+  },
+  "files": [
+    "bin/rein.js",
+    "bin/install.js",
+    "scripts/",
+    "skills/",
+    "agents/",
+    "hooks/",
+    "tools/",
+    "plugin.json",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "postinstall": "node bin/install.js",
+    "test": "go test ./..."
+  },
+  "author": {
+    "name": "P' Tik",
+    "url": "https://github.com/voravitl"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/voravitl/rein.git"
+  },
+  "homepage": "https://github.com/voravitl/rein",
+  "license": "MIT",
+  "keywords": [
+    "guardrails",
+    "multi-agent",
+    "worktree",
+    "contract",
+    "pipeline",
+    "claude-code",
+    "antigravity",
+    "opencode",
+    "codex",
+    "kiro",
+    "orca",
+    "skills"
+  ]
+}
