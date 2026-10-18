@@ -13,11 +13,13 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/voravitl/rein/internal/budget"
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/hooks"
 	"github.com/voravitl/rein/internal/ledger"
+	"github.com/voravitl/rein/internal/orca"
 	"github.com/voravitl/rein/internal/providers"
 	"github.com/voravitl/rein/internal/routing"
 	"github.com/voravitl/rein/internal/run"
@@ -78,7 +80,18 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
 	}
+	var endpointArgs []string
+	if isOrcaLaunch(argv) {
+		endpointArgs, err = orcaObservationSelectors(argv)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+	}
 	d, err := routing.Validate(c, *runID, agent, model)
+	if err == nil {
+		err = validateRouteQuotaScope(d, argv)
+	}
 	if err == nil && controller != nil && (expected == nil || d.Attempt != expected.Attempt || d.DecisionID != expected.DecisionID || d.Hold != expected.Hold) {
 		err = fmt.Errorf("supervised receipt changed after graph preparation")
 	}
@@ -97,13 +110,32 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	if err == nil && d.Attempt != "" {
 		// the prepared effort is part of the evidence the model was chosen on: launch exactly it, or nothing
 		var effort string
-		if effort, err = launchEffort(argv); err == nil && effort != strings.ToLower(d.Effort) {
+		expectedEffort := strings.ToLower(d.Effort)
+		if name := filepath.Base(argv[0]); !isOrcaLaunch(argv) && (name == "opencode" || name == "opencode2") {
+			expectedEffort = d.Effort
+		}
+		if effort, err = launchEffort(argv); err == nil && effort != expectedEffort {
 			err = fmt.Errorf("launch effort %q differs from the prepared effort %q", effort, d.Effort)
 		}
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
+	}
+	var graphInput io.Reader
+	if name := filepath.Base(argv[0]); controller != nil && (name == "opencode" || name == "opencode2") {
+		slot, err := graphPromptSlot(argv)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		// V2 quotes positional prompts containing spaces; stdin preserves the approved bytes.
+		graphInput = strings.NewReader(argv[slot])
+		start := slot
+		if argv[slot-1] == "--" {
+			start--
+		}
+		argv = append(append([]string(nil), argv[:start]...), argv[slot+1:]...)
 	}
 	// one live writer per checkout: proven by process identity, released only on proof of exit
 	var lease *routing.Lease
@@ -115,6 +147,10 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		if controller == nil {
 			defer lease.Release()
 		}
+	}
+	if isOrcaLaunch(argv) && lease == nil {
+		fmt.Fprintln(os.Stderr, "[route] Orca dispatch requires an attributable task lease")
+		return 1
 	}
 	if !isOrcaLaunch(argv) && agent == "codex" {
 		bin, binErr := os.Executable()
@@ -135,7 +171,11 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	if isOrcaLaunch(argv) {
 		launch = "orca"
 	}
-	note, _ := json.Marshal(map[string]any{"provider": d.Provider, "chain": d.Chain, "launch": launch, "configured_launch": d.Launch})
+	launchNote := map[string]any{"provider": d.Provider, "chain": d.Chain, "launch": launch, "configured_launch": d.Launch}
+	if controller != nil && result != nil {
+		launchNote["input_digest"] = result.inputDigest
+	}
+	note, _ := json.Marshal(launchNote)
 	row := ledger.Row{Kind: "routing_launch", Task: c.Name, Run: *runID, Provider: d.Provider,
 		Model: model, Role: d.Chain, Notes: string(note)}
 	if d.Attempt != "" { // attributable evidence: the denominator of this model's record, with who launched it
@@ -159,6 +199,7 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	cmd.Env = append(os.Environ(), "ADVISE_RUN="+*runID, "ADVISE_TASK="+c.Name)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	var captured dispatchReceiptBuffer
+	var agyStderr *dispatchReceiptBuffer
 	var quota *graphQuotaWriter
 	if controller != nil {
 		cfg, err := providers.Load(d.ConfigPath)
@@ -191,9 +232,13 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 			fmt.Fprintln(os.Stderr, "[route]", err)
 			return 1
 		}
-		cmd.Stdin = nil
+		cmd.Stdin = graphInput
 		cmd.Stdout = quota
 		cmd.Stderr = quota
+		if filepath.Base(argv[0]) == "agy" {
+			agyStderr = &dispatchReceiptBuffer{}
+			cmd.Stderr = io.MultiWriter(quota, agyStderr)
+		}
 	}
 	var workerReceipt dispatchReceiptBuffer
 	if isOrcaLaunch(argv) {
@@ -263,6 +308,10 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 			}
 		}
 	}
+	// Native agy can exit zero with an unfinished turn; only its stderr diagnostic is authoritative.
+	if err == nil && agyStderr != nil && (agyStderr.overflow || agyPrintTimedOut(agyStderr.String())) {
+		err = errors.New("Antigravity print completion unverified (partial timeout or stderr capture overflow)")
+	}
 	code := 0
 	if err != nil {
 		code = 1
@@ -271,25 +320,38 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		}
 		fmt.Fprintln(os.Stderr, "[route] provider launch:", err)
 	}
-	ok, minutes := code == 0, time.Since(started).Minutes()
-	row.Kind, row.OK, row.Minutes = "routing_exit", &ok, &minutes
+	minutes := time.Since(started).Minutes()
+	row.Kind, row.Minutes = "routing_exit", &minutes
 	if orca := isOrcaLaunch(argv); orca {
 		// worker-start returns once the worker STARTED, not when it ended: the time is not the worker's, and nothing here can
-		// vouch for the worker's process. The task stays held until `rein route settle --attempt` ends it.
+		// vouch for the worker's process. Settlement remains blocked without proven remote termination.
 		row.Minutes = nil
 		if lease != nil {
 			var holdErr error
-			if taskID, dispatchID, ready := workerReceipt.identity(); code == 0 && ready {
+			if taskID, dispatchID, handle, ready := workerReceipt.workerIdentity(); code == 0 && ready {
 				holdErr = lease.MarkDispatchIdentity(taskID, dispatchID)
+				if holdErr == nil {
+					holdErr = observeOrcaWorker(ctx, cmd, endpointArgs, *runID, taskID, dispatchID, handle, d.Agent, d.Model, d.Effort)
+					if holdErr == nil {
+						launchNote["worker_observation"] = "exact_live_ready"
+						note, _ := json.Marshal(launchNote)
+						row.Notes = string(note)
+					}
+				}
 			} else {
 				holdErr = lease.MarkDispatched()
+				if holdErr == nil && code == 0 {
+					holdErr = errors.New("worker-start did not confirm ready task/dispatch/handle")
+				}
 			}
 			if err := holdErr; err != nil {
-				fmt.Fprintln(os.Stderr, "[route] cannot hold the task for the dispatched worker:", err)
+				fmt.Fprintln(os.Stderr, "[route] worker dispatch remains fenced; confirmation failed:", err)
 				code = 1
 			}
 		}
 	}
+	ok := code == 0
+	row.OK = &ok
 	if err := ledger.Append(row); err != nil {
 		fmt.Fprintln(os.Stderr, "[route] cannot record provider exit:", err)
 		return 1
@@ -322,6 +384,66 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		result.Truncated = captured.overflow
 	}
 	return code
+}
+
+func observeOrcaWorker(ctx context.Context, launch *exec.Cmd, selectors []string, runID, taskID, dispatchID, handle, agent, model, effort string) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	args := append([]string{"orchestration", "worker-show", "--dispatch", dispatchID, "--json"}, selectors...)
+	show := exec.CommandContext(ctx, launch.Path, args...)
+	show.Dir, show.Env, show.WaitDelay = launch.Dir, append([]string(nil), launch.Env...), time.Second
+	var output dispatchReceiptBuffer
+	// MultiWriter keeps io.Copy on the bounded Write path rather than embedded Buffer.ReadFrom.
+	show.Stdout, show.Stderr = io.MultiWriter(&output), io.Discard
+	if err := show.Run(); err != nil {
+		return fmt.Errorf("worker dispatch observation unconfirmed: %w", err)
+	}
+	if output.overflow {
+		return errors.New("worker dispatch observation exceeds output bounds")
+	}
+	_, err := orca.ValidateWorkerObservation(output.Bytes(), runID, taskID, dispatchID, handle)
+	if err != nil {
+		return err
+	}
+	return orca.ValidateWorkerLaunchIdentity(output.Bytes(), agent, model, effort)
+}
+
+func orcaObservationSelectors(argv []string) ([]string, error) {
+	names := []string{"--environment", "--pairing-code"}
+	for _, name := range names {
+		if _, err := launchFlag(argv[1:], name); err != nil {
+			return nil, err
+		}
+	}
+	var selectors []string
+	for i := 1; i < len(argv) && argv[i] != "--"; i++ {
+		for _, name := range names {
+			if argv[i] == name {
+				selectors = append(selectors, argv[i], argv[i+1])
+				i++
+				break
+			}
+			if strings.HasPrefix(argv[i], name+"=") {
+				selectors = append(selectors, argv[i])
+				break
+			}
+		}
+	}
+	return selectors, nil
+}
+
+func agyPrintTimedOut(stderr string) bool {
+	const prefix = "[agy] print timeout after "
+	const suffix = " with turn in progress; returning partial output"
+	for _, line := range strings.Split(stderr, "\n") {
+		line = strings.TrimSuffix(line, "\r")
+		if strings.HasPrefix(line, prefix) && strings.HasSuffix(line, suffix) {
+			if _, err := time.ParseDuration(strings.TrimSuffix(strings.TrimPrefix(line, prefix), suffix)); err == nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func isOrcaLaunch(argv []string) bool {
@@ -405,6 +527,9 @@ func launchIdentity(argv []string, c *contract.Contract, runID string) (string, 
 	name, args := filepath.Base(argv[0]), argv[1:]
 	agent := map[string]string{"claude": "claude", "codex": "codex", "agy": "antigravity", "kiro-cli": "kiro", "opencode": "opencode", "opencode2": "opencode2"}[name]
 	if isOrcaLaunch(argv) {
+		if _, err := orcaObservationSelectors(argv); err != nil {
+			return "", "", err
+		}
 		if len(args) < 2 || args[0] != "orchestration" || args[1] != "worker-start" {
 			return "", "", fmt.Errorf("route launch only supports Orca orchestration worker-start or a provider CLI")
 		}
@@ -476,12 +601,47 @@ func launchIdentity(argv []string, c *contract.Contract, runID string) (string, 
 	if err != nil || agent == "" || model == "" {
 		return "", "", fmt.Errorf("launch requires one explicit agent and model: %v", err)
 	}
+	if !isOrcaLaunch(argv) && (name == "opencode" || name == "opencode2") {
+		model, _, err = openCodeModelVariant(argv)
+		if err != nil {
+			return "", "", err
+		}
+	}
 	return agent, model, nil
 }
 
-// launchEffort returns the reasoning effort an argv asks for: --effort or --variant (claude, agy, opencode, Orca worker-start)
+// OpenCode V2 puts the variant in --model provider/model#variant, not a separate flag.
+func openCodeModelVariant(argv []string) (string, string, error) {
+	for _, arg := range argv[1:] {
+		if arg == "--" {
+			break
+		}
+		if arg == "--effort" || strings.HasPrefix(arg, "--effort=") || arg == "--variant" || strings.HasPrefix(arg, "--variant=") || arg == "--config" || strings.HasPrefix(arg, "--config=") {
+			return "", "", fmt.Errorf("OpenCode V2 requires --model provider/model#variant; unsupported option %q", arg)
+		}
+	}
+	selector, err := launchFlag(argv[1:], "--model", "-m")
+	if err != nil {
+		return "", "", err
+	}
+	model, variant, hasVariant := strings.Cut(selector, "#")
+	if !hasVariant {
+		return selector, "", nil
+	}
+	provider, id, slash := strings.Cut(model, "/")
+	if !slash || provider == "" || id == "" || variant == "" || strings.ContainsRune(variant, '#') || strings.IndexFunc(selector, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return "", "", fmt.Errorf("invalid OpenCode V2 model variant selector %q", selector)
+	}
+	return model, variant, nil
+}
+
+// launchEffort returns the reasoning effort an argv asks for: --effort or --variant (claude, agy, Orca worker-start), OpenCode V2's model suffix,
 // or Codex's model_reasoning_effort configuration. "" means it names none; two different values are an error.
 func launchEffort(argv []string) (string, error) {
+	if name := filepath.Base(argv[0]); !isOrcaLaunch(argv) && (name == "opencode" || name == "opencode2") {
+		_, variant, err := openCodeModelVariant(argv)
+		return variant, err
+	}
 	norm := func(v string) string { return strings.ToLower(strings.Trim(strings.TrimSpace(v), `"'`)) }
 	args := argv[1:]
 	flagVal, err := launchFlag(args, "--effort", "--variant")
@@ -537,8 +697,13 @@ func (b *dispatchReceiptBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *dispatchReceiptBuffer) identity() (string, string, bool) {
+	task, dispatch, _, ready := b.workerIdentity()
+	return task, dispatch, ready
+}
+
+func (b *dispatchReceiptBuffer) workerIdentity() (string, string, string, bool) {
 	if b.overflow {
-		return "", "", false
+		return "", "", "", false
 	}
 	var receipt struct {
 		Error  json.RawMessage `json:"error"`
@@ -556,12 +721,40 @@ func (b *dispatchReceiptBuffer) identity() (string, string, bool) {
 		} `json:"result"`
 	}
 	if json.Unmarshal(b.Bytes(), &receipt) != nil || (len(receipt.Error) != 0 && string(bytes.TrimSpace(receipt.Error)) != "null") || !receipt.OK || receipt.Result.State != "ready" || strings.TrimSpace(receipt.Result.Task) == "" || strings.TrimSpace(receipt.Result.Dispatch) == "" {
-		return "", "", false
+		return "", "", "", false
 	}
+	handle := ""
 	for _, effect := range receipt.Result.Effects {
 		if effect.Kind == "dispatch_input" && effect.Role == "agent" && effect.State == "accepted" && strings.TrimSpace(effect.ID) != "" {
-			return receipt.Result.Task, receipt.Result.Dispatch, true
+			if strings.TrimSpace(effect.ID) != effect.ID || (handle != "" && handle != effect.ID) {
+				return "", "", "", false
+			}
+			handle = effect.ID
 		}
 	}
-	return "", "", false
+	return receipt.Result.Task, receipt.Result.Dispatch, handle, handle != ""
+}
+
+func validateRouteQuotaScope(d *routing.Decision, argv []string) error {
+	if !isOrcaLaunch(argv) {
+		return nil
+	}
+	cfg, err := providers.Load(d.ConfigPath)
+	if err != nil {
+		return err
+	}
+	if !cfg.RequireOrcaQuota {
+		return nil
+	}
+	// The account-list snapshot is scoped locally, not to worker-start selectors.
+	for _, name := range []string{"--environment", "--pairing-code", "--on"} {
+		target, err := launchFlag(argv[1:], name)
+		if err != nil {
+			return errors.New("quota precheck: invalid Orca endpoint selector")
+		}
+		if target != "" {
+			return errors.New("quota precheck: explicit Orca endpoint is not bound to the local quota snapshot")
+		}
+	}
+	return nil
 }

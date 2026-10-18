@@ -1,6 +1,6 @@
 name: release
-# Push a tag v<version> that matches .claude-plugin/plugin.json; the plugin's SessionStart installer downloads
-# rein-<os>-<arch> from this release (checked against SHA256SUMS) on machines without Go.
+# Push a tag v<version> that matches every package and plugin manifest; the plugin's SessionStart installer
+# downloads rein-<os>-<arch> from this release (checked against SHA256SUMS) on machines without Go.
 on:
   push:
     tags: ["v*"]
@@ -14,12 +14,15 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: tag matches plugin version
-        run: |
-          want="v$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' .claude-plugin/plugin.json | head -1)"
-          test "$want" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != plugin.json $want"; exit 1; }
+      - name: tag matches package and plugin versions
+        run: sh scripts/check-version-consistency.sh "$GITHUB_REF_NAME"
       - run: go test ./...
       - run: VERSION="${GITHUB_REF_NAME#v}" sh scripts/build.sh
-      - run: gh release create "$GITHUB_REF_NAME" dist/rein-* dist/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes
+      - run: VERSION="${GITHUB_REF_NAME#v}" sh scripts/package-crux.sh
+      - name: append the Crux asset digest
+        run: |
+          cd dist
+          if command -v sha256sum >/dev/null 2>&1; then sha256sum crux-*.tgz >> SHA256SUMS; else shasum -a 256 crux-*.tgz >> SHA256SUMS; fi
+      - run: gh release create "$GITHUB_REF_NAME" dist/rein-* dist/crux-*.tgz dist/SHA256SUMS --title "$GITHUB_REF_NAME" --generate-notes
         env:
           GH_TOKEN: ${{ github.token }}

@@ -1,5 +1,7 @@
 # Implementation Backlog (v0.2)
 
+> **สถานะปัจจุบัน (2026-10-19):** backlog นี้เป็นบันทึกของช่วง v0.2 label “test-only” ด้านล่างเป็นสถานะ historical ไม่ใช่สถานะ release 0.9.0 — ดู `docs/ROADMAP.md` และ `docs/CLI_REFERENCE.md` สำหรับความสามารถที่ ship แล้วและ live gates ที่ยังไม่ผ่าน
+
 - **Version:** 0.2 · เรียงตาม safety + dependency · แต่ละ slice: implementation + tests + docs ตรงกัน
 - สถานะคำ: DONE (มี code+test เขียว) / DOING / NEXT / PROPOSED (design only)
 

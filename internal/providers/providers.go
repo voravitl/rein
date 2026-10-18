@@ -19,13 +19,15 @@ import (
 )
 
 type Provider struct {
-	Maker  string   `json:"maker,omitempty"`
-	Pool   string   `json:"pool,omitempty"`
-	Agent  string   `json:"agent"`
-	Model  string   `json:"model"`
-	Launch string   `json:"launch"`
-	Cost   string   `json:"cost"` // descriptive text only; scored selection reads Billing
-	Probe  []string `json:"probe"`
+	QuotaWindows        []string `json:"quota_windows,omitempty"`
+	QuotaReservePercent float64  `json:"quota_reserve_percent,omitempty"`
+	Maker               string   `json:"maker,omitempty"`
+	Pool                string   `json:"pool,omitempty"`
+	Agent               string   `json:"agent"`
+	Model               string   `json:"model"`
+	Launch              string   `json:"launch"`
+	Cost                string   `json:"cost"` // descriptive text only; scored selection reads Billing
+	Probe               []string `json:"probe"`
 
 	// Automatic selection (docs/ROUTING_SELECTION_DESIGN.md). All optional: ordered chains ignore them.
 	Effort        string   `json:"effort,omitempty"`         // reasoning-effort variant this provider is launched with
@@ -57,10 +59,12 @@ type DiscoverySpec struct {
 }
 
 type Config struct {
-	Providers    map[string]Provider `json:"providers"`
-	WorkerChains map[string][]string `json:"worker_chains"`
-	ReviewChains map[string][]string `json:"review_chains"`
-	QuotaSignals map[string][]string `json:"quota_signals"`
+	RequireOrcaQuota  bool                `json:"require_orca_quota,omitempty"`
+	ModelCallsEnabled *bool               `json:"model_calls_enabled,omitempty"`
+	Providers         map[string]Provider `json:"providers"`
+	WorkerChains      map[string][]string `json:"worker_chains"`
+	ReviewChains      map[string][]string `json:"review_chains"`
+	QuotaSignals      map[string][]string `json:"quota_signals"`
 	// Discovery optionally overrides the executable per harness (codex, kiro, antigravity, opencode, opencode2, claude).
 	Discovery map[string]DiscoverySpec `json:"discovery,omitempty"`
 }
@@ -173,21 +177,27 @@ func lastLine(s string) string {
 // Check probes the named providers in parallel.
 func Check(c *Config, names []string, timeout time.Duration) map[string]Result {
 	out := map[string]Result{}
+	if err := c.CheckModelCalls(); err != nil {
+		for _, n := range names {
+			out[n] = Result{Name: n, State: "down", Detail: err.Error()}
+		}
+		return out
+	}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, n := range names {
-		p, ok := c.Providers[n]
+		_, ok := c.Providers[n]
 		if !ok {
 			continue
 		}
 		wg.Add(1)
-		go func(n string, p Provider) {
+		go func(n string) {
 			defer wg.Done()
-			r := probeWithRetry(context.Background(), n, p, c.QuotaSignals[p.Agent], timeout)
+			r := ProbeWithRetry(c, n, timeout)
 			mu.Lock()
 			out[n] = r
 			mu.Unlock()
-		}(n, p)
+		}(n)
 	}
 	wg.Wait()
 	return out
@@ -267,9 +277,15 @@ func Print(w io.Writer, c *Config, names []string, results map[string]Result, pi
 
 // Probe checks one provider without probing unused fallback candidates.
 func Probe(c *Config, name string, timeout time.Duration) Result {
+	if err := c.CheckModelCalls(); err != nil {
+		return Result{Name: name, State: "down", Detail: err.Error()}
+	}
 	p, ok := c.Providers[name]
 	if !ok {
 		return Result{Name: name, State: "down", Detail: "unknown provider"}
+	}
+	if err := c.CheckQuota(name); err != nil {
+		return Result{Name: name, State: "down", Detail: err.Error()}
 	}
 	return probe(context.Background(), name, p, c.QuotaSignals[p.Agent], timeout)
 }
@@ -280,9 +296,24 @@ func Probe(c *Config, name string, timeout time.Duration) Result {
 // whose detail starts with "timeout"), same single retry, same "(twice)"
 // marker and the same accumulated Seconds.
 func ProbeWithRetry(c *Config, name string, timeout time.Duration) Result {
+	if err := c.CheckModelCalls(); err != nil {
+		return Result{Name: name, State: "down", Detail: err.Error()}
+	}
 	p, ok := c.Providers[name]
 	if !ok {
 		return Result{Name: name, State: "down", Detail: "unknown provider"}
+	}
+	if c.RequireOrcaQuota {
+		r := Probe(c, name, timeout)
+		if r.State == "down" && strings.HasPrefix(r.Detail, "timeout") {
+			next := Probe(c, name, timeout)
+			next.Seconds += r.Seconds
+			if next.State == "down" && strings.HasPrefix(next.Detail, "timeout") {
+				next.Detail += " (twice)"
+			}
+			return next
+		}
+		return r
 	}
 	return probeWithRetry(context.Background(), name, p, c.QuotaSignals[p.Agent], timeout)
 }

@@ -191,6 +191,10 @@ func (l graphLog) append(e graphEntry) error {
 	return err
 }
 func (l graphLog) load(p Plan) (map[string]*graphTaskState, int, error) {
+	return l.loadForRead(p, false)
+}
+
+func (l graphLog) loadForRead(p Plan, observeOnly bool) (map[string]*graphTaskState, int, error) {
 	states := map[string]*graphTaskState{}
 	tasks := map[string]Task{}
 	for _, t := range p.Tasks {
@@ -210,6 +214,10 @@ func (l graphLog) load(p Plan) (map[string]*graphTaskState, int, error) {
 	if b[len(b)-1] != '\n' {
 		return nil, 0, errors.New("truncated graph journal")
 	}
+	if _, err := l.invocations(p, b); err != nil {
+		return nil, 0, err
+	}
+	failed := false
 	pending := ""
 	operation := ""
 	checks := 0
@@ -217,6 +225,12 @@ func (l graphLog) load(p Plan) (map[string]*graphTaskState, int, error) {
 		var e graphEntry
 		if err := strictDecode(line, &e); err != nil {
 			return nil, 0, fmt.Errorf("graph journal line %d: %w", i+1, err)
+		}
+		if e.Phase == "lifecycle" {
+			continue
+		}
+		if failed {
+			return nil, 0, errors.New("task operation after failed graph operation")
 		}
 		s, ok := states[e.Task]
 		if !ok {
@@ -255,13 +269,23 @@ func (l graphLog) load(p Plan) (map[string]*graphTaskState, int, error) {
 			pending = ""
 			operation = ""
 		case "error":
-			return nil, 0, errors.New("previous graph operation failed; explicit reconciliation required")
+			if pending != e.Task || operation != e.Operation || len(e.Data) != 0 || e.Error == "" {
+				return nil, 0, errors.New("graph error missing matching intent")
+			}
+			failed = true
+			pending, operation = "", ""
 		default:
 			return nil, 0, errors.New("unknown graph journal phase")
 		}
 	}
-	if pending != "" {
+	if failed && !observeOnly {
+		return nil, 0, errors.New("previous graph operation failed; explicit reconciliation required")
+	}
+	if pending != "" && !observeOnly {
 		return nil, 0, errors.New("unresolved graph side effect; explicit reconciliation required")
+	}
+	if observeOnly {
+		return states, checks, nil
 	}
 	// A previously appended record may have survived a failed fsync. Do not act
 	// from it until its durability is re-established on this invocation.

@@ -211,6 +211,8 @@ func cmdRouteCalibrate(args []string) int {
 	cfg := fs.String("config", "", "fallback-chain.json")
 	amount := fs.Float64("amount", -1, "worst case of the call in the provider's billing unit")
 	calls := fs.Int("calls", 1, "worst-case model calls")
+	prepare := fs.Bool("prepare", false, "prepare a single-use local worker calibration execution")
+	profile := fs.String("profile-file", "", "worker task profile required with --prepare")
 	if fs.Parse(args) != nil || fs.NArg() != 0 || *task == "" || *runID == "" || *provider == "" || *amount < 0 {
 		fmt.Fprintln(os.Stderr, "[route] calibrate requires --task T --run R --provider P --amount N")
 		return 2
@@ -232,8 +234,36 @@ func cmdRouteCalibrate(args []string) int {
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
 	}
-	h, err := routing.ReserveCalibration(routing.CalibrationInput{Contract: c, Run: *runID, ConfigPath: *cfg, Owner: owner, Budget: budgetProf,
-		MarkerPath: marker, Provider: *provider, Amount: *amount, Calls: *calls})
+	in := routing.CalibrationInput{Contract: c, Run: *runID, ConfigPath: *cfg, Owner: owner, Budget: budgetProf,
+		MarkerPath: marker, Provider: *provider, Amount: *amount, Calls: *calls}
+	if *prepare {
+		if *profile == "" || *calls != 1 {
+			fmt.Fprintln(os.Stderr, "[route] --prepare requires --profile-file and --calls 1")
+			return 2
+		}
+		f, e := os.Open(*profile)
+		if e != nil {
+			fmt.Fprintln(os.Stderr, "[route]", e)
+			return 1
+		}
+		raw, e := io.ReadAll(io.LimitReader(f, maxProfileBytes+1))
+		f.Close()
+		if e != nil || len(raw) > maxProfileBytes {
+			fmt.Fprintln(os.Stderr, "[route] invalid or oversized task profile")
+			return 1
+		}
+		d, e := routing.PrepareCalibration(in, raw)
+		if e != nil {
+			fmt.Fprintln(os.Stderr, "[route]", e)
+			return 1
+		}
+		return printJSON(d)
+	}
+	if *profile != "" {
+		fmt.Fprintln(os.Stderr, "[route] --profile-file requires --prepare")
+		return 2
+	}
+	h, err := routing.ReserveCalibration(in)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1

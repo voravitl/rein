@@ -244,7 +244,12 @@ func TestCensusResidualSpawnAfterRecord(t *testing.T) {
 	dir := t.TempDir()
 	trigger := filepath.Join(dir, "trigger")
 	out := filepath.Join(dir, "orphan.pid")
-	cmd := exec.Command("/bin/sh", "-c", `while [ ! -e "$TRIGGER" ]; do sleep 0.2; done; "$SLEEPBIN" 15 & echo $! > "$OUT"; exit`, "")
+	// A shell builtin blocked on a FIFO has no polling sleep child. The old
+	// polling loop raced CensusRecord by creating exactly such a descendant.
+	if err := syscall.Mkfifo(trigger, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("/bin/sh", "-c", `read -r trigger < "$TRIGGER"; "$SLEEPBIN" 15 & echo $! > "$OUT"; exit`, "")
 	// $TRIGGER/$OUT/$SLEEPBIN come from env; the lone "" is the shell's $0
 	cmd.Env = append(os.Environ(), "TRIGGER="+trigger, "OUT="+out, "SLEEPBIN=/bin/sleep")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -252,6 +257,14 @@ func TestCensusResidualSpawnAfterRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := cmd.Process.Pid
+	defer func() {
+		// Reap the owned trigger shell even if recording/assertions fail before
+		// the FIFO is released. Otherwise a failed test leaves a waiting shell.
+		if cmd.ProcessState == nil {
+			_ = syscall.Kill(-root, syscall.SIGKILL)
+			_ = cmd.Wait()
+		}
+	}()
 
 	snap, err := CensusRecord(root)
 	if err != nil {
@@ -261,7 +274,7 @@ func TestCensusResidualSpawnAfterRecord(t *testing.T) {
 		t.Fatalf("expected an empty node set behind the trigger shell, got %+v", snap.Nodes)
 	}
 
-	if err := os.WriteFile(trigger, nil, 0644); err != nil {
+	if err := os.WriteFile(trigger, []byte("go\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if err := cmd.Wait(); err != nil { // shell runs to exit after spawning the orphan

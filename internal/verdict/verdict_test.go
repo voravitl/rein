@@ -137,34 +137,10 @@ func TestRevisionIdentitiesMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := RevisionIdentitiesMatch(tt.idA, tt.idB, "", "", "", nil)
+			got := RevisionIdentitiesMatch(tt.idA, tt.idB, "", "", "")
 			if got != tt.want {
 				t.Errorf("RevisionIdentitiesMatch(%q, %q) = %v, want %v",
 					tt.idA, tt.idB, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFilesIntersect(t *testing.T) {
-	tests := []struct {
-		name string
-		a    []string
-		b    []string
-		want bool
-	}{
-		{"no intersection", []string{"a.go", "b.go"}, []string{"c.go", "d.go"}, false},
-		{"one common file", []string{"a.go", "b.go"}, []string{"b.go", "c.go"}, true},
-		{"empty a", []string{}, []string{"a.go"}, false},
-		{"empty b", []string{"a.go"}, []string{}, false},
-		{"both empty", []string{}, []string{}, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := filesIntersect(tt.a, tt.b)
-			if got != tt.want {
-				t.Errorf("filesIntersect(%v, %v) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
 	}

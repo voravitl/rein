@@ -100,6 +100,14 @@ func cmdLedgerCharge(args []string) int {
 			return 2
 		}
 		row.Run, row.Task, row.Decision = launch.Run, launch.Task, launch.Decision
+		if *component == "worker" || *component == "repair" || *component == "fallback" {
+			if launch.Worker == nil || !strings.HasPrefix(launch.Role, "worker:") || launch.Provider == "" || launch.Config == "" || (*provider != "" && *provider != launch.Provider) || (*model != "" && *model != launch.Worker.Model) {
+				fmt.Fprintln(os.Stderr, "[ledger] worker charge must match the actual worker launch and its configuration")
+				return 2
+			}
+			row.Provider, row.Model = launch.Provider, launch.Worker.Model
+			row.Effort, row.Config = launch.Effort, launch.Config
+		}
 		if *component == "review" {
 			if launch.Provider != *provider || launch.Worker == nil || launch.Worker.Model != *model || launch.Role != "review:auto" || launch.Config == "" {
 				fmt.Fprintln(os.Stderr, "[ledger] review charge must match a known reviewer launch and its configuration")

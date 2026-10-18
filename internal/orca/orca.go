@@ -231,42 +231,9 @@ func Launch(ctx context.Context, opts LaunchOptions) (*LaunchResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("worker ready but dispatch observation unconfirmed (task=%s dispatch=%s): %w", worker.TaskID, worker.DispatchID, err)
 		}
-		var observation struct {
-			OK     bool `json:"ok"`
-			Result struct {
-				Dispatch struct {
-					ID       string `json:"id"`
-					Task     string `json:"taskId"`
-					Run      string `json:"runId"`
-					Assignee string `json:"assigneeHandle"`
-				} `json:"dispatch"`
-				Worker struct {
-					Dispatch string `json:"dispatchId"`
-					State    string `json:"state"`
-					Handle   string `json:"agentTerminalHandle"`
-				} `json:"worker"`
-				Observation struct {
-					Exact  bool   `json:"exactWorker"`
-					Status string `json:"status"`
-				} `json:"observation"`
-				Terminal *struct {
-					Handle string `json:"handle"`
-				} `json:"terminal"`
-			} `json:"result"`
-		}
-		if err := json.Unmarshal(CleanJSON(shown), &observation); err != nil {
-			return nil, fmt.Errorf("parse worker dispatch observation: %w", err)
-		}
-		got := observation.Result
-		if !observation.OK || got.Dispatch.ID != worker.DispatchID || got.Dispatch.Task != worker.TaskID || got.Dispatch.Run != opts.RunID || got.Dispatch.Assignee != handle || got.Worker.Dispatch != worker.DispatchID || got.Worker.Handle != handle || got.Worker.State != "ready" || !got.Observation.Exact || got.Observation.Status != "live" {
-			return nil, fmt.Errorf("worker dispatch observation mismatches exact task/run/handle or is not live supervised ready (task=%s dispatch=%s)", worker.TaskID, worker.DispatchID)
-		}
-		terminalHandle := ""
-		if got.Terminal != nil {
-			if got.Terminal.Handle != handle {
-				return nil, errors.New("worker terminal handle differs from supervised dispatch")
-			}
-			terminalHandle = handle
+		terminalHandle, err := ValidateWorkerObservation(CleanJSON(shown), opts.RunID, worker.TaskID, worker.DispatchID, handle)
+		if err != nil {
+			return nil, err
 		}
 
 		return &LaunchResult{Name: opts.Name, WorktreePath: wtPath, TerminalHandle: terminalHandle, WorkerHandle: handle,

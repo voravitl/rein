@@ -124,8 +124,9 @@ func cmdVerdictCheck(args []string) int {
 		return 2
 	}
 
-	// Compute patch ID
-	patchID, err := verdict.ComputeRevisionID(*repoPath, "origin/main", "HEAD")
+	// Compute the patch ID of the revision under review, not of whatever HEAD
+	// happens to be: the identity must describe the SHA the verdicts bind to.
+	patchID, err := verdict.ComputeRevisionID(*repoPath, "origin/main", *sha)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not compute patch ID: %v\n", err)
 		patchID = ""
@@ -207,8 +208,9 @@ func cmdApprove(args []string) int {
 		actualSHA = strings.TrimSpace(string(out))
 	}
 
-	// Compute patch ID
-	patchID, err := verdict.ComputeRevisionID(*repoPath, "origin/main", "HEAD")
+	// Compute the patch ID of the approved revision, not of whatever HEAD
+	// happens to be: the approval must describe the SHA it records.
+	patchID, err := verdict.ComputeRevisionID(*repoPath, "origin/main", actualSHA)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "warning: could not compute patch ID: %v\n", err)
 		patchID = ""
@@ -281,14 +283,14 @@ func cmdApprovePrompt(args []string) int {
 			taskTier = tier.EvaluateFromAllowGlobs(c.Allow, c.Profile.SensitivePaths)
 
 			// Also escalate based on actual changed files
-			changedFiles, err := getChangedFiles(*repoPath, "origin/main", "HEAD")
+			changedFiles, err := getChangedFiles(*repoPath, "origin/main", actualSHA)
 			if err == nil {
 				taskTier = tier.EvaluateFromChangedFiles(changedFiles, c.Profile.SensitivePaths, taskTier)
 			}
 		}
 	} else {
 		// No contract provided - try to infer from changed files
-		changedFiles, err := getChangedFiles(*repoPath, "origin/main", "HEAD")
+		changedFiles, err := getChangedFiles(*repoPath, "origin/main", actualSHA)
 		if err == nil && len(changedFiles) > 0 {
 			// Use simple heuristics for tier without contract
 			for _, f := range changedFiles {
@@ -358,8 +360,8 @@ func getVerdictSummary(storageDir string, mr int, sha string, repoPath string) s
 		return "No verdicts recorded yet"
 	}
 
-	// Compute current patch ID for matching - use the resolved repoPath
-	currentPatchID, err := verdict.ComputeRevisionID(repoPath, "origin/main", "HEAD")
+	// Compute the checked revision's patch ID for matching - use the resolved repoPath
+	currentPatchID, err := verdict.ComputeRevisionID(repoPath, "origin/main", sha)
 	if err != nil {
 		currentPatchID = ""
 	}

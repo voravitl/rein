@@ -41,6 +41,7 @@ type graphExecution struct {
 	HandoffPath     string    `json:"handoff_path,omitempty"`
 	HandoffDigest   string    `json:"handoff_digest,omitempty"`
 	CompletedAt     time.Time `json:"completed_at"`
+	inputDigest     string
 }
 
 func graphEvidencePath(attempt, kind string) string {
@@ -164,11 +165,18 @@ func loadGraphExecution(p supervisor.Plan, t supervisor.Task, d supervisor.Dispa
 
 func graphOperations(p supervisor.Plan) supervisor.Operations {
 	handoffs := map[string]graphHandoffRef{}
+	type continuation struct {
+		dispatch supervisor.Dispatch
+		outcome  supervisor.Outcome
+	}
+	previous := map[string]continuation{}
 	return supervisor.Operations{
+		InvocationID: os.Getenv("REIN_SUPERVISOR_INVOCATION"),
 		Resume: func(ctx context.Context, control *run.Controller, t supervisor.Task, d supervisor.Dispatch, o supervisor.Outcome) error {
 			ref, err := prepareGraphHandoff(control, p, t, d, o)
 			if err == nil {
 				handoffs[t.Task] = ref
+				previous[t.Task] = continuation{d, o}
 			}
 			return err
 		},
@@ -194,6 +202,36 @@ func graphOperations(p supervisor.Plan) supervisor.Operations {
 		},
 		Launch: func(ctx context.Context, control *run.Controller, t supervisor.Task, d *routing.Decision, argv []string) (supervisor.Dispatch, error) {
 			var e graphExecution
+			currentContract, err := contract.Load(t.Task)
+			if err != nil {
+				return supervisor.Dispatch{}, err
+			}
+			agent, model, err := launchIdentity(argv, currentContract, p.Run)
+			if err != nil {
+				return supervisor.Dispatch{}, err
+			}
+			current, err := routing.Validate(currentContract, p.Run, agent, model)
+			if err != nil {
+				return supervisor.Dispatch{}, err
+			}
+			if d == nil || current.Attempt != d.Attempt || current.DecisionID != d.DecisionID || current.Hold != d.Hold {
+				return supervisor.Dispatch{}, errors.New("supervised receipt changed before input construction")
+			}
+			if prior, ok := previous[t.Task]; ok {
+				ref, err := prepareGraphHandoff(control, p, t, prior.dispatch, prior.outcome)
+				if err != nil {
+					return supervisor.Dispatch{}, err
+				}
+				if ref != handoffs[t.Task] {
+					return supervisor.Dispatch{}, errors.New("continuation identity changed before launch")
+				}
+			}
+			enriched, digest, err := graphLaunchInput(control, p, t, d, argv, handoffs[t.Task])
+			if err != nil {
+				return supervisor.Dispatch{}, err
+			}
+			e.inputDigest = digest
+			argv = enriched
 			e.HandoffPath = handoffs[t.Task].Path
 			e.HandoffDigest = handoffs[t.Task].Digest
 			args := append([]string{"--task", t.Task, "--run", p.Run, "--"}, argv...)
@@ -356,6 +394,9 @@ func validateLocalGraphPlan(p supervisor.Plan) error {
 		if err != nil {
 			return err
 		}
+		if routing.ContractHash(c) != t.ContractHash {
+			return fmt.Errorf("task %s contract changed", t.Task)
+		}
 		wt, err := filepath.EvalSymlinks(c.Worktree)
 		if err != nil {
 			return err
@@ -367,6 +408,13 @@ func validateLocalGraphPlan(p supervisor.Plan) error {
 		if t.ProcessPolicy != "non_detaching" {
 			return errors.New("local graph requires process_policy non_detaching; detached descendants cannot be proven gone")
 		}
+		configBytes, err := os.ReadFile(t.ConfigPath)
+		if err != nil {
+			return err
+		}
+		if graphHash(configBytes) != t.ConfigDigest {
+			return fmt.Errorf("task %s provider config changed", t.Task)
+		}
 		cfg, err := providers.Load(t.ConfigPath)
 		if err != nil {
 			return err
@@ -375,10 +423,16 @@ func validateLocalGraphPlan(p supervisor.Plan) error {
 		if err != nil {
 			return err
 		}
+		if profile.ContractHash != t.ContractHash {
+			return fmt.Errorf("task %s profile contract hash does not match plan", t.Task)
+		}
 		if profile.Phase != "worker" {
 			return errors.New("graph task profiles must describe worker execution")
 		}
 		for provider, argv := range t.Launches {
+			if _, err := graphPromptSlot(argv); err != nil {
+				return fmt.Errorf("task %s provider %s: %w", t.Task, provider, err)
+			}
 			selected, ok := cfg.Providers[provider]
 			if !ok || selected.Launch != "shell" || isOrcaLaunch(argv) {
 				return errors.New("graph supports local shell providers only; remote worker death cannot be proven")

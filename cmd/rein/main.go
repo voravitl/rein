@@ -43,6 +43,8 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "config":
+		os.Exit(cmdConfig(os.Args[2:]))
 	case "hook":
 		os.Exit(cmdHook(os.Args[2:]))
 	case "hooks":
@@ -78,6 +80,9 @@ func main() {
 	case "orca":
 		os.Exit(cmdOrca(os.Args[2:]))
 	case "supervisor":
+		if len(os.Args) > 2 && os.Args[2] == "invocation" {
+			os.Exit(cmdGraphInvocation(os.Args[3:]))
+		}
 		os.Exit(cmdSupervisor(os.Args[2:]))
 	case "checkpoint":
 		os.Exit(cmdCheckpoint(os.Args[2:]))
@@ -92,10 +97,12 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|advise|orca|checkpoint|hunter|supervisor|e2e|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <config|hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|advise|orca|checkpoint|hunter|supervisor|e2e|version> [args]
   rein supervisor validate|run --plan FILE             bounded authorized monitor (no auto dispatch/settle)
+  rein supervisor invocation <plan> ...                native Crux/Claude/Codex/Agy launch-argument validation
   rein checkpoint finalize|verify|restore              durable local snapshot and restore into a new directory
-  rein hunter report|get|list|reproduce                 report-only findings and isolated local reproduction
+  rein config init|check --dir DIR                     Crux provider config (disabled by default; --quota orca reads cached quota)
+  rein hunter report|get|list|triage|authorize-fix|start-fix|reproduce|verify|review|approve|scan-report    report-only findings and the gated fix lifecycle
   rein orca launch|wait|drain|close|tidy|census              native Orca orchestration, worker management and census verify
   rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
   rein hooks install|uninstall <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags

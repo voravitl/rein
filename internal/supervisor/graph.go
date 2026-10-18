@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/routing"
@@ -21,12 +22,14 @@ import (
 // Operations is implemented by the production adapter, which supplies actual
 // routing, dispatch, observation and checkpoint/accounting evidence.
 type Operations struct {
-	Resume     func(context.Context, *run.Controller, Task, Dispatch, Outcome) error
-	Revalidate func(context.Context, *run.Controller, Task, Dispatch, Outcome) error
-	Prepare    func(context.Context, *run.Controller, Task) (*routing.AutoResult, error)
-	Launch     func(context.Context, *run.Controller, Task, *routing.Decision, []string) (Dispatch, error)
-	Observe    func(context.Context, *run.Controller, Task, Dispatch) (Observation, error)
-	Finish     func(context.Context, *run.Controller, Task, Dispatch, Observation) (Outcome, error)
+	// InvocationID is correlation telemetry only; it never grants authority.
+	InvocationID string
+	Resume       func(context.Context, *run.Controller, Task, Dispatch, Outcome) error
+	Revalidate   func(context.Context, *run.Controller, Task, Dispatch, Outcome) error
+	Prepare      func(context.Context, *run.Controller, Task) (*routing.AutoResult, error)
+	Launch       func(context.Context, *run.Controller, Task, *routing.Decision, []string) (Dispatch, error)
+	Observe      func(context.Context, *run.Controller, Task, Dispatch) (Observation, error)
+	Finish       func(context.Context, *run.Controller, Task, Dispatch, Observation) (Outcome, error)
 }
 
 type Dispatch struct {
@@ -165,7 +168,7 @@ func validateArgv(argv []string, templates bool) error {
 		if !strings.ContainsAny(arg, "{}") {
 			continue
 		}
-		if templates && (arg == "{model}" || arg == "{effort}" || arg == "{run}" || arg == "{worktree}") {
+		if templates && (arg == "{model}" || arg == "{effort}" || arg == "{run}" || arg == "{worktree}" || arg == "{model}#{effort}") {
 			continue
 		}
 		return errors.New("unsupported or partial argv placeholder")
@@ -227,6 +230,14 @@ func expandLaunch(t Task, d *routing.Decision, runID string) ([]string, error) {
 	values := map[string]string{"{model}": d.Model, "{effort}": d.Effort, "{run}": runID, "{worktree}": d.Worktree}
 	out := append([]string(nil), argv...)
 	for i, arg := range out {
+		if arg == "{model}#{effort}" {
+			provider, model, slash := strings.Cut(d.Model, "/")
+			if !slash || provider == "" || model == "" || d.Effort == "" || strings.ContainsAny(d.Model+d.Effort, "#{}") || strings.IndexFunc(d.Model+d.Effort, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+				return nil, errors.New("model/effort placeholder requires provider/model and a nonempty variant")
+			}
+			out[i] = d.Model + "#" + d.Effort
+			continue
+		}
 		if value, ok := values[arg]; ok {
 			if value == "" {
 				return nil, fmt.Errorf("empty value for %s", arg)
@@ -241,6 +252,9 @@ func expandLaunch(t Task, d *routing.Decision, runID string) ([]string, error) {
 // controller restart can resume only from a completely recorded result.
 func RunGraph(ctx context.Context, p Plan, hash string, ops Operations) (out GraphResult, err error) {
 	out.State = routing.WaitBlockedReconciliation
+	if ops.InvocationID != "" && !validDigest(ops.InvocationID) {
+		return out, errors.New("invocation ID must be 64 lowercase hex characters")
+	}
 	authorized, h, err := Decode(p.raw)
 	if err != nil {
 		return out, err
@@ -279,6 +293,21 @@ func RunGraph(ctx context.Context, p Plan, hash string, ops Operations) (out Gra
 	if err != nil {
 		return out, err
 	}
+	start, err := log.startInvocation(p, hash, ops.InvocationID, c)
+	if err != nil {
+		return out, err
+	}
+	// Only ordinary return reaches telemetry. Panic/Goexit leaves START unresolved.
+	out, err = runGraphOwned(ctx, p, ops, c, log, states, checks)
+	if telemetryErr := log.returnInvocation(start, c, out, err); telemetryErr != nil {
+		out.State = routing.WaitBlockedReconciliation
+		err = errors.Join(err, fmt.Errorf("persist supervisor invocation return: %w", telemetryErr))
+	}
+	return out, err
+}
+
+func runGraphOwned(ctx context.Context, p Plan, ops Operations, c *run.Controller, log graphLog, states map[string]*graphTaskState, checks int) (out GraphResult, err error) {
+	out.State = routing.WaitBlockedReconciliation
 	out.Checks = checks
 	guard := func() error {
 		if err := graphAuthority(ctx, c, p); err != nil {

@@ -20,7 +20,7 @@ func RecordVerdict(storageDir string, mr int, sha string, verdict Verdict, revie
 	if repoPath == "" {
 		repoPath = "."
 	}
-	patchID, err := ComputeRevisionID(repoPath, "origin/main", "HEAD")
+	patchID, err := ComputeRevisionID(repoPath, "origin/main", sha)
 	if err != nil {
 		// Log warning but don't fail - patch ID is optional
 		patchID = ""
@@ -185,10 +185,23 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 		}
 	}
 
-	// Get MR files for post-rebase matching
-	mrFiles, err := getFilesChangedBetween(repoPath, "origin/main", "HEAD")
-	if err != nil {
-		mrFiles = []string{} // Continue without files for post-rebase check
+	// Bound records to the current revision, then reduce to each reviewer's
+	// effective latest verdict: a later REQUEST_CHANGES retracts an earlier
+	// APPROVE from the same reviewer. On equal timestamps the later record in
+	// file order wins.
+	var current []VerdictRecord
+	for _, v := range verdicts {
+		// Use RevisionIdentitiesMatch for comprehensive revision binding (ADR B2.2)
+		if revisionMatches(v.SHA, v.PatchID, sha, currentPatchID, repoPath) {
+			current = append(current, v)
+		}
+	}
+	effective := make(map[string]int)
+	for i, v := range current {
+		prev, ok := effective[v.ReviewerModel]
+		if !ok || !v.Timestamp.Before(current[prev].Timestamp) {
+			effective[v.ReviewerModel] = i
+		}
 	}
 
 	// Check verdicts for maker diversity
@@ -196,10 +209,9 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	workerMaker := ""
 	var matchingVerdicts []VerdictRecord
 
-	for _, v := range verdicts {
-		// Use RevisionIdentitiesMatch for comprehensive revision binding (ADR B2.2)
-		if !revisionMatches(v.SHA, v.PatchID, sha, currentPatchID, repoPath, mrFiles) {
-			continue
+	for i, v := range current {
+		if effective[v.ReviewerModel] != i {
+			continue // superseded by a later verdict from the same reviewer
 		}
 		if v.Verdict != Approve {
 			continue
@@ -235,10 +247,10 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 			fmt.Sprintf("need verdicts from %d distinct model maker(s), have %d", requiredMakers, result.MakerCount))
 	}
 
-	// Check for human approval using RevisionIdentitiesMatch
+	// Check for human approval bound to the current revision
 	var matchingApprovals []ApprovalRecord
 	for _, a := range approvals {
-		if revisionMatches(a.SHA, a.PatchID, sha, currentPatchID, repoPath, mrFiles) {
+		if revisionMatches(a.SHA, a.PatchID, sha, currentPatchID, repoPath) {
 			result.HasApproval = true
 			matchingApprovals = append(matchingApprovals, a)
 		}
@@ -253,16 +265,18 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	return result, nil
 }
 
-// revisionMatches uses RevisionIdentitiesMatch for comprehensive revision binding.
-func revisionMatches(recordSHA, recordPatchID, currentSHA, currentPatchID, repoPath string, mrFiles []string) bool {
+// revisionMatches binds a stored record to the current revision: an exact SHA
+// match, or a matching combined revision identity (ADR B2.2) where differing
+// patch IDs are accepted only for a proven unchanged rebase.
+func revisionMatches(recordSHA, recordPatchID, currentSHA, currentPatchID, repoPath string) bool {
 	// Exact SHA match
 	if recordSHA == currentSHA {
 		return true
 	}
 
-	// Patch-ID based matching with post-rebase support
+	// Patch-ID based matching with proven unchanged rebases
 	if recordPatchID != "" && currentPatchID != "" {
-		return RevisionIdentitiesMatch(recordPatchID, currentPatchID, repoPath, recordSHA, currentSHA, mrFiles)
+		return RevisionIdentitiesMatch(recordPatchID, currentPatchID, repoPath, recordSHA, currentSHA)
 	}
 
 	return false

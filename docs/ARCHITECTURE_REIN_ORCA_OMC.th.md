@@ -1,7 +1,10 @@
 # Architecture: Rein + Orca + OMC (v0.2)
 
 - **Version:** 0.2 · baseline `2ccc0a0` · omc 5.7.1 · orca 1.4.224
-- เอกสารนี้คือ design ของ supervised mode (ยังไม่ implement) + บันทึกของเดิมที่ reuse; อะไรที่เขียนว่า "มีแล้ว" ต้องมี file:line กำกับ
+- เอกสารนี้เป็น design ของ supervised mode + บันทึกของเดิมที่ reuse; อะไรที่เขียนว่า "มีแล้ว" ต้องมี file:line กำกับ
+- **สถานะปัจจุบัน (อัปเดต 2026-10-19):** ส่วนที่ implement แล้วและเรียกผ่าน production CLI ได้ — `rein supervisor validate|run` (`cmd/rein/supervisor.go:15`, ลงทะเบียนที่ `cmd/rein/main.go:82-86`), bounded monitor schema 1 (`internal/supervisor/supervisor.go:49`), local cooperative graph schema 2 (`internal/supervisor/graph.go:253`) และ opt-in marker `rein run start --supervisor-plan` (`cmd/rein/run.go:61`, `internal/run/run.go:418`)
+- **หลักฐานเป็น local tests ไม่ใช่ live verification:** `cmd/rein/supervisor_test.go`, `internal/supervisor/graph_test.go`; ยังไม่มีหลักฐาน live pilot (P5 NOT RUN — `docs/PLAN_REIN_GOAL_COMPLETION.th.md:54`)
+- **G-01 ยังคงอยู่:** Orca-owned graph recovery ยังถูกปฏิเสธโดยเจตนาจนกว่าจะมี reliable runtime termination contract (`cmd/rein/route_launch.go:74-77`; local graph รับเฉพาะ non_detaching — `cmd/rein/graph_adapter.go:384-409`)
 
 ## 1. ของเดิมที่ reuse (ห้ามสร้างซ้ำ)
 
@@ -37,7 +40,7 @@
 ## 4. Controller boundary (single-control-owner)
 
 - Legacy mode (ของเดิม): coordinator dispatch เองผ่าน `worker-start`, waiter `ocloop2.py` ack `worker_done/escalation/question`, heartbeat ack ทุกนาที (`ocloop2.py:1-20`)
-- Supervised mode (proposed): supervisor เป็นผู้ dispatch/ack เพียงชุดเดียวต่อ run; coordinator ส่ง "approved task graph + policy" แล้วถอยเป็น planner/approver; waiter เดิมต้องหยุด (ห้ามแย่ง consume/ack)
+- Supervised mode (opt-in — บางส่วน implement แล้ว): supervisor เป็นผู้ dispatch/ack เพียงชุดเดียวต่อ run; coordinator ส่ง "approved task graph + policy" แล้วถอยเป็น planner/approver; waiter เดิมต้องหยุด (ห้ามแย่ง consume/ack)
 - เปลี่ยน mode ได้เมื่อไม่มี active work ค้างเท่านั้น (ดู `MIGRATION_V0_1_TO_V0_2.th.md`); rollback ต้องไม่ทำให้ worker สองชุดซ้อน
 - Hooks ขัดกัน → fail closed พร้อมสาเหตุ ห้ามปิด guards
 

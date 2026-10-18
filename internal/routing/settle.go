@@ -86,6 +86,7 @@ func SettleAttempt(attempt string) ([]budget.Hold, error) {
 		if h.State != "reserved" {
 			continue
 		}
+		workerCal := workerCalibration(h, rows)
 		unit, kinds := map[string]string{}, map[string]map[string]float64{}
 		for _, it := range h.Items {
 			unit[it.Pool] = it.Unit
@@ -126,9 +127,13 @@ func SettleAttempt(attempt string) ([]budget.Hold, error) {
 				switch {
 				case amt == 0:
 					continue
-				case !ran && (k.kind == "funding" || k.kind == "review_funding"):
+				case !ran && (k.kind == "funding" || k.kind == "review_funding" || (k.kind == "calibration" && workerCal != nil)):
 					continue // nothing executed under this receipt, so there is nothing to charge
-				case slices.ContainsFunc(k.proof, func(c string) bool { return proven[pool][c] }):
+				case k.kind == "calibration" && workerCal != nil && slices.ContainsFunc(rows, func(r ledger.Row) bool {
+					return r.Kind == "cost" && r.Attempt == attempt && r.Run == h.Run && r.Task == h.Task && r.Component == "worker" && r.Pool == pool && r.Unit == unit[pool] && r.Provider == workerCal.Provider && r.Model == workerCal.Model && r.Effort == workerCal.Effort && r.Config == workerCal.ConfigFingerprint && !r.Approx && r.Amount != nil && *r.Amount > 0
+				}):
+					continue
+				case !(k.kind == "calibration" && workerCal != nil) && slices.ContainsFunc(k.proof, func(c string) bool { return proven[pool][c] }):
 					continue // measured: the ledger already holds the usage; the rest of the plan is released
 				}
 				if err := charge(k.kind, k.component, amt, "no measured "+k.component+" charge recorded: charged at the reserved bound"); err != nil {
@@ -148,15 +153,16 @@ func SettleAttempt(attempt string) ([]budget.Hold, error) {
 
 // CalibrationInput asks for one bounded calibration call for a model that has no evidence yet.
 type CalibrationInput struct {
-	Contract   *contract.Contract
-	Run        string
-	ConfigPath string
-	Owner      *contract.Profile
-	Budget     *contract.Profile
-	MarkerPath string
-	Provider   string
-	Amount     float64 // worst case of the call, in the provider's billing unit, declared by the calibration runner
-	Calls      int
+	Contract          *contract.Contract
+	Run               string
+	ConfigPath        string
+	Owner             *contract.Profile
+	Budget            *contract.Profile
+	MarkerPath        string
+	Provider          string
+	Amount            float64 // worst case of the call, in the provider's billing unit, declared by the calibration runner
+	Calls             int
+	executionDecision string // set only by PrepareCalibration
 }
 
 // ReserveCalibration reserves one calibration call atomically within the owner's fixed caps (calls, per-pool, cash). Discovery
@@ -200,10 +206,10 @@ func ReserveCalibration(in CalibrationInput) (*budget.Hold, error) {
 	}
 	cal := sel.Calibration
 	item := budget.Item{Pool: p.Billing.Pool, Unit: p.Billing.Unit, Amount: in.Amount, Calls: in.Calls, Kind: "calibration"}
-	if reviewer && slices.Contains(reviewLaunchable, p.Agent) {
+	if in.executionDecision != "" || (reviewer && slices.Contains(reviewLaunchable, p.Agent)) {
 		item.Provider, item.Model, item.Effort, item.Config = in.Provider, p.Model, p.Effort, fingerprint(p)
 	}
-	hold, err := budget.Reserve(in.MarkerPath, prof, budget.ReserveRequest{Run: in.Run, Task: in.Contract.Name, Attempt: newID("cal"),
+	hold, err := budget.Reserve(in.MarkerPath, prof, budget.ReserveRequest{Run: in.Run, Task: in.Contract.Name, Attempt: newID("cal"), Decision: in.executionDecision,
 		Items:       []budget.Item{item},
 		Calibration: &budget.CalibrationCaps{MaxCalls: cal.MaxCalls, PoolCaps: cal.PoolCaps, MaxCashUSD: *cal.MaxCashUSD}})
 	var short *budget.ErrInsufficient

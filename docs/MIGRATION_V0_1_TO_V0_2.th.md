@@ -1,5 +1,7 @@
 # Migration v0.1 → v0.2 (v0.2)
 
+> **สถานะปัจจุบัน (2026-10-19):** เอกสารนี้เป็นประวัติการออกแบบ v0.2 ข้อความ “proposed/ยังไม่ implement” ด้านล่างไม่ใช่สถานะปัจจุบัน — supervisor/checkpoint/hunter CLI ถูก implement และมี regression tests แล้ว ส่วน remote Orca recovery ยังคง fence; ดู `docs/ROADMAP.md` และ `docs/CLI_REFERENCE.md`
+
 - **Version:** 0.2 · legacy coordinator mode (ของเดิม) ↔ supervised mode (proposed, ยังไม่ implement)
 - หลัก: เปลี่ยน mode ได้เมื่อไม่มี active work ค้างเท่านั้น; rollback ห้ามทำให้ worker สองชุดซ้อน; config/schema เก่าต้องใช้ต่อได้
 

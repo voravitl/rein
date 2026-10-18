@@ -479,7 +479,7 @@ func TestLedgerFixtureAndPricedCharge(t *testing.T) {
 	// API usage is priced from provenance-bearing rates, never from a blended legacy price
 	rates := `{"m":{"input_per_mtok":2,"output_per_mtok":10,"source":"https://example.com/p","as_of":"2026-01-01T00:00:00Z","valid_until":"2099-01-01T00:00:00Z"},"legacy":{"usd_per_mtok":5}}`
 	os.WriteFile(os.Getenv("PIPELINE_PRICES"), []byte(rates), 0o600)
-	seedRows(t, ledger.Row{Kind: "routing_launch", Attempt: "a1", Run: "r1", Task: "t1", Worker: &ledger.AgentModel{Agent: "codex", Model: "gpt-x"}, Type: "backend"})
+	seedRows(t, ledger.Row{Kind: "routing_launch", Attempt: "a1", Run: "r1", Task: "t1", Role: "worker:backend", Provider: "openai-worker", Config: "worker-fingerprint", Effort: "low", Worker: &ledger.AgentModel{Agent: "codex", Model: "gpt-x"}, Type: "backend"})
 	charge := func(extra ...string) []string {
 		return append([]string{"charge", "--attempt", "a1", "--pool", "openai/api", "--component", "worker"}, extra...)
 	}
@@ -495,7 +495,7 @@ func TestLedgerFixtureAndPricedCharge(t *testing.T) {
 	}
 	rows, _ = ledger.LoadStrict("")
 	last := rows[len(rows)-1]
-	if last.Kind != "cost" || last.Unit != "usd" || last.Amount == nil || *last.Amount != 7 || last.Run != "r1" || last.Task != "t1" || !strings.Contains(last.Notes, "example.com") {
+	if last.Kind != "cost" || last.Unit != "usd" || last.Amount == nil || *last.Amount != 7 || last.Run != "r1" || last.Task != "t1" || last.Provider != "openai-worker" || last.Model != "gpt-x" || last.Config != "worker-fingerprint" || last.Effort != "low" || !strings.Contains(last.Notes, "example.com") {
 		t.Errorf("priced charge: %+v", last)
 	}
 	// an expired rate card is refreshed from its source, not extended
@@ -582,9 +582,9 @@ func TestReconcileRefusesWhileTheTaskHasAWriter(t *testing.T) {
 	}
 }
 
-// worker-start returns once an Orca worker STARTED: the launcher cannot vouch for the worker afterwards, so the task stays held
-// without independent termination proof, and the exit row claims no duration.
-func TestOrcaDispatchedWorkerHoldsTheTaskUntilSettle(t *testing.T) {
+// A successful launcher without a ready receipt cannot establish worker readiness
+// or termination: fail the launch, retain the fence, and claim no duration.
+func TestOrcaUnconfirmedDispatchHoldsTheTaskUntilSettle(t *testing.T) {
 	e := newE2E(t, "orca")
 	root, wt := e.root, e.wt
 	out, code := capture(t, func() int {
@@ -605,20 +605,31 @@ func TestOrcaDispatchedWorkerHoldsTheTaskUntilSettle(t *testing.T) {
 	}
 	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run",
 		"--worktree", "path:" + wt, "--model", "gemini-w-high", "--effort", "high"}
-	if code := cmdRouteLaunch(args); code != 0 {
-		t.Fatalf("orca dispatch: %d", code)
+	if code := cmdRouteLaunch(args); code != 1 {
+		t.Fatalf("unconfirmed Orca dispatch must fail: %d", code)
 	}
-	// the launcher is gone but the worker is not: the task is still held, and nothing can start a second writer
+	// The launcher is gone, but worker termination is unknown: retain the fence.
 	if why := routing.TaskBusy("task"); !strings.Contains(why, "no recorded end") {
 		t.Fatalf("the dispatched worker must keep the task: %q", why)
 	}
 	rows, _ := ledger.LoadStrict("")
+	foundExit := false
 	for _, row := range rows {
-		if row.Kind == "routing_exit" && row.Attempt == res.Attempt && row.Minutes != nil {
+		if row.Kind != "routing_exit" || row.Attempt != res.Attempt {
+			continue
+		}
+		foundExit = true
+		if row.Minutes != nil {
 			t.Errorf("the exit row of a dispatch claims the worker ran %.2f minutes", *row.Minutes)
 		}
+		if row.OK == nil || *row.OK {
+			t.Errorf("unconfirmed dispatch must record failure: %+v", row.OK)
+		}
 	}
-	// reconcile cannot release funds under a running worker either
+	if !foundExit {
+		t.Fatal("unconfirmed dispatch has no routing_exit evidence")
+	}
+	// reconcile cannot release funds under a possibly running worker either
 	holds, _ := budget.Outstanding()
 	if len(holds) != 1 {
 		t.Fatalf("holds %+v", holds)
@@ -690,5 +701,68 @@ func TestOrcaFailedAcknowledgementKeepsWriterFence(t *testing.T) {
 	}
 	if _, err := routing.AcquireLease(c, &routing.Decision{Attempt: "second-writer"}); err == nil {
 		t.Fatal("a second writer acquired the checkout while the Orca worker was alive")
+	}
+}
+
+func TestRouteCalibrateExecutionCLI(t *testing.T) {
+	e := newE2E(t, "shell")
+	zeroCash := 0.0
+	e.c.Profile.Selection.Calibration = &contract.Calibration{Authorization: "bounded calibration", MaxCalls: 2, PoolCaps: map[string]float64{"agy/credits": 10}, MaxCashUSD: &zeroCash}
+	if _, err := e.c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	var tp routing.TaskProfile
+	json.Unmarshal(e.pj, &tp)
+	tp.ContractHash = routing.ContractHash(e.c)
+	raw, _ := json.Marshal(tp)
+	os.WriteFile(e.profile, raw, 0600)
+	args := []string{"calibrate", "--task", "task", "--run", "run", "--provider", "w", "--amount", "3", "--config", e.cfgPath, "--prepare", "--profile-file", e.profile}
+	out, code := capture(t, func() int { return cmdRoute(args) })
+	if code != 0 {
+		t.Fatalf("prepare: %d %s", code, out)
+	}
+	var d routing.Decision
+	if err := json.Unmarshal([]byte(out), &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Attempt == "" || d.SelectionMode != "calibration_unscored" {
+		t.Fatalf("missing receipt: %+v", d)
+	}
+	if _, err := routing.Validate(e.c, "run", e.w.Agent, e.w.Model); err != nil {
+		t.Fatal(err)
+	}
+	seedRows(t, ledger.Row{Kind: "routing_launch", Task: d.Task, Run: d.Run, Attempt: d.Attempt, Decision: d.DecisionID, Role: d.Chain, Provider: d.Provider, Model: d.Model, Worker: &ledger.AgentModel{Agent: d.Agent, Model: d.Model}, Effort: d.Effort, Config: d.ConfigFingerprint})
+	if err := routing.ConsumeReceipt(&d); err != nil {
+		t.Fatal(err)
+	}
+	charge := []string{"charge", "--attempt", d.Attempt, "--component", "worker", "--pool", "agy/credits", "--unit", "agy_credits", "--amount", "1", "--charge-id", "measured", "--config", e.cfgPath}
+	if _, code = capture(t, func() int { return cmdLedger(charge) }); code != 0 {
+		t.Fatalf("worker charge failed: %d", code)
+	}
+	if _, code = capture(t, func() int { return cmdLedger(append(charge, "--model", "wrong-model")) }); code != 2 {
+		t.Fatalf("wrong model accepted: %d", code)
+	}
+	holds, err := routing.SettleAttempt(d.Attempt)
+	if err != nil || len(holds) != 1 || holds[0].Used["agy/credits"] != 1 {
+		t.Fatalf("worker usage double counted: %+v %v", holds, err)
+	}
+	rows, err := ledger.LoadStrict("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range rows {
+		if r.Attempt == d.Attempt && r.Kind == "cost" {
+			found = true
+			if r.Provider != d.Provider || r.Model != d.Model || r.Effort != d.Effort || r.Config != d.ConfigFingerprint {
+				t.Fatalf("charge attribution lost: %+v", r)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("missing charge")
+	}
+	if _, code = capture(t, func() int { return cmdRoute(append(args, "--calls", "2")) }); code != 2 {
+		t.Fatalf("multiple execution calls accepted: %d", code)
 	}
 }

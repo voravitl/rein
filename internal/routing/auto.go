@@ -346,6 +346,9 @@ func PrepareAuto(ctx context.Context, in AutoInput) (*AutoResult, error) {
 	if a.cfg, a.cfgPath, a.cfgHash, err = config(in.ConfigPath); err != nil {
 		return fail(err)
 	}
+	if err = a.cfg.CheckModelCalls(); err != nil {
+		return fail(err)
+	}
 	if err = a.loadPolicy(); err != nil {
 		return fail(err)
 	}
@@ -424,7 +427,7 @@ func PrepareAuto(ctx context.Context, in AutoInput) (*AutoResult, error) {
 			return a.res, nil
 		}
 		if !probed {
-			return fail(refuse(CodeNoCandidate, "no ranked candidate fits the remaining budget (see the reservation exclusions)"))
+			return fail(refuse(CodeNoCandidate, "no ranked candidate passes quota and budget checks (see candidate exclusions)"))
 		}
 		parent = decision // the top candidate failed its probe: refresh everything and rank again
 	}
@@ -624,6 +627,11 @@ func summarize(counts map[string]int) string {
 // ranking inside the same decision; a failed probe ends the decision (probed=true) so the caller refreshes and re-ranks.
 func (a *auto) tryOrdered(round *Round, ordered []*cand) (d *Decision, probed bool, err error) {
 	for _, cd := range ordered {
+		if err := a.cfg.CheckQuota(cd.name); err != nil {
+			cd.exclude("quota_precheck", "%v", err)
+			round.Outcome = "quota_precheck"
+			continue
+		}
 		req := budget.ReserveRequest{Run: a.in.Run, Task: a.c.Name, Attempt: a.attempt, Decision: round.Decision, Items: a.items(cd)}
 		if a.class.Phase == "review" {
 			req.Handover = a.workerAttempt // the capacity the worker's plan set aside for this review funds it

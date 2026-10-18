@@ -1,8 +1,9 @@
 # Controller boundary: supervised mode dispatch/ack ownership (v0.2 design)
 
-- **Status:** DESIGN (docs only — ไม่เปลี่ยน code, ไม่เปิด supervised mode, ไม่แตะ production path)
-- **Baseline:** HEAD `2ccc0a0` · อ่านจริง: `internal/run/run.go` (Marker/Start/Resume/End), `cmd/rein/run.go` (tick entry), `internal/run/tick.go`, `skills/worktree-pipeline/scripts/ocloop2.py`, `internal/routing/lease.go`, `cmd/rein/route_launch.go`, `docs/MIGRATION_V0_1_TO_V0_2.th.md`
-- ขอบเขต: ตัดสินว่า "ใคร dispatch/ack" ในแต่ละ mode + เงื่อนไขเปลี่ยน mode + rollback — ส่วน consumer/trigger/loop budget อยู่ slice ถัดไป (ดู WIRING_DECISION §B)
+- **Status:** DESIGN (ข้อตัดสิน ไม่ใช่สถานะ implementation ปัจจุบัน — ส่วนที่นำไปใช้แล้วแบบ opt-in ดูหัวข้อถัดไป)
+- **สถานะปัจจุบัน (อัปเดต 2026-10-19):** `rein run start --supervisor-plan` ผูก supervised marker schema 2 แบบ user-only (`cmd/rein/run.go:61,103-122`, `internal/run/run.go:418`) และ `rein supervisor validate|run` รันเป็น process แยก (`cmd/rein/supervisor.go:15`, `cmd/rein/main.go:82-86`) — schema 1 เป็น bounded monitor ที่ไม่ dispatch/recover (`internal/supervisor/supervisor.go:49`), schema 2 graph รับเฉพาะ local cooperative/non_detaching (`internal/supervisor/graph.go:253`, `cmd/rein/graph_adapter.go:384-409`); ยังไม่มี autonomous loop/daemon — bounded แล้วจบเป็น `WAITING_HUMAN` (`internal/supervisor/supervisor.go:195-197`); หลักฐานเป็น local tests (`internal/supervisor/graph_test.go`, `cmd/rein/supervisor_test.go`) ยังไม่มีหลักฐาน live pilot; Orca-owned recovery ยังถูกปฏิเสธโดยเจตนา (G-01) จนกว่าจะมี reliable runtime termination contract (`cmd/rein/route_launch.go:74-77`)
+- **Baseline (historical):** HEAD `2ccc0a0` · อ่านจริง: `internal/run/run.go` (Marker/Start/Resume/End), `cmd/rein/run.go` (tick entry), `internal/run/tick.go`, `skills/worktree-pipeline/scripts/ocloop2.py`, `internal/routing/lease.go`, `cmd/rein/route_launch.go`, `docs/MIGRATION_V0_1_TO_V0_2.th.md`
+- **ขอบเขต:** ตัดสินว่า "ใคร dispatch/ack" ในแต่ละ mode + เงื่อนไขเปลี่ยน mode + rollback — consumer/trigger ถูกเรียกจาก bounded monitor ใน production CLI แล้ว (`internal/supervisor/supervisor.go:104-194`) แต่ยังไม่มี live pilot; idle loop/daemon budget ยังเป็น slice ถัดไป (ดู WIRING_DECISION §B)
 
 ## 1. ของเดิมที่ reuse (ห้ามสร้างซ้ำ)
 
@@ -19,7 +20,7 @@
 
 ## 2. ผู้ dispatch/ack ในแต่ละ mode (ตัดสิน)
 
-| | Legacy (ของเดิม — ไม่เปลี่ยน) | Supervised (proposed) |
+| | Legacy (ของเดิม — ไม่เปลี่ยน) | Supervised (opt-in — บางส่วน implement แล้ว) |
 |---|---|---|
 | dispatch worker | coordinator ผ่าน `worker-start` / preamble route | **supervisor ชุดเดียวต่อ run** (เรียก `route launch` เดิม — ไม่สร้าง launcher ใหม่) |
 | ack `worker_done/escalation/question` | waiter `ocloop2.py` (heartbeat ack ทุกนาที; real batch พิมพ์ deliveryId ให้ coordinator ack เอง) | **supervisor** (consume → `Record` event ก่อน → ค่อย ack; redelivery dedupe ด้วย EventID) |
@@ -44,7 +45,7 @@
 2. `route holds` ว่าง + `route status` ไม่มี pool ค้างที่ต้อง reconcile
 3. `rein run audit` ไม่มี COORDINATOR_DRIFT ค้าง
 4. coordinator หยุด waiter (`ocloop2.py`) ก่อน — verify ด้วย process check ว่าไม่มี waiter ของ run นี้เหลือ (ห้ามมีช่วงทับซ้อน)
-5. เปิด supervised flag (proposed — **ห้าม default on** จนกว่า Phase B–C เสร็จ + owner อนุมัติ) + supervisor อ่าน approved task graph + policy ที่บันทึกไว้แล้วเท่านั้น
+5. เปิด supervised flag (มีแบบ opt-in แล้ว — **ห้าม default on** จนกว่า Phase B–C เสร็จ + owner อนุมัติ) + supervisor อ่าน approved task graph + policy ที่บันทึกไว้แล้วเท่านั้น
 
 **Supervised → Legacy (rollback):**
 1. หยุด supervisor ก่อน (verify process gone — ไม่ใช่แค่ส่ง signal)
@@ -71,7 +72,7 @@
 
 ## 6. สิ่งที่ slice นี้ยังไม่ตัดสิน (slice ถัดไป)
 
-- consumer: Orca check JSON → classify → `Record` → ack ลำดับไหน + redelivery dedupe ตรงไหน (test-only slice)
-- checkpoint trigger: finalize ตอนไหน (writer-stopped proof ไม่ใช่ launcher exit) + restore-into-worktree จริง (test-only slice)
+- consumer: Orca check JSON → classify → `Record` → ack ลำดับไหน + redelivery dedupe ตรงไหน (ณ baseline เป็น test-only slice; ปัจจุบันต่อใน bounded monitor แล้ว — `internal/supervisor/supervisor.go:104-194`)
+- checkpoint trigger: finalize ตอนไหน (writer-stopped proof ไม่ใช่ launcher exit) + restore-into-worktree จริง (ณ baseline เป็น test-only slice; ปัจจุบันมี production CLI + graph wiring — `cmd/rein/checkpoint.go:13`, `cmd/rein/graph_adapter.go:302`)
 - idle loop budget: รอบเวลาเท่าไร, probe เพดานแยกเท่าไร, ทุก pool หมด → park อย่างไร (loop skeleton slice + R6/R7 matrix)
 - schema: marker/supervised-flag/event-log path ใหม่เป็น additive-only (config เก่าต้องใช้ต่อได้ — MIGRATION §4)

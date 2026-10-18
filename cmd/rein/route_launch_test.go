@@ -269,7 +269,13 @@ func TestRouteLaunchRecordsReadyDispatchIdentity(t *testing.T) {
 		t.Fatalf("prepare (%d): %s", code, out)
 	}
 	orca := filepath.Join(e.root, "orca")
-	body := "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"result\":{\"state\":\"ready\",\"taskId\":\"actual-task\",\"dispatchId\":\"actual-dispatch\",\"effects\":[{\"kind\":\"dispatch_input\",\"role\":\"agent\",\"state\":\"accepted\",\"id\":\"worker\"}]}}'\n"
+	body := `#!/bin/sh
+case "$2" in
+worker-start) printf '%s\n' '{"ok":true,"result":{"state":"ready","taskId":"actual-task","dispatchId":"actual-dispatch","effects":[{"kind":"dispatch_input","role":"agent","state":"accepted","id":"worker"}]}}';;
+worker-show) printf '%s\n' '{"ok":true,"result":{"dispatch":{"id":"actual-dispatch","taskId":"actual-task","runId":"run","assigneeHandle":"worker"},"worker":{"dispatchId":"actual-dispatch","state":"ready","agentTerminalHandle":"worker","startOptions":{"launch":{"effective":{"agent":"antigravity","model":"gemini-w-high","effort":"high"}}}},"observation":{"exactWorker":true,"status":"live"},"terminal":null}}';;
+*) exit 2;;
+esac
+`
 	if err := os.WriteFile(orca, []byte(body), 0700); err != nil {
 		t.Fatal(err)
 	}

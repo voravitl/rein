@@ -1,5 +1,7 @@
 # Wiring decision: event log / checkpoint / classify จะต่อ supervisor loop หรือคง test-only (v0.2)
 
+> **สถานะปัจจุบัน (2026-10-19):** decision ยังใช้ (ทาง B) และ library ถูกใช้โดย production CLI แล้ว (`rein checkpoint`, `rein supervisor`, `rein hunter`) ข้อความ “test-only” ด้านล่างเป็นสถานะ historical; remote Orca recovery ยังคง fence ตาม `docs/SUPERVISED_CONTROLLER_BOUNDARY.th.md`
+
 - **Status:** DECIDED — owner เลือกทาง B (ต่อ supervisor loop) เมื่อ 2026-10-13 · design หลักย้ายไป `docs/SUPERVISED_CONTROLLER_BOUNDARY.th.md` (slice C2) แล้ว เอกสารนี้เก็บประวัติการตัดสิน
 - **Baseline:** HEAD `2ccc0a0`; B2 (`classify_event.go`), B3 (`event.go`), B4 (`checkpoint.go`), B5 (`fault_injection_test.go`) = library + tests เขียวใน docker ทั้งหมด, grep ยืนยันไม่มี production caller (มีแต่ในตัวเองกับ test) ยกเว้น `ProbeWithRetry` ที่ต่อเข้า `Prepare()` แล้ว (`routing.go:294`)
 - เอกสารนี้ไม่เปลี่ยน code, ไม่เปิด supervised mode, ไม่แตะ production path

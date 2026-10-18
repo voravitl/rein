@@ -64,6 +64,9 @@ func coordinate(vendor string, a Action, cwd string, w, stderr io.Writer) int {
 	if a.Hook == "PostToolUse" {
 		if a.Tool == "AskUserQuestion" && a.SessionID == m.SessionID && m.OwnerAlive() {
 			coordRecordDecision(a, m)
+			// the same response handling the worker path runs: the click on the fixed label is the approval record
+			// in the run's own repo (ADR 0002 B2.4), while decisions.tsv alone gates nothing
+			recordApprovalResponse(a, m.Root)
 		}
 		return 0 // PostToolUse is logged but never denied
 	}
@@ -111,6 +114,11 @@ func coordDecide(a Action, cwd string, loc run.Loc, m *run.Marker) string {
 		if task, ok := run.BoundTask(loc.Marker, a.AgentID); ok && task != "" {
 			return boundDecide(a, task, cwd)
 		}
+	}
+	// an approval prompt is judged by the approval rules (ADR 0002 B2.4) against this run's owner, exactly as in a
+	// worker worktree; the allowlist below still decides whether the coordinator may ask questions at all
+	if reason := approvalRequestReason(a, m.SessionID); reason != "" {
+		return reason
 	}
 	p := &coordPolicy{m: m, loc: loc}
 	switch {

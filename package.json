@@ -1,6 +1,6 @@
 {
   "name": "rein",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Deterministic multi-agent worktree guardrails, contract locking, and orchestration for AI coding harnesses",
   "main": "bin/rein.js",
   "bin": {
@@ -17,6 +17,7 @@
     "plugin.json",
     "AGENTS.md",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "scripts": {

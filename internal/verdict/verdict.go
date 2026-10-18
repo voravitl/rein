@@ -93,59 +93,76 @@ func ComputeRevisionID(repoPath, base, head string) (string, error) {
 	return fields[0], nil
 }
 
-// RevisionIdentitiesMatch checks if two revision IDs match.
-// Also handles post-rebase matching: IDs match if files changed on main since approved base
-// do not intersect with MR files.
-func RevisionIdentitiesMatch(idA, idB string, repoPath, approvedBase, currentHead string, mrFiles []string) bool {
+// RevisionIdentitiesMatch reports whether two revision identities denote the
+// same change. Equal patch IDs match. Distinct IDs match only for a proven
+// unchanged rebase: both revisions must produce byte-identical diffs against
+// their own merge-base with origin/main once base-dependent lines (@@ hunk
+// headers and index lines) are dropped. This is stricter than ADR 0002 B2.2's
+// file-intersection rule, which accepted any differing patch ID while main's
+// changes since the approved base stayed disjoint from the MR files.
+func RevisionIdentitiesMatch(idA, idB string, repoPath, approvedBase, currentHead string) bool {
 	if idA == "" || idB == "" {
 		return false
 	}
 	if idA == idB {
 		return true
 	}
-
-	// Check post-rebase case
-	if approvedBase != "" && currentHead != "" && len(mrFiles) > 0 {
-		mainFiles, err := getFilesChangedBetween(repoPath, approvedBase, "origin/main")
-		if err != nil {
-			return false
-		}
-		if !filesIntersect(mainFiles, mrFiles) {
-			return true
-		}
+	if approvedBase == "" || currentHead == "" {
+		return false
 	}
 
-	return false
-}
-
-func getFilesChangedBetween(repoPath, base, head string) ([]string, error) {
-	cmd := exec.Command("git", "diff", "--name-only", "--no-renames", base+"..."+head)
-	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	bodyA, err := unchangedPatchBody(repoPath, approvedBase)
 	if err != nil {
-		return nil, err
+		return false
 	}
-	var files []string
-	scanner := bufio.NewScanner(bytes.NewReader(out))
-	for scanner.Scan() {
-		if f := strings.TrimSpace(scanner.Text()); f != "" {
-			files = append(files, f)
-		}
+	bodyB, err := unchangedPatchBody(repoPath, currentHead)
+	if err != nil {
+		return false
 	}
-	return files, scanner.Err()
+	return bodyA != "" && bodyA == bodyB
 }
 
-func filesIntersect(a, b []string) bool {
-	m := make(map[string]bool, len(a))
-	for _, f := range a {
-		m[f] = true
+// unchangedPatchBody returns the revision's diff against its merge-base with
+// origin/main with only base-dependent lines removed. Hunk headers (@@) and
+// index lines carry line numbers and blob IDs that legitimately shift when the
+// base moves; every other line (paths, mode lines, content) must be identical
+// for the patch to count as unchanged.
+func unchangedPatchBody(repoPath, sha string) (string, error) {
+	mergeBaseCmd := exec.Command("git", "merge-base", "origin/main", sha)
+	mergeBaseCmd.Dir = repoPath
+	mbOut, err := mergeBaseCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git merge-base failed: %w", err)
 	}
-	for _, f := range b {
-		if m[f] {
-			return true
+	mergeBase := strings.TrimSpace(string(mbOut))
+	if mergeBase == "" {
+		return "", fmt.Errorf("no merge-base for origin/main and %s", sha)
+	}
+
+	diffCmd := exec.Command("git", "diff",
+		"--no-ext-diff", "--no-textconv", "--no-renames", "--no-color",
+		mergeBase+"..."+sha)
+	diffCmd.Dir = repoPath
+	diffOut, err := diffCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git diff failed: %w", err)
+	}
+
+	var body strings.Builder
+	scanner := bufio.NewScanner(bytes.NewReader(diffOut))
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "@@") || strings.HasPrefix(line, "index ") {
+			continue
 		}
+		body.WriteString(line)
+		body.WriteByte('\n')
 	}
-	return false
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("reading diff failed: %w", err)
+	}
+	return body.String(), nil
 }
 
 // NormalizeModelMaker extracts the model maker from a model string.

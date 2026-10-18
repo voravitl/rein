@@ -43,6 +43,13 @@ type OrcaClient interface {
 type RealOrcaClient struct {
 	BinaryPath string
 	Timeout    time.Duration
+	ctx        context.Context
+}
+
+// scenarioClient is implemented by clients whose browser calls can be bounded
+// by the scenario deadline of a run.
+type scenarioClient interface {
+	WithContext(ctx context.Context) OrcaClient
 }
 
 // NewRealOrcaClient returns a client targeting the system's `orca` CLI.
@@ -57,6 +64,14 @@ func NewRealOrcaClient() *RealOrcaClient {
 	}
 }
 
+// WithContext returns a copy of the client whose calls inherit ctx, so an
+// expired scenario deadline also aborts in-flight orca commands.
+func (c *RealOrcaClient) WithContext(ctx context.Context) OrcaClient {
+	clone := *c
+	clone.ctx = ctx
+	return &clone
+}
+
 type orcaGenericResponse struct {
 	OK     bool            `json:"ok"`
 	Result json.RawMessage `json:"result"`
@@ -68,13 +83,20 @@ func (c *RealOrcaClient) execOrca(args ...string) ([]byte, error) {
 	if timeout <= 0 {
 		timeout = 30 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	parent := c.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.BinaryPath, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {
+			if parent.Err() != nil {
+				return nil, fmt.Errorf("orca command %v aborted by scenario deadline: %w", args, parent.Err())
+			}
 			return nil, fmt.Errorf("orca command %v timed out after %v", args, timeout)
 		}
 		var exitErr *exec.ExitError

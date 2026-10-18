@@ -26,6 +26,13 @@ func quotaGraphFixture(t *testing.T, override ...string) (*e2eEnv, string, super
  printf 'approved quota marker\n'
  while :; do sleep 1; done
 fi
+found_input=
+for arg do
+ case "$arg" in *'"previous_attempt"'*)
+  case "$arg" in *'src/a.go: unstaged'*) found_input=yes;; esac;;
+ esac
+done
+test "$found_input" = yes || exit 5
 test -n "$REIN_HANDOFF_SHA256" || exit 2
 grep '"previous_attempt"' "$REIN_HANDOFF_PATH" >/dev/null || exit 3
 test "$(cat src/a.go)" = partial || exit 4

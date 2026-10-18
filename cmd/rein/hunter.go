@@ -16,7 +16,7 @@ import (
 
 func cmdHunter(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "usage: rein hunter report|scan-report|get|list|reproduce|verify|review|approve")
+		fmt.Fprintln(os.Stderr, "usage: rein hunter report|scan-report|get|list|reproduce|triage|authorize-fix|start-fix|verify|review|approve")
 		return 2
 	}
 	fs := flag.NewFlagSet("hunter "+args[0], flag.ContinueOnError)
@@ -73,6 +73,29 @@ func cmdHunter(args []string) int {
 			return 2
 		}
 		result, err = hunter.List()
+	case "triage":
+		id := fs.String("id", "", "finding ID")
+		controller := fs.String("controller", "", "triaging controller identity")
+		if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *id == "" || *controller == "" {
+			return 2
+		}
+		err = hunter.Move(*id, hunter.Triaged, "controller:"+*controller)
+	case "authorize-fix":
+		id := fs.String("id", "", "finding ID")
+		owner := fs.String("owner", "", "authorizing owner identity")
+		task := fs.String("task", "", "separate approved fix task")
+		if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *id == "" || *owner == "" || *task == "" {
+			return 2
+		}
+		err = hunter.Move(*id, hunter.ApprovedForFX, "owner:"+*owner+" fix-task:"+*task)
+	case "start-fix":
+		id := fs.String("id", "", "finding ID")
+		worker := fs.String("worker", "", "fix worker identity")
+		task := fs.String("task", "", "approved fix task being started")
+		if fs.Parse(args[1:]) != nil || fs.NArg() != 0 || *id == "" || *worker == "" || *task == "" {
+			return 2
+		}
+		err = hunter.Move(*id, hunter.FixInProgress, "worker:"+*worker+" fix-task:"+*task)
 	case "review", "approve":
 		id := fs.String("id", "", "finding ID")
 		repo := fs.String("repo", "", "clean fixed repository")
@@ -96,8 +119,7 @@ func cmdHunter(args []string) int {
 			if *reviewDigest == "" || *owner == "" || *reason == "" {
 				return 2
 			}
-			info, e := os.Stdin.Stat()
-			if e != nil || info.Mode()&os.ModeCharDevice == 0 || inClaudeCode() || os.Getenv("CODEX_THREAD_ID") != "" {
+			if !ownerTerminal() {
 				fmt.Fprintln(os.Stderr, "hunter approve requires the owner's terminal; agents cannot approve findings")
 				return 1
 			}
@@ -135,7 +157,18 @@ func cmdHunter(args []string) int {
 		if fs.Parse(args[1:]) != nil || *id == "" || *repo == "" || *attempt == "" || fs.NArg() == 0 || *expected <= 0 || *expected > 255 || *timeout <= 0 || *timeout > time.Hour {
 			return 2
 		}
-		result, err = hunter.Reproduce(context.Background(), *id, *repo, *attempt, *timeout, *expected, fs.Args())
+		a, e := hunter.Reproduce(context.Background(), *id, *repo, *attempt, *timeout, *expected, fs.Args())
+		if e == nil && a.Outcome == "reproduced" {
+			// The reproduce runner is the check the REPRODUCED gate trusts:
+			// it has just recorded the red proof. Advance a fresh candidate,
+			// never a finding already past this step.
+			if f, g := hunter.Get(*id); g != nil {
+				e = g
+			} else if f.State == hunter.Candidate {
+				e = hunter.Move(*id, hunter.Reproduced, "runner:"+a.Attempt)
+			}
+		}
+		result, err = a, e
 	default:
 		fmt.Fprintln(os.Stderr, "unknown hunter action:", args[0])
 		return 2
@@ -149,4 +182,13 @@ func cmdHunter(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// ownerTerminal is the owner-acceptance gate: only the owner's interactive
+// terminal may type the confirmation. Tests present the confirmation through a
+// pipe; the production value never treats a pipe or an agent session as the
+// owner.
+var ownerTerminal = func() bool {
+	info, err := os.Stdin.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0 && !inClaudeCode() && os.Getenv("CODEX_THREAD_ID") == ""
 }

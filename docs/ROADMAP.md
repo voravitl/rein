@@ -1,6 +1,6 @@
 # Roadmap
 
-Status as of v0.7.0. Each item names the problem it closes, the design, and how it is enforced. rein's rule: a
+Status as of v0.9.0. Each item names the problem it closes, the design, and how it is enforced. rein's rule: a
 safety property lives in code that decides (hook, drift, script exit code), not in prose a model may skip.
 
 ## Done
@@ -14,6 +14,8 @@ safety property lives in code that decides (hook, drift, script exit code), not 
 | 0.5.0 | B2, B3, B4: Revision-bound verdicts and approvals (`git patch-id --verbatim`, multi-model review, AskUserQuestion approval prompt & PostToolUse recording), B3 spec lint (`rein spec check`, pre-start tier, coordinator spawn enforcement), B4 standing orders & decision trail (`<run>/decisions.tsv` with secret scan, user-only `standing.md` write denial, SessionStart injection, scope ruling approval), Orca IDE task/model display, and universal subagent collaboration & anti-drift engine (`rein advise`, depth limit cap = 1, default readonly whitelist) |
 | 0.6.0 | Orca Browser E2E test engine (`rein e2e test/run/check`), Board-PDF executive reporting matching `/board-pdf` design system, skill `rein:orca-e2e`, mandatory AI code review & MR report policy (`AGENTS.md`, `templates/review-policy.md`, Head SHA bound), and `rein verdict template` |
 | 0.7.0 | Multi-Harness Plugin Bundle across 5 AI coding harnesses (Claude Code, Antigravity/AGY, OpenCode, OpenAI Codex, AWS Kiro), universal manifest (`plugin.json`), native CLI integration (`agy plugin install`, `codex plugin add`), all-in-one setup & uninstall script (`scripts/install-harness.sh`), and high-resolution architecture infographic |
+| 0.8.0 | Automatic task/model selection (`rein route auto`), enforced routing and guarded Orca launches, canonical quota cooldowns, completion cleanup, and the release pipeline with checksum-verified assets |
+| 0.9.0 | Audit remediation F-01–F-12: normalized revision-body proof and effective-latest verdicts, coordinator approval validation, hunter lifecycle closure, verified release bootstrap, E2E screenshot confinement and deadlines, fail-closed preflight. Crux plugin (55 skills, 4 adapters, shared Thai communication) and Crux provider configuration (`rein config init/check`). Revision identity is bound to the named SHA, not the checkout HEAD |
 
 ## Next, in order
 

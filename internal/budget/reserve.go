@@ -316,6 +316,8 @@ func (s runState) check(b *contract.Budget, task string, need map[string]float64
 // ponytail: caps are per run (rows since the run started); a lifetime cap needs an all-time tally.
 func (s runState) checkCalibration(c *CalibrationCaps, items []Item) error {
 	calibrationCalls := map[string]int{}
+	workerItems := map[string][]Item{}
+	workerTasks := map[string]string{}
 	for _, h := range s.holds {
 		if h.Run != s.run {
 			continue
@@ -323,6 +325,10 @@ func (s runState) checkCalibration(c *CalibrationCaps, items []Item) error {
 		for _, it := range h.Items {
 			if it.Kind == "calibration" {
 				calibrationCalls[h.Attempt] += it.Calls
+				if h.Decision != "" && it.Provider != "" && it.Model != "" && it.Config != "" {
+					workerItems[h.Attempt] = append(workerItems[h.Attempt], it)
+					workerTasks[h.Attempt] = h.Task
+				}
 			}
 		}
 	}
@@ -341,7 +347,10 @@ func (s runState) checkCalibration(c *CalibrationCaps, items []Item) error {
 		if r.Run != s.run || r.Kind != "cost" || !newCharge(seen, r) {
 			continue
 		}
-		if r.Component != "calibration" && (r.Component != "review" || calibrationCalls[r.Attempt] == 0) {
+		workerCalibration := r.Component == "worker" && r.Task == workerTasks[r.Attempt] && slices.ContainsFunc(workerItems[r.Attempt], func(it Item) bool {
+			return it.Provider == r.Provider && it.Model == r.Model && it.Effort == r.Effort && it.Config == r.Config && it.Pool == r.Pool && it.Unit == r.Unit
+		})
+		if r.Component != "calibration" && !workerCalibration && (r.Component != "review" || calibrationCalls[r.Attempt] == 0) {
 			continue
 		}
 		if calibrationCalls[r.Attempt] > 0 {
@@ -360,7 +369,11 @@ func (s runState) checkCalibration(c *CalibrationCaps, items []Item) error {
 		if h.State == stReserved && h.Run == s.run {
 			for _, it := range h.Items {
 				if it.Kind == "calibration" {
-					calls += it.Calls
+					// A charge already counted this attempt's reserved calls.
+					// Keep the outstanding amount conservative, but count calls once.
+					if !counted[h.Attempt] {
+						calls += it.Calls
+					}
 					use(it.Pool, it.Unit, it.Amount)
 				}
 			}

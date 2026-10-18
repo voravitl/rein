@@ -405,6 +405,8 @@ func TestCheckVerdicts_PostRebase(t *testing.T) {
 	gitInit := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
 		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_NOSYSTEM=1",
 			"GIT_AUTHOR_NAME=Test",
 			"GIT_AUTHOR_EMAIL=test@test.com",
 			"GIT_COMMITTER_NAME=Test",
@@ -505,45 +507,36 @@ func TestCheckVerdicts_PostRebase(t *testing.T) {
 		t.Errorf("CheckVerdicts should pass after rebase with matching patch-id, got reasons: %v", result.MissingReasons)
 	}
 
-	// Now test collision detection: advance main again touching the same file
-	gitInit("checkout", "main")
-	fileAConflict := filepath.Join(repoDir, "feature.txt")
-	if err := os.WriteFile(fileAConflict, []byte("conflicting change\n"), 0644); err != nil {
+	// F-01: binding comes from the revision identity, not from which files main
+	// touched. The rebased revision is proven unchanged against its approved
+	// predecessor even though main moved, and a further feature change breaks
+	// that proof while origin/main holds still.
+	gitInit("update-ref", "refs/remotes/origin/main", "main")
+	rebaseID, err := ComputeRevisionID(repoDir, "origin/main", newSHA)
+	if err != nil || rebaseID == "" {
+		t.Fatalf("ComputeRevisionID for the rebased revision failed: %v (id %q)", err, rebaseID)
+	}
+	if !RevisionIdentitiesMatch(origPatchID, rebaseID, repoDir, origSHA, newSHA) {
+		t.Error("RevisionIdentitiesMatch must accept the unchanged patch rebase")
+	}
+
+	featureFile := filepath.Join(repoDir, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("changed after approval\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	gitInit("add", "feature.txt")
-	gitInit("commit", "-m", "main touches same file")
-
-	// Get new main SHA and files changed
-	outMainSHA := execOutput(t, repoDir, "git", "rev-parse", "main")
-	mainSHA := strings.TrimSpace(outMainSHA)
-
-	// Try to rebase - it will conflict, so let's resolve it
-	gitInit("checkout", "feature")
-	cmd := exec.Command("git", "-C", repoDir, "rebase", "main")
-	cmd.Env = append(os.Environ(),
-		"GIT_AUTHOR_NAME=Test",
-		"GIT_AUTHOR_EMAIL=test@test.com",
-		"GIT_COMMITTER_NAME=Test",
-		"GIT_COMMITTER_EMAIL=test@test.com")
-	_ = cmd.Run() // Expect this to fail with conflict
-
-	// Abort the conflicted rebase
-	gitInit("rebase", "--abort")
-
-	// Get updated MR files from feature (before the failed rebase)
-	mrFiles2, _ := getFilesChangedBetween(repoDir, "main", "feature")
-
-	// RevisionIdentitiesMatch should detect the collision because main changed overlapping files
-	// The mrFiles2 includes feature.txt which was also changed in main
-	matches := RevisionIdentitiesMatch(origPatchID, newPatchID, repoDir, origSHA, newSHA, mrFiles2)
-	// This should still match because we're comparing the old feature with itself
-	// But if we compared it with the new main context, it would fail
-	if !matches {
-		t.Error("RevisionIdentitiesMatch should still match when comparing same patch-ids with overlapping changes")
+	gitInit("commit", "-m", "unapproved change")
+	changedSHA := strings.TrimSpace(execOutput(t, repoDir, "git", "rev-parse", "HEAD"))
+	changedID, err := ComputeRevisionID(repoDir, "origin/main", "HEAD")
+	if err != nil || changedID == "" {
+		t.Fatalf("ComputeRevisionID for the changed revision failed: %v (id %q)", err, changedID)
 	}
-
-	_ = mainSHA
+	if changedID == rebaseID {
+		t.Fatal("fixture error: changed content must produce a different revision ID")
+	}
+	if RevisionIdentitiesMatch(rebaseID, changedID, repoDir, newSHA, changedSHA) {
+		t.Error("changed feature content must not match the approved revision")
+	}
 }
 
 func execOutput(t *testing.T, dir, name string, args ...string) string {
@@ -551,6 +544,8 @@ func execOutput(t *testing.T, dir, name string, args ...string) string {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_NAME=Test",
 		"GIT_AUTHOR_EMAIL=test@test.com",
 		"GIT_COMMITTER_NAME=Test",
@@ -584,94 +579,359 @@ func computePatchID(t *testing.T, patch string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// TestRevisionIdentitiesMatch_FileIntersection tests the file-intersection branch
-// of RevisionIdentitiesMatch with a real git repo that has origin/main.
-func TestRevisionIdentitiesMatch_FileIntersection(t *testing.T) {
-	tmpDir := t.TempDir()
-	repoDir := filepath.Join(tmpDir, "repo")
-
-	gitInit := func(args ...string) string {
-		cmd := exec.Command("git", append([]string{"-C", repoDir}, args...)...)
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %s", args, out)
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
-		t.Fatal(err)
-	}
-
-	// Initialize with main branch explicitly
-	gitInit("init", "--initial-branch=main")
-	gitInit("config", "user.name", "Test")
-	gitInit("config", "user.email", "test@test.com")
-
-	// Create base commit
+// TestRevisionIdentitiesMatch_ChangedContentAndRebase covers the semantics that
+// replaced the file-intersection rule: changed feature content is rejected even
+// with origin/main unchanged, while an unchanged patch rebase is accepted.
+func TestRevisionIdentitiesMatch_ChangedContentAndRebase(t *testing.T) {
+	repoDir := initVerdictFeatureRepo(t)
 	baseFile := filepath.Join(repoDir, "base.txt")
-	if err := os.WriteFile(baseFile, []byte("base\n"), 0644); err != nil {
+
+	// Feature commit B: edit the last line.
+	writeFixtureFile(t, baseFile, "line1\nline2\nline3\nline4\nline5 v1\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "feature B")
+	bSHA := gitRun(t, repoDir, "rev-parse", "HEAD")
+
+	// Feature commit C: changes the same file again; origin/main is unchanged.
+	writeFixtureFile(t, baseFile, "line1\nline2\nline3\nline4\nline5 v2\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "feature C")
+	cSHA := gitRun(t, repoDir, "rev-parse", "HEAD")
+
+	if RevisionIdentitiesMatch("id-b", "id-c", repoDir, bSHA, cSHA) {
+		t.Error("changed feature content must not match, even with origin/main unchanged")
+	}
+
+	// Unchanged patch rebase: advance origin/main above the edited line and rebase.
+	gitRun(t, repoDir, "checkout", "main")
+	writeFixtureFile(t, baseFile, "inserted\nline1\nline2\nline3\nline4\nline5\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "main advances")
+	gitRun(t, repoDir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	gitRun(t, repoDir, "checkout", "feature")
+	gitRun(t, repoDir, "rebase", "main")
+
+	rebasedSHA := gitRun(t, repoDir, "rev-parse", "HEAD")
+	if rebasedSHA == cSHA {
+		t.Fatal("fixture error: the rebase should rewrite the commit")
+	}
+	if !RevisionIdentitiesMatch("id-c", "id-rebased", repoDir, cSHA, rebasedSHA) {
+		t.Error("an unchanged patch rebase must match")
+	}
+
+	// Equal patch IDs always match; empty and unresolvable revisions fail closed.
+	if !RevisionIdentitiesMatch("same-id", "same-id", repoDir, bSHA, cSHA) {
+		t.Error("equal patch IDs must match")
+	}
+	if RevisionIdentitiesMatch("", "id-c", repoDir, bSHA, cSHA) {
+		t.Error("an empty patch ID must never match")
+	}
+	if RevisionIdentitiesMatch("id-b", "id-c", repoDir, "no-such-revision", cSHA) {
+		t.Error("an unresolvable revision must fail closed")
+	}
+}
+
+// gitRun runs git inside a disposable fixture. Host hooks and global
+// configuration are disabled so the fixture cannot be perturbed by the caller's
+// Git setup.
+func gitRun(t *testing.T, repoDir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoDir
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_AUTHOR_NAME=Test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=Test",
+		"GIT_COMMITTER_EMAIL=test@test.com",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func writeFixtureFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
-	gitInit("add", "base.txt")
-	gitInit("commit", "-m", "base commit")
+}
 
-	// Create origin/main ref (required by RevisionIdentitiesMatch)
-	baseSHA := gitInit("rev-parse", "HEAD")
-	gitInit("update-ref", "refs/remotes/origin/main", baseSHA)
+// initVerdictFeatureRepo builds the F-01 fixture: a base commit on main, an
+// origin/main ref pinned to it, and a checked-out feature branch.
+func initVerdictFeatureRepo(t *testing.T) string {
+	t.Helper()
+	repoDir := t.TempDir()
+	gitRun(t, repoDir, "init", "--initial-branch=main")
+	gitRun(t, repoDir, "config", "user.name", "Test")
+	gitRun(t, repoDir, "config", "user.email", "test@test.com")
+	writeFixtureFile(t, filepath.Join(repoDir, "base.txt"), "line1\nline2\nline3\nline4\nline5\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "base commit")
+	gitRun(t, repoDir, "update-ref", "refs/remotes/origin/main", gitRun(t, repoDir, "rev-parse", "HEAD"))
+	gitRun(t, repoDir, "checkout", "-b", "feature")
+	return repoDir
+}
 
-	// Create feature branch touching file A
-	gitInit("checkout", "-b", "feature")
-	fileA := filepath.Join(repoDir, "fileA.txt")
-	if err := os.WriteFile(fileA, []byte("feature change\n"), 0644); err != nil {
+// TestCheckVerdicts_ChangedFeatureCommitRejected is the F-01 regression: a
+// commit that changes the feature content must not inherit a verdict and human
+// approval recorded for an earlier commit, even when origin/main has not moved
+// since that approval.
+func TestCheckVerdicts_ChangedFeatureCommitRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+	repoDir := initVerdictFeatureRepo(t)
+	mr := 101
+	baseFile := filepath.Join(repoDir, "base.txt")
+
+	// Commit B: the approved revision.
+	writeFixtureFile(t, baseFile, "line1\nline2\nline3\nline4\nline5 v1\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "feature B")
+	bSHA := gitRun(t, repoDir, "rev-parse", "HEAD")
+	bPatchID, err := ComputeRevisionID(repoDir, "origin/main", "HEAD")
+	if err != nil {
+		t.Fatalf("ComputeRevisionID for B failed: %v", err)
+	}
+	if err := RecordVerdict(storageDir, mr, bSHA, Approve, "claude-opus-4.8", "gpt-5.6", repoDir); err != nil {
 		t.Fatal(err)
 	}
-	gitInit("add", "fileA.txt")
-	gitInit("commit", "-m", "add fileA")
-	featureSHA := gitInit("rev-parse", "HEAD")
-
-	// Test case 1: Disjoint files - main touches B, feature touched A
-	gitInit("checkout", "main")
-	fileB := filepath.Join(repoDir, "fileB.txt")
-	if err := os.WriteFile(fileB, []byte("main change\n"), 0644); err != nil {
+	if err := RecordApproval(storageDir, mr, bSHA, bPatchID, "approved B"); err != nil {
 		t.Fatal(err)
 	}
-	gitInit("add", "fileB.txt")
-	gitInit("commit", "-m", "main adds fileB")
-	gitInit("update-ref", "refs/remotes/origin/main", "HEAD")
 
-	// With disjoint files, different patch IDs should still match
-	mrFiles := []string{"fileA.txt"}
-	matches := RevisionIdentitiesMatch("patchid1", "patchid2", repoDir, featureSHA, "HEAD", mrFiles)
-	if !matches {
-		t.Error("RevisionIdentitiesMatch should return true when patch IDs differ but files are disjoint")
+	// Commit C: changes the same file again; origin/main stays where it was.
+	writeFixtureFile(t, baseFile, "line1\nline2\nline3\nline4\nline5 v2\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "feature C")
+	cSHA := gitRun(t, repoDir, "rev-parse", "HEAD")
+	cPatchID, err := ComputeRevisionID(repoDir, "origin/main", "HEAD")
+	if err != nil {
+		t.Fatalf("ComputeRevisionID for C failed: %v", err)
+	}
+	if bSHA == cSHA {
+		t.Fatal("fixture error: expected a new commit")
+	}
+	if bPatchID == cPatchID {
+		t.Fatalf("fixture error: changed content must produce a different revision ID: %s", bPatchID)
 	}
 
-	// Test case 2: Intersecting files - main now touches A too
-	gitInit("checkout", "main")
-	fileAMain := filepath.Join(repoDir, "fileA.txt")
-	if err := os.WriteFile(fileAMain, []byte("main also touches fileA\n"), 0644); err != nil {
+	result, err := CheckVerdicts(storageDir, mr, cSHA, cPatchID, tier.T1, repoDir)
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if result.Passed {
+		t.Errorf("changed feature commit must not inherit an earlier verdict/approval; missing reasons: %v", result.MissingReasons)
+	}
+	if result.HasApproval {
+		t.Error("HasApproval must be false for a changed feature commit")
+	}
+	if result.MakerCount != 0 {
+		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
+	}
+}
+
+// TestCheckVerdicts_UnchangedRebaseKeepsVerdict is the F-01 accepted case: a
+// rebase that leaves the feature diff identical still matches. The stored patch
+// IDs are forced to differ (as they can when a record's ID was computed against
+// a different origin/main tip), so acceptance must come from the
+// unchanged-patch proof rather than patch-ID equality.
+func TestCheckVerdicts_UnchangedRebaseKeepsVerdict(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+	repoDir := initVerdictFeatureRepo(t)
+	mr := 102
+	baseFile := filepath.Join(repoDir, "base.txt")
+
+	// Commit B: edit the last line of base.txt.
+	writeFixtureFile(t, baseFile, "line1\nline2\nline3\nline4\nline5 feature\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "feature B")
+	bSHA := gitRun(t, repoDir, "rev-parse", "HEAD")
+	if err := RecordVerdict(storageDir, mr, bSHA, Approve, "claude-opus-4.8", "gpt-5.6", repoDir); err != nil {
 		t.Fatal(err)
 	}
-	gitInit("add", "fileA.txt")
-	gitInit("commit", "-m", "main modifies fileA")
-	gitInit("update-ref", "refs/remotes/origin/main", "HEAD")
-
-	// With intersecting files, different patch IDs should NOT match
-	matches2 := RevisionIdentitiesMatch("patchid1", "patchid2", repoDir, featureSHA, "HEAD", mrFiles)
-	if matches2 {
-		t.Error("RevisionIdentitiesMatch should return false when patch IDs differ and files intersect")
+	stalePatchID := "recorded-against-another-base"
+	rewriteVerdictPatchID(t, storageDir, mr, stalePatchID)
+	if err := RecordApproval(storageDir, mr, bSHA, stalePatchID, "approved B"); err != nil {
+		t.Fatal(err)
 	}
 
-	// Test case 3: Same patch IDs always match, regardless of file intersection
-	matches3 := RevisionIdentitiesMatch("samepatch", "samepatch", repoDir, featureSHA, "HEAD", mrFiles)
-	if !matches3 {
-		t.Error("RevisionIdentitiesMatch should return true when patch IDs are equal")
+	// Advance origin/main by inserting a line above the edited line, then rebase.
+	gitRun(t, repoDir, "checkout", "main")
+	writeFixtureFile(t, baseFile, "inserted\nline1\nline2\nline3\nline4\nline5\n")
+	gitRun(t, repoDir, "add", "base.txt")
+	gitRun(t, repoDir, "commit", "-m", "main advances")
+	gitRun(t, repoDir, "update-ref", "refs/remotes/origin/main", "HEAD")
+	gitRun(t, repoDir, "checkout", "feature")
+	gitRun(t, repoDir, "rebase", "main")
+
+	cSHA := gitRun(t, repoDir, "rev-parse", "HEAD")
+	if cSHA == bSHA {
+		t.Fatal("fixture error: the rebase should rewrite the commit")
+	}
+	cPatchID, err := ComputeRevisionID(repoDir, "origin/main", "HEAD")
+	if err != nil || cPatchID == "" {
+		t.Fatalf("ComputeRevisionID after rebase failed: %v (id %q)", err, cPatchID)
+	}
+	if cPatchID == stalePatchID {
+		t.Fatal("fixture error: patch IDs must differ so the proof path is exercised")
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, cSHA, cPatchID, tier.T1, repoDir)
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("an unchanged patch rebase must stay approved; missing reasons: %v", result.MissingReasons)
+	}
+	if !result.HasApproval {
+		t.Error("HasApproval should remain true for a proven unchanged rebase")
+	}
+}
+
+func rewriteVerdictPatchID(t *testing.T, storageDir string, mr int, patchID string) {
+	t.Helper()
+	path := VerdictPath(storageDir, mr)
+	records, err := loadVerdictRecords(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range records {
+		records[i].PatchID = patchID
+	}
+	data, err := json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCheckVerdicts_RequestChangesRevokesApprove covers F-02: a later
+// REQUEST_CHANGES from the same reviewer on the same revision retracts the
+// earlier APPROVE.
+func TestCheckVerdicts_RequestChangesRevokesApprove(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+	mr, sha, patchID := 103, "abc123", "patch123"
+
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordVerdict(storageDir, mr, sha, RequestChanges, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if result.Passed {
+		t.Error("CheckVerdicts should fail after the same reviewer requested changes")
+	}
+	if result.MakerCount != 0 {
+		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
+	}
+	if len(result.MatchingVerdicts) != 0 {
+		t.Errorf("MatchingVerdicts len = %d, want 0 (the retracted APPROVE must not be evidence)", len(result.MatchingVerdicts))
+	}
+}
+
+// TestCheckVerdicts_ApproveAfterRequestChanges covers F-02: a fresh APPROVE
+// after a REQUEST_CHANGES is the reviewer's effective verdict again.
+func TestCheckVerdicts_ApproveAfterRequestChanges(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+	mr, sha, patchID := 104, "abc123", "patch123"
+
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordVerdict(storageDir, mr, sha, RequestChanges, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("CheckVerdicts should pass on the reviewer's latest APPROVE; missing reasons: %v", result.MissingReasons)
+	}
+	if result.MakerCount != 1 {
+		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	}
+}
+
+// TestCheckVerdicts_StaleRequestChangesDoesNotRevoke covers F-02: the effective
+// verdict reduction runs after revision matching, so a REQUEST_CHANGES bound to
+// a different revision cannot retract a current APPROVE.
+func TestCheckVerdicts_StaleRequestChangesDoesNotRevoke(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+	nonRepoDir := t.TempDir() // makes the recorded patch ID empty
+	mr, sha, patchID := 105, "abc123", "patch123"
+
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordVerdict(storageDir, mr, "stale-sha", RequestChanges, "claude-opus-4.8", "gpt-5.6", nonRepoDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("a stale REQUEST_CHANGES must not revoke the current APPROVE; missing reasons: %v", result.MissingReasons)
+	}
+	if result.MakerCount != 1 {
+		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	}
+}
+
+// TestCheckVerdicts_StaleApproveDoesNotCount covers F-02: an APPROVE bound to
+// another revision alone does not satisfy the maker requirement.
+func TestCheckVerdicts_StaleApproveDoesNotCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+	nonRepoDir := t.TempDir() // makes the recorded patch ID empty
+	mr, sha, patchID := 106, "abc123", "patch123"
+
+	if err := RecordVerdict(storageDir, mr, "stale-sha", Approve, "claude-opus-4.8", "gpt-5.6", nonRepoDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if result.Passed {
+		t.Error("CheckVerdicts should fail when the only APPROVE is bound to another revision")
+	}
+	if result.MakerCount != 0 {
+		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
 	}
 }
 

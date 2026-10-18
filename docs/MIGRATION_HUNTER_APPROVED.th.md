@@ -1,5 +1,7 @@
 # Migration: hunter DRAFT → APPROVED (report-only) — ต้องทำยังไงต่อ
 
+> **สถานะปัจจุบัน (2026-10-19):** เอกสารนี้เป็นบันทึกการอนุมัติเมื่อ 2026-10-14 ข้อความ “test-only” ด้านล่างเป็นสถานะ ณ ตอนนั้น ไม่ใช่สถานะ release 0.9.0 — hunter registry/report/reproduce/verify/review/approve ถูก wire เข้า production CLI แล้ว (`cmd/rein/hunter.go`, `docs/CLI_REFERENCE.md`) ส่วน supervised mode แบบ live และ remote recovery ยังคงถูก fence ตามเดิม
+
 - **Version:** 2026-10-14 · สถานะ: `agents/rein-bug-hunter.md` = APPROVED (report-only, supervised)
 - เอกสารนี้คือแผนขั้นต่อไปหลัง owner อนุมัติ — เรียงตาม safety + dependency; แต่ละขั้นมีเงื่อนไขผ่าน/หยุดชัดเจน
 

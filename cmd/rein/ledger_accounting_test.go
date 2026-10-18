@@ -14,7 +14,7 @@ import (
 
 func TestChargeCannotOverrideLaunchRun(t *testing.T) {
 	t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "ledger.jsonl"))
-	if err := ledger.Append(ledger.Row{Kind: "routing_launch", Attempt: "a", Run: "real", Task: "t", Decision: "d", Worker: &ledger.AgentModel{Agent: "codex", Model: "m"}}); err != nil {
+	if err := ledger.Append(ledger.Row{Kind: "routing_launch", Attempt: "a", Run: "real", Task: "t", Decision: "d", Role: "worker:backend", Provider: "w", Config: "fingerprint", Worker: &ledger.AgentModel{Agent: "codex", Model: "m"}}); err != nil {
 		t.Fatal(err)
 	}
 	args := []string{"--attempt", "a", "--pool", "p", "--unit", "usd", "--amount", "1", "--charge-id", "x", "--run", "wrong"}

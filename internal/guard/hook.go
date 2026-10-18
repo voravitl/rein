@@ -203,36 +203,44 @@ func judgePost(vendor string, a Action, c *contract.Contract, top string, w, std
 	if !found {
 		return 0 // No run context, skip approval recording
 	}
-	_, err := run.Load(loc.Marker)
-	if err != nil {
+	if _, err := run.Load(loc.Marker); err != nil {
 		return 0 // Cannot load run, skip approval recording
 	}
+	recordApprovalResponse(a, top)
+	return 0
+}
 
-	// Check if approval was recorded
-	storageDir := verdict.StorageDir("", top)
+// approvalRequestReason applies the approval prompt rules (ADR 0002 B2.4) to an AskUserQuestion call. The run owner
+// is passed in explicitly: the worker path reads it from its worktree's marker, the coordinator path binds its own
+// run owner, so neither path can judge the prompt against the wrong session.
+func approvalRequestReason(a Action, ownerSessionID string) string {
+	if a.Kind != "ask" || a.Tool != "AskUserQuestion" || a.ToolInput == "" {
+		return ""
+	}
+	return approval.CheckPreToolUse(a.ToolInput, a.AgentID, a.SessionID, ownerSessionID)
+}
+
+// recordApprovalResponse persists the human approval an answered AskUserQuestion carries into repoPath's
+// .rein/verdicts, where `rein approve` writes and `rein verdict check` reads it. Only the fixed Approve label
+// counts, and the MR and SHA come from the question's own metadata, so a response cannot invent an approval for
+// another revision.
+func recordApprovalResponse(a Action, repoPath string) {
+	storageDir := verdict.StorageDir("", repoPath)
 	approved, err := approval.ProcessPostToolUse("", a.Response, storageDir)
 	if err != nil || !approved {
-		return 0 // Not an approval or error, just continue
+		return // not the fixed label: nothing to record
 	}
-
-	// Extract MR and SHA from metadata in tool input
 	var payload approval.AskUserQuestionPayload
 	if err := json.Unmarshal([]byte(a.ToolInput), &payload); err != nil {
-		return 0
+		return
 	}
-
 	mr, _ := payload.Metadata["mr"].(float64)
 	sha, _ := payload.Metadata["sha"].(string)
-
-	if mr > 0 && sha != "" {
-		// Compute patch ID
-		patchID, _ := verdict.ComputeRevisionID(top, "origin/main", "HEAD")
-
-		// Record approval
-		_ = verdict.RecordApproval(storageDir, int(mr), sha, patchID, "Human approval via AskUserQuestion")
+	if mr <= 0 || sha == "" {
+		return
 	}
-
-	return 0
+	patchID, _ := verdict.ComputeRevisionID(repoPath, "origin/main", sha)
+	_ = verdict.RecordApproval(storageDir, int(mr), sha, patchID, "Human approval via AskUserQuestion")
 }
 
 func decide(a Action, c *contract.Contract, top, cwd string) string {
@@ -260,7 +268,7 @@ func decide(a Action, c *contract.Contract, top, cwd string) string {
 			}
 
 			// Check approval rules
-			if reason := approval.CheckPreToolUse(a.ToolInput, a.AgentID, a.SessionID, ownerSessionID); reason != "" {
+			if reason := approvalRequestReason(a, ownerSessionID); reason != "" {
 				return reason
 			}
 		}

@@ -454,16 +454,12 @@ func TestOneShotFailures(t *testing.T) {
 func TestUnsupportedAndMissingExecutablesSpawnNothing(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "marker")
 	t.Setenv("REIN_FAKE_MARKER", marker)
-	cfg := fake(t, "claude", "ok", "2.1.0")
-	cfg.Discovery["mystery"] = cfg.Discovery["claude"]
-	invs := Discover(context.Background(), cfg, DiscoverOptions{Dir: t.TempDir(), Timeout: 5 * time.Second, Harnesses: []string{"claude", "mystery"}})
+	cfg := fake(t, "mystery", "ok", "2.1.0")
+	invs := Discover(context.Background(), cfg, DiscoverOptions{Dir: t.TempDir(), Timeout: 5 * time.Second, Harnesses: []string{"mystery"}})
 	for _, inv := range invs {
 		if inv.Status != InvUnsupported || inv.Freshness != FreshnessUnknown || len(inv.Models) != 0 || inv.Reason == "" {
 			t.Errorf("%+v", inv)
 		}
-	}
-	if !strings.Contains(invs[0].Reason, "Claude plan entitlement") {
-		t.Errorf("claude must say why: %+v", invs[0])
 	}
 	if _, err := os.Stat(marker); err == nil {
 		t.Fatal("an unsupported harness must not start any process")
@@ -482,7 +478,7 @@ func TestDefaultsAndOrdering(t *testing.T) {
 	for _, i := range invs {
 		got = append(got, i.Harness+":"+string(i.Status))
 	}
-	if strings.Join(got, ",") != "claude:unsupported,codex:failed,kiro:failed" {
+	if strings.Join(got, ",") != "claude:failed,codex:failed,kiro:failed" {
 		t.Errorf("one inventory per distinct harness, sorted: %v", got)
 	}
 	if len(Discover(context.Background(), nil, DiscoverOptions{Timeout: time.Second})) != 0 {

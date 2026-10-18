@@ -1,7 +1,7 @@
 # rein-bug-hunter (APPROVED — report-only, supervised — 2026-10-14)
 
 - **Status:** APPROVED (report-only, supervised) · owner อนุมัติ 2026-10-14 หลัง D5 integration + live review 4 roles + ปิด bypass F-LIVE-1..4
-- ใช้จริงได้แบบ report-only + มีคนคุมเท่านั้น; registry (`internal/hunter/finding.go`) ยังเป็น test-only library ไม่ใช่ production API; ขั้นต่อไป `docs/MIGRATION_HUNTER_APPROVED.th.md`
+- ใช้จริงได้แบบ report-only + มีคนคุมเท่านั้น; registry (`internal/hunter/finding.go`) ต่อเป็น production API แล้วผ่าน `rein hunter` CLI (`cmd/rein/hunter.go:17`, ลงทะเบียน `cmd/rein/main.go:89-90`); หลักฐานยืนยันเป็น local tests (`cmd/rein/hunter_test.go`, `internal/hunter/`) ไม่ใช่ live verification; owner acceptance ยังต้องยืนยันที่ terminal ของ owner (`ownerTerminal` ใน `cmd/rein/hunter.go`); ขั้นที่เหลือดู `docs/MIGRATION_HUNTER_APPROVED.th.md` (receipt 2026-10-14 — ข้อความที่ว่า registry ยังเป็น test-only เป็นสถานะก่อนต่อ CLI)
 - OMC `oh-my-claude-sisyphus@5.7.1` · roles ที่อ้างตรวจไฟล์จริงแล้ว
 
 ## Role
@@ -17,7 +17,7 @@
 ## Permissions
 
 - SCAN: application source read-only + checks ที่อนุญาต; เขียนได้เฉพาะ evidence/scratch ที่กำหนด
-- REPRODUCE: contract แยก test-only ใน isolated worktree (proposed — ของเดิมไม่มี)
+- REPRODUCE: contract แยก test-only ใน isolated worktree — implement แล้ว (`hunter.Reproduce` ที่ `internal/hunter/execute.go:46`, contract `internal/hunter/scope.go:19-21`, CLI action `reproduce` ใน `cmd/rein/hunter.go`); หลักฐาน local tests `internal/hunter/reproducer_test.go` และ `internal/hunter/workflow_test.go` (fixture ที่ระบุชัด; ไม่มี live Orca/OMC/provider calls)
 - ห้ามแก้ application code; ห้ามเปลี่ยนตัวเองเป็น fix worker เงียบๆ (FIX = task ใหม่หลัง approval)
 
 ## Required inputs

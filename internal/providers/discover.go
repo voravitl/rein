@@ -46,16 +46,17 @@ const (
 
 // ModelEntry is one model a harness offers.
 type ModelEntry struct {
-	ID            string   `json:"id"`
-	Variants      []string `json:"variants,omitempty"`     // reasoning-effort variants
-	Capabilities  []string `json:"capabilities,omitempty"` // e.g. "input:text", "input:image"
-	Billing       string   `json:"billing,omitempty"`      // "credits" when the catalog says so, else unknown
-	Unit          string   `json:"unit,omitempty"`         // native unit, e.g. "kiro_credits"
-	Multiplier    *float64 `json:"multiplier,omitempty"`   // credit multiplier
-	ContextTokens int      `json:"context_tokens,omitempty"`
-	Hidden        bool     `json:"hidden,omitempty"`
-	Alias         bool     `json:"alias,omitempty"`   // a moving alias such as "auto"
-	Enabled       *bool    `json:"enabled,omitempty"` // nil = unknown; no current adapter proves entitlement
+	ID             string   `json:"id"`
+	SupportsEffort *bool    `json:"supports_effort,omitempty"`
+	Variants       []string `json:"variants,omitempty"`     // reasoning-effort variants
+	Capabilities   []string `json:"capabilities,omitempty"` // e.g. "input:text", "input:image"
+	Billing        string   `json:"billing,omitempty"`      // "credits" when the catalog says so, else unknown
+	Unit           string   `json:"unit,omitempty"`         // native unit, e.g. "kiro_credits"
+	Multiplier     *float64 `json:"multiplier,omitempty"`   // credit multiplier
+	ContextTokens  int      `json:"context_tokens,omitempty"`
+	Hidden         bool     `json:"hidden,omitempty"`
+	Alias          bool     `json:"alias,omitempty"`   // a moving alias such as "auto"
+	Enabled        *bool    `json:"enabled,omitempty"` // nil = unknown; no current adapter proves entitlement
 }
 
 // Limit is an observed rate or quota window. Unknown stays nil.
@@ -113,6 +114,7 @@ var (
 
 // adapters: harness -> how to query it. min is the oldest version the wire format was verified against (same major required).
 var adapters = map[string]struct{ name, exe, min string }{
+	"claude":      {"claude-sdk/initialize-models", "claude", "2.1.302"},
 	"codex":       {"codex-app-server/model-list", "codex", "0.162.0"},
 	"kiro":        {"kiro-cli/list-models-json", "kiro-cli", "2.21.0"},
 	"antigravity": {"agy/models", "agy", "1.3.2"},
@@ -191,10 +193,6 @@ func (i *Inventory) note(reason string) {
 
 func discoverOne(ctx context.Context, cfg *Config, harness, dir string, timeout time.Duration) Inventory {
 	inv := Inventory{Harness: harness, Adapter: "none", Scope: "-", QueriedAt: time.Now().UTC(), Status: InvFailed, Freshness: FreshnessUnknown}
-	if harness == "claude" {
-		inv.fail(InvUnsupported, "no unattended complete model catalog adapter verified (Claude plan entitlement is not the Anthropic API catalog)")
-		return inv
-	}
 	ad, ok := adapters[harness]
 	if !ok {
 		inv.fail(InvUnsupported, "no discovery adapter for harness "+harness)
@@ -236,6 +234,8 @@ func discoverOne(ctx context.Context, cfg *Config, harness, dir string, timeout 
 	inv.Freshness = ClientCatalog // every adapter: the local client answered; none proves the upstream catalog is current
 	hint := ""
 	switch harness {
+	case "claude":
+		collectClaude(ctx, argv, dir, &inv)
 	case "codex":
 		hint = collectCodex(ctx, argv, dir, &inv)
 	case "kiro":

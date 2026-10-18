@@ -1,5 +1,7 @@
 # Test Plan: Long-Run + Bug Hunt (v0.2)
 
+> **สถานะปัจจุบัน (2026-10-19):** แผนทดสอบนี้เป็นบันทึกของช่วง v0.2 บาง slice ถูก wire เข้า production แล้ว และบางส่วนยังเป็น test-only ตามที่ระบุ live gates (two-provider handoff, remote Orca recovery, 4-harness live) ยังไม่ผ่าน; ห้ามอ่านผล fixture เป็น live proof — ดู `docs/ROADMAP.md`
+
 - **Version:** 0.2 · ผลแยก PASS / FAIL / BLOCKED / NOT RUN · ห้ามอ้างผ่านจากการอ่าน source
 - หลัก: fake CLI/fixtures ที่ประกาศชัดว่าจำลอง ห้ามเรียก simulated quota ว่า real exhaustion ห้ามอ้าง live Orca/OMC compatibility จาก fake tests อย่างเดียว
 

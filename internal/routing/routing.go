@@ -256,6 +256,9 @@ func Prepare(c *contract.Contract, run, chain, workerModel, configPath string, s
 	if err != nil {
 		return nil, err
 	}
+	if err := cfg.CheckModelCalls(); err != nil {
+		return nil, err
+	}
 	names, err := eligible(cfg, chain, workerModel)
 	if err != nil {
 		return nil, err
@@ -349,10 +352,17 @@ func Validate(c *contract.Contract, run, agent, model string) (*Decision, error)
 	if err != nil {
 		return nil, err
 	}
+	if err := cfg.CheckModelCalls(); err != nil {
+		return nil, err
+	}
 	if cp != d.ConfigPath || ch != d.ConfigHash {
 		return nil, errors.New("routing config changed")
 	}
-	if d.DecisionID != "" {
+	if d.SelectionMode == modeCalibration {
+		if err = validateCalibration(c, &d, cfg); err != nil {
+			return nil, err
+		}
+	} else if d.DecisionID != "" {
 		// automatic receipt: no chain membership, but everything it was bound to must still hold
 		if err = validateAuto(c, &d, cfg); err != nil {
 			return nil, err
@@ -369,6 +379,9 @@ func Validate(c *contract.Contract, run, agent, model string) (*Decision, error)
 	p, ok := cfg.Providers[d.Provider]
 	if !ok {
 		return nil, errors.New("provider outside configuration")
+	}
+	if err := cfg.CheckQuota(d.Provider); err != nil {
+		return nil, err
 	}
 	maker, pool, err := identity(p)
 	if err != nil {

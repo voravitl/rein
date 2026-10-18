@@ -167,14 +167,22 @@ Each item records what the first draft assumed and what was found:
      profile's default for the paths.
    - `rein drift` recomputes it from the real diff and can only raise it.
 2. **Revision identity.** The combined id is
-   `git diff --no-ext-diff --no-textconv --no-renames --no-color <merge-base>...HEAD | git patch-id --verbatim`.
+   `git diff --no-ext-diff --no-textconv --no-renames --no-color <merge-base>...<sha> | git patch-id --verbatim`.
    - An empty diff never matches.
-   - After a rebase the id may match only if the files changed on main since the approved base do not
-     intersect the MR's files.
+   - The identity is computed from the revision named by `--sha` (or the recorded review revision), never from
+     the checkout's current `HEAD`. `RecordVerdict`, `verdict check/approve/summary`, the hook approval path and
+     tier inference all use the named revision (`internal/verdict/check.go`, `cmd/rein/verdict.go`,
+     `internal/guard/hook.go`).
+   - After a rebase the patch-id may stay equal when only line positions changed. The check therefore also
+     compares the normalized diff body: strip `index ` lines and `@@` hunk headers, then require byte equality.
+     A changed line, file set or content fails even when the line-shift-tolerant patch-id matches. There is no
+     file-intersection fallback.
    - The approval proves the delta, not the merged result. The re-gate of merged main stays the real control.
 3. **Verdict check.** `rein verdict check --mr --sha` passes when all of these hold:
    - verdicts come from two model makers for T3, or one otherwise;
    - no reviewer normalizes to the worker's model (except escalated models like Claude Opus reviewing Sonnet/Haiku);
+   - only the effective latest verdict per reviewer counts. A newer `REQUEST_CHANGES` retracts an older
+     `APPROVE` from the same reviewer, so an earlier approval cannot survive a later rejection;
    - a human approval exists for that sha or an equal combined id.
 
    When passed, `verdict check` emits explicit **Approval & Review Evidence** (`[APPROVAL & REVIEW EVIDENCE]`),

@@ -17,6 +17,20 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: version consistency
+        run: sh scripts/check-version-consistency.sh
+      - name: Crux plugin tests
+        run: node --test plugins/crux/adapters/codex/hooks/*.test.mjs plugins/crux/tests/*.test.mjs
+      - name: Crux offline transport and safety tests
+        run: python3 -B -m unittest discover -s plugins/crux/tests -p 'test_*.py'
+      - name: install and preflight script tests
+        if: runner.os != 'Windows'
+        run: python3 -B -m unittest discover -s scripts -p 'test*.py'
+      - name: npm tarball and wrapper tests
+        run: node --test test/*.test.mjs
       - name: gofmt
         if: runner.os != 'Windows'
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)

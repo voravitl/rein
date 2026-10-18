@@ -38,6 +38,8 @@ The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](http
 
 ## Multi-Harness Plugin Bundle & Installation
 
+[**Crux**](plugins/crux/README.md) is the separate ADLC workflow plugin: shared engineering playbooks, a session-scoped mode module, and native adapters for Claude Code, Codex, Antigravity and OpenCode2. It builds on Rein's existing execution interfaces; live four-harness activation and cross-provider continuation remain unverified.
+
 `rein` delivers unified deterministic guardrails across **5 major AI coding harnesses**:
 
 | Harness | Bundle Type | Configuration Path | How to Install |
@@ -217,7 +219,7 @@ each chain is printed. Review chains should only list strong models: when none i
 
 | | macOS | Linux | Windows |
 |---|---|---|---|
-| Unit tests + hook smoke test (CI on every push) | ✅ | ✅ | ✅ |
+| Unit tests + hook smoke test (CI on every push) | ✅ | ✅ | build + `go vet` only; runtime unverified |
 | Real Claude Code session: guard hook (exec form) | ✅ verified (manual settings and as plugin) | not yet | not yet |
 | Real Claude Code session: plugin SessionStart installer | ✅ verified (`--plugin-dir`) | not yet | not yet |
 | Real Claude Code session: `rein sandbox` | ✅ verified | not yet | n/a (no native sandbox; use WSL2) |
@@ -225,8 +227,9 @@ each chain is printed. Review chains should only list strong models: when none i
 
 On Windows the hooks run `${CLAUDE_PLUGIN_DATA}/bin/rein` and rely on Windows finding `rein.exe`; that has not been
 seen in a real Claude Code session yet. Git Bash paths (`/c/...`, `/tmp/...`) are mapped to native paths before they
-are judged (found by the Windows CI leg). No release has been published yet, so machines without Go cannot install
-the binary until the first `v*` tag.
+are judged (covered by Windows-targeted build/vet checks). Releases are published from `v*` tags; `scripts/install.sh` and
+`scripts/install.ps1` download the matching `rein-<os>-<arch>` asset and verify it against `SHA256SUMS`, so a
+machine without Go can install the released binary.
 
 Design and the reasons for Go: [`docs/adr/0001-rein-supervisor.md`](docs/adr/0001-rein-supervisor.md).
 
@@ -239,3 +242,5 @@ gofmt -w . && go vet ./... && go test ./...
 ## License
 
 MIT
+
+Crux provider setup: `rein config init --dir ./crux-config` creates private, disabled-by-default configuration for Claude Code, Codex, Antigravity and OpenCode2. Inspect it offline with `rein config check --dir ./crux-config`, or add `--quota orca` to read Orca's cached quota without a model prompt. New setups require a conservative quota veto before probes and launches; exact model windows must be configured. The veto cannot authorize spending or establish launch-account identity, and stale or unknown measurements never imply available allowance. See [configuration reference](docs/CLI_REFERENCE.md#crux-provider-configuration) and the [Crux integration plan](plugins/crux/references/integration-plan.md).

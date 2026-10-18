@@ -166,6 +166,9 @@ func (a *auto) gate(cd *cand) string {
 			return cd.exclude("alias_model", "%s lists %s as a moving alias", p.Agent, p.Model)
 		}
 		cd.entry = entry
+		if p.Effort != "" && entry.SupportsEffort != nil && !*entry.SupportsEffort {
+			return cd.exclude("effort_not_supported", "catalog reports no effort support for %s", p.Model)
+		}
 		if p.Effort != "" && len(entry.Variants) > 0 && !slices.Contains(entry.Variants, p.Effort) {
 			return cd.exclude("effort_not_in_catalog", "%s lists %s with efforts %v, not %q", p.Agent, p.Model, entry.Variants, p.Effort)
 		}

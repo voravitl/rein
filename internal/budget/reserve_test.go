@@ -1239,3 +1239,83 @@ func TestHandoverOnlyTransfersMatchingReviewPoolUnit(t *testing.T) {
 		t.Fatalf("handover pooled mismatched units: %+v", items)
 	}
 }
+
+func TestCalibrationWorkerSettledChargesRetainCaps(t *testing.T) {
+	for _, limit := range []string{"calls", "pool", "cash"} {
+		t.Run(limit, func(t *testing.T) {
+			marker := reserveEnv(t)
+			caps := &CalibrationCaps{MaxCalls: 5, PoolCaps: map[string]float64{"cash": 20}, MaxCashUSD: 20}
+			item := calib("cash", "usd", 3, 1)
+			item.Provider, item.Model, item.Effort, item.Config = "worker", "gpt-exact", "low", "fp"
+			req := request("cal", item)
+			req.Calibration = caps
+			h, err := Reserve(marker, nil, req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, _ := ledger.NewChargeRow(h.Attempt, "worker-measured", "worker", "cash", "usd", "worker", "gpt-exact", 2)
+			row.Run, row.Task, row.Effort, row.Config = testRun, "cal", "low", "fp"
+			if err = ledger.Append(row); err != nil {
+				t.Fatal(err)
+			}
+			if _, err = Settle(h.ID, map[string]float64{"cash": 2}); err != nil {
+				t.Fatal(err)
+			}
+			switch limit {
+			case "calls":
+				caps.MaxCalls = 1
+			case "pool":
+				caps.PoolCaps["cash"] = 4
+			case "cash":
+				caps.MaxCashUSD = 4
+			}
+			req.Attempt = "next"
+			_, err = Reserve(marker, nil, req)
+			want := "calls"
+			if limit == "pool" {
+				want = "cash"
+			}
+			if limit == "cash" {
+				want = "cash_usd"
+			}
+			wantInsufficient(t, err, want, "calibration")
+		})
+	}
+}
+
+func TestCalibrationMeasuredWorkerOutstandingHoldCountsCallsOnce(t *testing.T) {
+	for _, maxCalls := range []int{1, 2} {
+		t.Run(fmt.Sprintf("max_calls_%d", maxCalls), func(t *testing.T) {
+			marker := reserveEnv(t)
+			caps := &CalibrationCaps{MaxCalls: maxCalls, PoolCaps: map[string]float64{"worker-pool": 20, "reviewer-pool": 20}}
+			item := calib("worker-pool", "tokens", 3, 1)
+			item.Provider, item.Model, item.Effort, item.Config = "agy-worker", "gemini-exact", "low", "worker-fp"
+			worker := request("cal", item)
+			worker.Calibration = caps
+			h, err := Reserve(marker, nil, worker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, _ := ledger.NewChargeRow(h.Attempt, "measured-worker", "worker", item.Pool, item.Unit, item.Provider, item.Model, 2)
+			row.Run, row.Task, row.Effort, row.Config = testRun, worker.Task, item.Effort, item.Config
+			if err = ledger.Append(row); err != nil {
+				t.Fatal(err)
+			}
+			// The worker remains outstanding until its independent review finishes.
+			reviewer := request("cal", calib("reviewer-pool", "tokens", 3, 1))
+			reviewer.Attempt = "review-calibration"
+			reviewer.Calibration = caps
+			_, err = Reserve(marker, nil, reviewer)
+			if maxCalls == 1 {
+				wantInsufficient(t, err, "calls", "calibration")
+				return
+			}
+			if err != nil {
+				t.Fatalf("one measured outstanding worker plus one reviewer should fit two calls: %v", err)
+			}
+			reviewer.Attempt = "extra-review"
+			_, err = Reserve(marker, nil, reviewer)
+			wantInsufficient(t, err, "calls", "calibration")
+		})
+	}
+}
