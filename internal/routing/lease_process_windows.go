@@ -9,3 +9,7 @@ func dedicatedLeaseGroup(pid int) error {
 func leaseGroupGone(group int) error {
 	return errors.New("local provider process group proof is unsupported on Windows")
 }
+
+func awaitLeaseGroupGone(group int) error {
+	return errors.New("local provider process group proof is unsupported on Windows")
+}

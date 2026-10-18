@@ -343,7 +343,7 @@ func (l *Lease) CompleteLocal() error {
 	if !errors.Is(err, run.ErrNoProc) && !(err == nil && start != 0 && start != current.ChildStart) {
 		return fmt.Errorf("local child pid %d termination is unproven", current.Child)
 	}
-	if err := leaseGroupGone(current.ChildGroup); err != nil {
+	if err := awaitLeaseGroupGone(current.ChildGroup); err != nil {
 		return err
 	}
 	return os.Remove(l.path)

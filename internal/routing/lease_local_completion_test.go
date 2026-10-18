@@ -27,6 +27,18 @@ func TestLeaseLocalChildHelper(t *testing.T) {
 		}
 		return
 	}
+	if mode == "descendant_exit" {
+		if _, err := io.ReadFull(os.Stdin, make([]byte, 1)); err != nil {
+			t.Fatal(err)
+		}
+		// a short-lived orphan in the leader's group: still running when the
+		// parent probes, then reparented to the OS reaper like the real worker
+		child := exec.Command("sleep", "0.35")
+		if child.Start() != nil {
+			t.Fatal("descendant_exit sleep")
+		}
+		return
+	}
 	_, _ = io.Copy(io.Discard, os.Stdin)
 }
 
@@ -75,6 +87,26 @@ func TestCompleteLocalRequiresActualChildAndGroupTermination(t *testing.T) {
 	}
 	if err := l.CompleteLocal(); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := SettleAttempt(attempt); err != nil {
+		t.Fatalf("proven local completion cannot settle: %v", err)
+	}
+}
+
+// TestCompleteLocalToleratesEphemeralGroupWindow proves the completion release
+// observes the temporary window where a SIGKILLed orphan still holds the group
+// (running or zombie before the OS reaper takes it) instead of declaring the
+// launch unprovably done. It then proves the lease settles.
+func TestCompleteLocalToleratesEphemeralGroupWindow(t *testing.T) {
+	l, cmd, input, attempt := startLeaseLocalChild(t, "descendant_exit")
+	if _, err := input.Write([]byte("1")); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil { // leader is gone; the orphan still holds its group briefly
+		t.Fatal(err)
+	}
+	if err := l.CompleteLocal(); err != nil {
+		t.Fatalf("ephemeral group window was not released: %v", err)
 	}
 	if _, err := SettleAttempt(attempt); err != nil {
 		t.Fatalf("proven local completion cannot settle: %v", err)
