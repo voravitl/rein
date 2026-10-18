@@ -4,4 +4,5 @@ dist/
 /rein
 *.test
 __pycache__/
+.DS_Store
 .omc/
