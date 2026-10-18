@@ -32,3 +32,4 @@
 - [x] U9 release round (2026-10-18, owner-approved): commit 72941c1 + 3d090bd pushed to origin/main, tag v0.8.0 -> release workflow; pre-commit audit of all 115 items (binary excluded via .gitignore, no secrets, deletions intentional); local tags now consistent 0.8.0 across plugin/package manifests
 - [x] U10 release incident + latch (2026-10-18): gitignore pattern ate 25 cmd/rein sources; tag rebuilt v0.8.0 at ec9cbe5, release live with assets, CI green; guard `scripts/preflight-push.sh` added — run before any future push
 - [x] U11 lease completion window fix (2026-10-18): darwin zombie-reap window raced immediate kill(-g,0) proof; polling grace added with unchanged fail-closed deadline; host suite 21/21 green post-fix (with indexer daemons briefly suspended)
+- [x] U12 final release (2026-10-18): v0.8.0 retagged at e03277c after CI green; release live with full asset set; goal-level remaining items unchanged (P5 live pilot, upstream Orca gate C)
