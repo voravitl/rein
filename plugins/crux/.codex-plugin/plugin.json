@@ -1,0 +1,18 @@
+{
+  "name": "crux",
+  "version": "0.9.0",
+  "description": "Crux engineering playbooks with session-scoped Codex integration.",
+  "author": {
+    "name": "P' Tik"
+  },
+  "homepage": "https://github.com/voravitl/rein/tree/main/plugins/crux",
+  "repository": "https://github.com/voravitl/rein",
+  "license": "MIT",
+  "skills": "./skills/",
+  "hooks": "./adapters/codex/hooks/hooks.json",
+  "interface": {
+    "displayName": "Crux",
+    "shortDescription": "Engineering playbooks and scoped agent handoffs.",
+    "developerName": "P' Tik"
+  }
+}

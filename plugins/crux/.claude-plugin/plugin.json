@@ -1,0 +1,15 @@
+{
+  "name": "crux",
+  "version": "0.9.0",
+  "description": "Crux ADLC playbooks, scoped agents and clear Thai communication.",
+  "author": { "name": "P' Tik" },
+  "homepage": "https://github.com/voravitl/rein/tree/main/plugins/crux",
+  "repository": "https://github.com/voravitl/rein",
+  "license": "MIT",
+  "skills": "./skills/",
+  "agents": [
+    "./adapters/claude/agents/crux-agent.md",
+    "./adapters/claude/agents/crux-comment-reviewer.md"
+  ],
+  "hooks": "./adapters/claude/hooks/hooks.json"
+}

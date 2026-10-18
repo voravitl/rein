@@ -1,0 +1,54 @@
+{
+  "model_calls_enabled": false,
+  "providers": {
+    "antigravity": {
+      "maker": "unknown",
+      "agent": "antigravity",
+      "model": "",
+      "launch": "shell",
+      "cost": "unknown; no price or quota assumed",
+      "probe": null
+    },
+    "claude": {
+      "maker": "anthropic",
+      "agent": "claude",
+      "model": "",
+      "launch": "shell",
+      "cost": "unknown; no price or quota assumed",
+      "probe": null
+    },
+    "codex": {
+      "maker": "openai",
+      "agent": "codex",
+      "model": "",
+      "launch": "shell",
+      "cost": "unknown; no price or quota assumed",
+      "probe": null
+    },
+    "opencode2": {
+      "maker": "unknown",
+      "agent": "opencode2",
+      "model": "",
+      "launch": "shell",
+      "cost": "unknown; no price or quota assumed",
+      "probe": null
+    }
+  },
+  "worker_chains": {
+    "antigravity": [
+      "antigravity"
+    ],
+    "claude": [
+      "claude"
+    ],
+    "codex": [
+      "codex"
+    ],
+    "opencode2": [
+      "opencode2"
+    ]
+  },
+  "review_chains": {},
+  "quota_signals": null,
+  "require_orca_quota": true
+}
