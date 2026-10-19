@@ -66,8 +66,18 @@ class ReadinessTests(unittest.TestCase):
     def fake_cli(self, root, mode):
         program = root / 'fake-opencode2'
         program.write_text('#!/usr/bin/env python3\n' + textwrap.dedent('''\
-            import http.server,json,os,pathlib,sys,threading
+            import http.server,json,os,pathlib,socket,socketserver,sys,threading
             MODE = MODE_VALUE
+            # http.server.HTTPServer.server_bind() calls socket.getfqdn(), a reverse DNS lookup of
+            # 127.0.0.1 that stalls for many seconds on GitHub macOS 15+ runners (actions/runner-images#12162,
+            # actions/setup-python#1223), so the ready line arrived after the probe timeout. Bind without
+            # it, and make any reintroduced lookup fail fast on every OS instead of stalling only on macOS.
+            def no_reverse_dns(*args):raise AssertionError('reverse DNS lookup in fixture')
+            socket.getfqdn=socket.gethostbyaddr=no_reverse_dns
+            class LoopbackServer(http.server.HTTPServer):
+                def server_bind(self):
+                    socketserver.TCPServer.server_bind(self)
+                    self.server_name,self.server_port=self.server_address[:2]
             if sys.argv[1:] == ['--version']:
                 print('opencode fixture');sys.exit()
             if sys.argv[1:] == ['debug','paths']:
@@ -94,7 +104,7 @@ class ReadinessTests(unittest.TestCase):
                         value={'data':[{'id':'crux','source':{'type':'local','path':str(adapter/'index.js')},
                                        'state':{'status':'error' if MODE=='inactive' else 'active'}}]}
                     body=json.dumps(value).encode();self.send_response(200);self.end_headers();self.wfile.write(body)
-            server=http.server.HTTPServer(('127.0.0.1',0),Handler)
+            server=LoopbackServer(('127.0.0.1',0),Handler)
             threading.Thread(target=server.serve_forever,daemon=True).start()
             print(json.dumps({'url':'http://127.0.0.1:'+str(server.server_port)}),flush=True)
             sys.stdin.read();server.shutdown();server.server_close()
