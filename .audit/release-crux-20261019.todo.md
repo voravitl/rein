@@ -19,9 +19,9 @@
 - [x] `node --test test/*.test.mjs` ผ่าน
 - [x] `scripts/preflight-push.sh` ผ่านบน commit สุดท้าย
 - [x] `scripts/check-version-consistency.sh v0.9.0` ผ่าน
-- [ ] tag `v0.9.0` ชี้ commit เดียวกับ `main`; GitHub release มี asset ครบ 8 ไฟล์ (6 binaries + SHA256SUMS + `crux-0.9.0.tgz`)
+- [x] tag `v0.9.0` ชี้ commit `24a2cc9` ใน `main`; GitHub release มี asset ครบ 8 ไฟล์ (6 binaries + SHA256SUMS + `crux-0.9.0.tgz`)
 - [x] Crux tarball ไม่มี `__pycache__`/test-only files และ manifest ใน tarball เป็น 0.9.0
-- [ ] ดาวน์โหลด asset ของแพลตฟอร์มนี้แล้ว `rein version` รายงาน `0.9.0`
+- [x] ดาวน์โหลด `rein-darwin-arm64` + `SHA256SUMS` + `crux-0.9.0.tgz` แล้ว `./rein-darwin-arm64 version` รายงาน `rein 0.9.0`; checksum ตรง; Crux tarball manifest 0.9.0 และ clean
 - [x] ไม่มีการเรียกโมเดล/provider เพิ่ม (quota/credit ยังไม่พร้อม)
 
 ## Steps
@@ -37,10 +37,18 @@
 9. [x] `CHANGELOG.md` + release notes (แยก verified vs ยังไม่ยืนยัน)
 10. [x] Final gates ซ้ำหลังแก้ทั้งหมด + preflight
 11. [x] Commit เป็นชุด (Crux / audit remediation / integration+release / docs), tag `v0.9.0`, push `main` + tag (commit bd01e0d)
-12. [ ] รอ release workflow, ตรวจ assets, ดาวน์โหลดและรัน `rein version`, รายงานผลภาษาไทย (in progress)
+12. [x] รอ release workflow (run 39185003910 success), ตรวจ assets 8 ไฟล์, ดาวน์โหลดและรัน `rein version` = 0.9.0, รายงานผลภาษาไทย
 
 ## ขอบเขตที่คงไว้ (ไม่แตะ)
 
 - G-01 Orca recovery fence — safety boundary โดยเจตนา
 - Live 4-harness / two-provider handoff / remote Orca recovery — ยังไม่มีหลักฐาน live; release notes ต้องบอกว่ายังไม่ยืนยัน
 - ไม่ publish npm (ไม่ authenticated); GitHub release เป็นช่องทางที่ workflow รองรับ
+
+## Release verification (2026-10-19)
+
+- GitHub release: https://github.com/voravitl/rein/releases/tag/v0.9.0
+- Release workflow run: 39185003910 (success)
+- Assets: 8 (`rein-darwin-amd64`, `rein-darwin-arm64`, `rein-linux-amd64`, `rein-linux-arm64`, `rein-windows-amd64.exe`, `rein-windows-arm64.exe`, `crux-0.9.0.tgz`, `SHA256SUMS`)
+- Local verification: `rein-darwin-arm64 version` = `rein 0.9.0`; SHA256SUMS matches; Crux tarball manifest 0.9.0 and no `__pycache__`/test-only files
+- npm: not published (unauthenticated); package version in repo is 0.9.0

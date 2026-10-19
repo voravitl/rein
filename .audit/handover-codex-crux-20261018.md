@@ -6,7 +6,7 @@
 - **ผู้ส่ง**: OpenCode (session ใน Orca worktree เดียวกัน `308dbc44-3051-4ebb-ae2d-6844604b892e::/Users/voravit.l/dev/rein`)
 - **เวลาส่งต่อ**: 18 ตุลาคม 2026 22:29 น. Asia/Bangkok
 - **เหตุผล**: Codex ทั้ง workspace ติดเครดิต (`codex_error_info: usage_limit_exceeded`, `rate_limit_reached_type: workspace_owner_credits_depleted`, balance 0) — เจ้าของงานต้องเติมเครดิตแล้วพิมพ์ `/goal resume`; งานทั้งหมดในไฟล์นี้รออยู่ในคิว
-- **ความคืบหน้า (19 ต.ค. release)**: Crux + Rein release commit `382e3da` อยู่ใน `main` (ahead 2); audit remediation F-01–F-12 ปิดแล้ว; final gates ครบ (Go full/race/vet/gofmt, node/python/scripts/npm, preflight/version/crux tarball); tag `v0.9.0`, push และ release workflow pending
+- **ความคืบหน้า (19 ต.ค. release)**: Crux + Rein **released v0.9.0**; GitHub release มี 8 assets; `rein-darwin-arm64 version` = `rein 0.9.0` และ SHA256SUMS ตรง; audit remediation F-01–F-12 ปิด; final gates ครบ (Go full/race/vet/gofmt, node/python/scripts/npm, preflight/version/crux tarball); npm ยังไม่ publish (unauthenticated)
 
 ## 1. Goal ที่ต้องทำต่อ (คำสั่งเจ้าของงาน)
 
