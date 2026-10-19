@@ -3,6 +3,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # release.yml calls this workflow so a tag cannot publish while the full matrix is red
+  workflow_call:
 permissions:
   contents: read
 jobs:
