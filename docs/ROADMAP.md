@@ -23,9 +23,12 @@ Decided in a design interview on 2026-10-08 and revised after an adversarial rev
 acceptance tests and the claude-longrun lessons behind each choice are in
 [ADR 0002](adr/0002-run-guard-and-approvals.md). ADR 0002 is authoritative where this summary is shorter.
 
-Delivery, one provable slice at a time (each runs in a real Orca batch before the next starts):
-**0.2.1** worker guard fix for submodules / nested repos → **0.3** B0 core → **0.4** B1 light → **0.5** B2 after
-its spike → B3, B4.
+Delivery complete through **0.9.0** (see the Done table). Remaining work, in priority order:
+1. **Windows CI** — PR #15 adds `windows-latest` to the matrix; needs Crux fixtures to skip/mock on Windows (codex binary absent, shell scripts non-portable).
+2. **Cherry-pick old branches** — `rein-cleanup-20261009` (orca_cleanup.py pagination/safety) and `rein-launch-20261009` (coord_bash preflight binding) have useful changes not yet in main.
+3. **Live verification** — Claude Code and Codex are rate-limited; OpenCode2 not yet tested with Crux; two-provider handoff, remote Orca recovery, and real Windows install remain unproven.
+4. **npm publish** — package is publishable (`npm publish --dry-run` passes); blocked on registry authentication.
+5. **ROADMAP** — this section superseded; the Done table is authoritative.
 
 ### B0. Coordinator guard
 **Problem.** rein guards workers, but the coordinator is guarded by prose only. Observed: a coordinator that was told
