@@ -30,13 +30,27 @@
 - `scripts/preflight-push.sh` on the release commit; `scripts/check-version-consistency.sh v0.9.0`.
 - `dist/crux-0.9.0.tgz` has no `__pycache__` or test-only files and carries manifest version 0.9.0.
 
+## Partially verified in this session
+
+- **Antigravity (agy 1.4.2):** Crux plugin installed via `agy plugin install plugins/crux`
+  (55 skills processed). Live prompt in Thai returned a correct answer and the `crux-mode`
+  skill was recognized. **One of four harnesses has live evidence.**
+- **npm publish dry-run:** `npm publish --dry-run` succeeded for `rein@0.9.0` (89 files,
+  326 kB). The package is publishable; only authentication is missing.
+- **install.ps1:** PowerShell parser reports zero syntax errors. Runtime on real Windows
+  remains unverified (no Windows machine / PowerShell available on macOS).
+- **Docker:** available (v29.4.0) but cannot run Windows containers on macOS, so the
+  PowerShell installer cannot be exercised end-to-end. A Linux container with `pwsh`
+  parses the script but cannot execute Windows paths.
+
 ## Not verified in this release
 
-- Live activation and Thai output on all four harnesses, a real two-provider handoff, remote Orca
-  recovery/cancellation, and a real Windows install. These remain explicit gates; local fixtures are
-  not live proof.
-- npm registry publication. `npm whoami` is unauthenticated; this release is published on GitHub.
-  The npm package version in the repo is 0.9.0, but the registry still serves an older version.
+- Live activation and Thai output on Claude Code and Codex (both rate-limited this session);
+  agy has live evidence, OpenCode2 not yet tested end-to-end with Crux.
+- Real two-provider handoff (needs two providers with credits).
+- Remote Orca recovery/cancellation (Orca CLI available; not exercised).
+- Real Windows install (no Windows machine; PowerShell syntax verified only).
+- npm registry publication (`npm whoami` = ENEEDAUTH; dry-run succeeds).
 
 ## Assets
 
