@@ -41,9 +41,11 @@
   Live prompt in Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
 - **3 of 4 harnesses have live evidence.** Claude Code and Codex remain unverified due to
   rate limits / credit depletion. (OpenCode2 also verified via opencode CLI.)
-- **ADLC workflow end-to-end (guard + drift):** Created contract (allow README.md), guard denied
-  write to main.go with clear message, drift detected uncommitted/untracked changes and missing
-  report. Full guard+drift+contract lifecycle verified. ✅
+- **ADLC workflow end-to-end (full run):** Created contract (allow README.md), launched agy
+  worker on `run_c64540eb1c2a`, worker added a comment to README.md, guard denied write to
+  main.go with clear message, drift detected uncommitted changes, worker closed cleanly
+  (terminal closed, worktree removed, worker status → failed). Full guard+drift+contract+launch+
+  close lifecycle verified. ✅
 - **Orca recovery safety check:** `rein orca close --check-only` reports `safe: clean tree,
   HEAD reachable in another ref`. `rein orca tidy` audits terminals correctly.
   `rein orca run-create` creates runs successfully.
