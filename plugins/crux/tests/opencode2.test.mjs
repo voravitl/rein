@@ -31,8 +31,8 @@ test('OpenCode2 prompt/context hooks persist only the explicitly activated sessi
   const active = { sessionID: 'one', system: [{ type: 'text', text: 'existing' }] };
   await restarted.hooks.get('context')(active);
   assert.equal(active.system[0].text, 'existing');
-  assert.match(active.system[1].text, /thai-communication\/SKILL\.md/);
-  assert.match(active.system[1].text, /skills\/crux-mode\/SKILL\.md/);
+  assert.match(active.system[1].text, /thai-communication[\\/]SKILL\.md/);
+  assert.match(active.system[1].text, /skills[\\/]crux-mode[\\/]SKILL\.md/);
   for (const id of ['two', '', undefined]) {
     const other = { sessionID: id, system: [] };
     await restarted.hooks.get('context')(other);
