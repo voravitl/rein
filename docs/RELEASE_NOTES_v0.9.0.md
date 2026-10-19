@@ -34,19 +34,24 @@
 
 - **Antigravity (agy 1.4.2):** Crux plugin installed via `agy plugin install plugins/crux`
   (55 skills processed). Live prompt in Thai returned a correct answer and the `crux-mode`
-  skill was recognized. **One of four harnesses has live evidence.**
+  skill was recognized. ✅
+- **Kiro (kiro-cli 2.31.0):** Crux skills symlinked into `~/.kiro/skills/`. Live prompt in
+  Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
+- **OpenCode (opencode 2.0.32):** Crux skills symlinked into `~/.config/opencode/skills/`.
+  Live prompt in Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
+- **3 of 4 harnesses have live evidence.** Claude Code and Codex remain unverified due to
+  rate limits / credit depletion.
 - **npm publish dry-run:** `npm publish --dry-run` succeeded for `rein@0.9.0` (89 files,
   326 kB). The package is publishable; only authentication is missing.
 - **install.ps1:** PowerShell parser reports zero syntax errors. Runtime on real Windows
   remains unverified (no Windows machine / PowerShell available on macOS).
 - **Docker:** available (v29.4.0) but cannot run Windows containers on macOS, so the
-  PowerShell installer cannot be exercised end-to-end. A Linux container with `pwsh`
-  parses the script but cannot execute Windows paths.
+  PowerShell installer cannot be exercised end-to-end.
 
 ## Not verified in this release
 
-- Live activation and Thai output on Claude Code and Codex (both rate-limited this session);
-  agy has live evidence, OpenCode2 not yet tested end-to-end with Crux.
+- Live activation on **Claude Code** and **Codex** (both rate-limited / credit-depleted this session).
+  OpenCode2 not yet tested end-to-end with Crux (plugin requires npm/Git package spec).
 - Real two-provider handoff (needs two providers with credits).
 - Remote Orca recovery/cancellation (Orca CLI available; not exercised).
 - Real Windows install (no Windows machine; PowerShell syntax verified only).
