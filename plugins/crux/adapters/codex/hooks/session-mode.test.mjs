@@ -21,7 +21,7 @@ test('persistent mode is explicit, isolated, resumable and reversible', () => {
     }
     const files = readdirSync(root);
     assert.equal(files.length, 1);
-    assert.equal(statSync(join(root, files[0])).mode & 0o777, 0o600);
+    assert.equal(statSync(join(root, files[0])).mode & 0o777, process.platform === 'win32' ? 0o666 : 0o600);
     assert.deepEqual(JSON.parse(readFileSync(join(root, files[0]), 'utf8')), { active: true });
     assert.match(submit('a', '/crux-off').hookSpecificOutput.additionalContext, /now off/);
     assert.deepEqual(submit('a', 'continue'), {});

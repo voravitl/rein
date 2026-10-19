@@ -1,5 +1,5 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const adapter = dirname(fileURLToPath(import.meta.url));
@@ -13,7 +13,7 @@ const mainTools = [...workTools, 'define_subagent', 'invoke_subagent', 'manage_s
 // Build a separate deployable package; never replace an existing installation.
 export function build(destination) {
   const output = resolve(destination);
-  if (output === root || output.startsWith(root + '/')) throw new Error('output must be outside the source plugin');
+  if (output === root || output.startsWith(root + sep)) throw new Error('output must be outside the source plugin');
   if (existsSync(output)) throw new Error('output already exists; choose a new directory');
   mkdirSync(output, { recursive: true });
   for (const item of ['skills', 'references', 'agents', 'adapters', 'scripts', 'LICENSE', 'UPSTREAM.md']) {

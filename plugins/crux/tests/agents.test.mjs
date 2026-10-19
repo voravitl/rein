@@ -7,6 +7,7 @@ import test from 'node:test';
 import { installAgents } from '../scripts/agents.mjs';
 
 const source = dirname(dirname(fileURLToPath(import.meta.url)));
+const tomlString = path => JSON.stringify(path).slice(1, -1);
 
 test('portable agent installation is idempotent, updates owned copies and preserves foreign files', () => {
   const temp = mkdtempSync(join(tmpdir(), 'crux-agents-'));
@@ -22,12 +23,12 @@ test('portable agent installation is idempotent, updates owned copies and preser
     for (const file of installed.agents) {
       const data = readFileSync(join(home, 'agents', file), 'utf8');
       assert.ok(!data.includes('@PLUGIN_ROOT@'));
-      assert.ok(data.includes(plugin));
+      assert.ok(data.includes(tomlString(plugin)));
     }
     const moved = join(temp, 'moved plugin');
     cpSync(plugin, moved, { recursive: true });
     installAgents(moved, home);
-    assert.ok(readFileSync(join(home, 'agents', installed.agents[0]), 'utf8').includes(moved));
+    assert.ok(readFileSync(join(home, 'agents', installed.agents[0]), 'utf8').includes(tomlString(moved)));
     installAgents(moved, home, true);
     assert.deepEqual(readdirSync(join(home, 'agents')), ['foreign.toml']);
     assert.equal(readFileSync(join(home, 'agents', 'foreign.toml'), 'utf8'), 'unchanged');
