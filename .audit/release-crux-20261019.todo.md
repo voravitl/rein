@@ -36,8 +36,8 @@
 8. [x] Version bump 0.9.0: `package.json`, `.claude-plugin/plugin.json`, `plugin.json`, `plugins/rein/plugin.json`, และ Crux 3 manifests; ไม่ใส่ `plugins/crux/` ใน npm files (npm ไม่ได้ publish) แต่สร้าง `dist/crux-0.9.0.tgz` เป็น release asset โดยกัน `__pycache__`/test cache
 9. [x] `CHANGELOG.md` + release notes (แยก verified vs ยังไม่ยืนยัน)
 10. [x] Final gates ซ้ำหลังแก้ทั้งหมด + preflight
-11. [ ] Commit เป็นชุด (Crux / audit remediation / integration+release / docs), tag `v0.9.0`, push `main` + tag
-12. [ ] รอ release workflow, ตรวจ assets, ดาวน์โหลดและรัน `rein version`, รายงานผลภาษาไทย
+11. [x] Commit เป็นชุด (Crux / audit remediation / integration+release / docs), tag `v0.9.0`, push `main` + tag (commit bd01e0d)
+12. [ ] รอ release workflow, ตรวจ assets, ดาวน์โหลดและรัน `rein version`, รายงานผลภาษาไทย (in progress)
 
 ## ขอบเขตที่คงไว้ (ไม่แตะ)
 

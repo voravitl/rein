@@ -91,6 +91,8 @@ func (c *RealOrcaClient) execOrca(args ...string) ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, c.BinaryPath, args...)
+	configureProcessGroup(cmd)
+	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
 	if err != nil {
 		if ctx.Err() != nil {

@@ -29,7 +29,8 @@
 - F-05/F-06/F-07: npm tarball bootstraps from checksum-verified release assets, the wrapper cannot
   recurse into itself, and a failed native launch exits nonzero.
 - F-08/F-09: E2E screenshots are confined to the evidence directory and scenario deadlines are
-  enforced across waits and client calls.
+  enforced across waits and client calls. Client cancellation now kills the whole process group so
+  a child process cannot keep a deadline from firing.
 - F-10: active docs describe the shipped capability and separate historical receipts from live
   verification.
 - F-12: preflight distinguishes ignored, untracked and Git-failure states; untracked source is fatal.
