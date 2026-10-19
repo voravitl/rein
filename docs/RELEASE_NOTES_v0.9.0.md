@@ -40,7 +40,10 @@
 - **OpenCode (opencode 2.0.32):** Crux skills symlinked into `~/.config/opencode/skills/`.
   Live prompt in Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
 - **3 of 4 harnesses have live evidence.** Claude Code and Codex remain unverified due to
-  rate limits / credit depletion.
+  rate limits / credit depletion. (OpenCode2 also verified via opencode CLI.)
+- **Orca recovery safety check:** `rein orca close --check-only` reports `safe: clean tree,
+  HEAD reachable in another ref`. `rein orca tidy` audits terminals correctly.
+  `rein orca run-create` creates runs successfully.
 - **npm publish dry-run:** `npm publish --dry-run` succeeded for `rein@0.9.0` (89 files,
   326 kB). The package is publishable; only authentication is missing.
 - **install.ps1:** PowerShell parser reports zero syntax errors. Runtime on real Windows
@@ -51,9 +54,8 @@
 ## Not verified in this release
 
 - Live activation on **Claude Code** and **Codex** (both rate-limited / credit-depleted this session).
-  OpenCode2 not yet tested end-to-end with Crux (plugin requires npm/Git package spec).
-- Real two-provider handoff (needs two providers with credits).
-- Remote Orca recovery/cancellation (Orca CLI available; not exercised).
+- Real two-provider handoff (needs two providers with credits; `rein route auto` requires task+run+profile).
+- Remote Orca recovery with actual worker kill (not exercised; `close --check-only` and `tidy` verified).
 - Real Windows install (no Windows machine; PowerShell syntax verified only).
 - npm registry publication (`npm whoami` = ENEEDAUTH; dry-run succeeds).
 
