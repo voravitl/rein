@@ -39,9 +39,9 @@
   Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
 - **OpenCode (opencode 2.0.32):** Crux skills symlinked into `~/.config/opencode/skills/`.
   Live prompt in Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
-- **3 of 4 harnesses have live evidence.** Claude Code (just verified), Antigravity, and
-  OpenCode2 all return correct Thai responses and recognize crux-mode. Codex remains
-  unverified (credit-depleted).
+- **3 of 4 Crux adapters verified live.** Claude Code, Antigravity (agy), and OpenCode2 all
+  return correct Thai responses and recognize crux-mode. Codex remains unverified
+  (credit-depleted). OpenCode (this harness) also verified.
 - **ADLC workflow end-to-end (full run):** Created contract (allow README.md), launched agy
   worker on `run_c64540eb1c2a`, worker added a comment to README.md, guard denied write to
   main.go with clear message, drift detected uncommitted changes, worker closed cleanly
