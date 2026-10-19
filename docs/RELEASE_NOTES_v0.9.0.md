@@ -39,8 +39,9 @@
   Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
 - **OpenCode (opencode 2.0.32):** Crux skills symlinked into `~/.config/opencode/skills/`.
   Live prompt in Thai returned a correct answer and the `crux-mode` skill was recognized. ✅
-- **3 of 4 harnesses have live evidence.** Claude Code and Codex remain unverified due to
-  rate limits / credit depletion. (OpenCode2 also verified via opencode CLI.)
+- **3 of 4 harnesses have live evidence.** Claude Code (just verified), Antigravity, and
+  OpenCode2 all return correct Thai responses and recognize crux-mode. Codex remains
+  unverified (credit-depleted).
 - **ADLC workflow end-to-end (full run):** Created contract (allow README.md), launched agy
   worker on `run_c64540eb1c2a`, worker added a comment to README.md, guard denied write to
   main.go with clear message, drift detected uncommitted changes, worker closed cleanly
@@ -61,7 +62,7 @@
 
 ## Not verified in this release
 
-- Live activation on **Claude Code** and **Codex** (both rate-limited / credit-depleted this session).
+- Live activation on **Codex** (credit-depleted; Claude Code, Antigravity, OpenCode2 verified live).
 - Real two-provider handoff (needs two providers with credits; `rein route auto` requires task+run+profile).
 - Remote Orca recovery with actual worker kill (not exercised; `close --check-only` and `tidy` verified).
 - Real Windows install (no Windows machine; PowerShell syntax verified only).
