@@ -44,6 +44,9 @@
 - **Orca recovery safety check:** `rein orca close --check-only` reports `safe: clean tree,
   HEAD reachable in another ref`. `rein orca tidy` audits terminals correctly.
   `rein orca run-create` creates runs successfully.
+- **Orca worker launch + close (recovery test):** Launched agy worker on `run_288f3daca5da`,
+  then closed it via `rein orca close` (terminal closed, worktree removed). Worker status
+  changed to `failed`. `rein orca tidy` confirmed no orphaned terminals. ✅
 - **npm publish dry-run:** `npm publish --dry-run` succeeded for `rein@0.9.0` (89 files,
   326 kB). The package is publishable; only authentication is missing.
 - **install.ps1:** PowerShell parser reports zero syntax errors. Runtime on real Windows
