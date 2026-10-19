@@ -9,9 +9,8 @@ orca orchestration run-create / run-use / run-show
 # After task-create, use the returned task_<opaque-id>, never the rein contract name.
 rein spec check /abs/source.md <rein-contract-name>
 orca orchestration task-create --run R --task-title "<task>: <what>" --display-name "<task> [<agent>/<model>]" --spec "$(cat /abs/source.md)" --json
-rein route prepare --task <rein-contract-name> --run R --chain worker:<type>
 rein spec check /abs/source.md <rein-contract-name> && \
-  rein route launch --task <rein-contract-name> --run R -- orca orchestration worker-start --run R --task <returned-task-id> \
+  orca orchestration worker-start --run R --task <returned-task-id> \
   --worktree path:/abs/existing/worktree --agent claude --model <id> --json
 # Creation flags belong to worktree create, before hooks installation, not this launch.
 orca terminal create --worktree path:<wt> --title "<task> [<agent>/<model>]" --command "..." --json
@@ -23,19 +22,20 @@ orca orchestration check --run R [--peek] [--types worker_done,escalation,questi
 orca orchestration check --run R --ack <deliveryId> --peek --json   # ack by DELIVERY id, not message id
 orca orchestration reply --run R --id <msg> --body "..." --json      # answer a worker's ask
 orca orchestration send --run R --to dispatch:<ctx> --type status --subject S --body B --json  # follow-up note
-orca orchestration worker-list --run R --include-remote --json  # projection.liveness / nextAction; follow page.nextCursor until !page.hasMore
-orca orchestration worker-stop --dispatch <ctx> --json      # only positive exited proof + exact nextAction; no --run flag
+orca orchestration worker-list --run R --json        # workers[].dispatchStatus / terminalState / resource
+orca orchestration worker-stop --dispatch <ctx> --json      # (no --run flag)
 orca orchestration worker-release --dispatch <ctx> --json
-orca worktree rm --worktree <exact-verified-selector> --json
+orca terminal close --terminal <term> --json          # "terminal_handle_stale" = already closed
+orca worktree rm --worktree path:/abs/path --force --json
 ```
 Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`.
 
 ## Guard hooks per vendor (`rein hooks install <rein-contract-name>` prints the exact flags)
 Install before the first launch; re-install on every retry/provider fallback for a fresh generation before any test tool call. Use the newly printed flags. `GUARD_INACTIVE` remains retrospective current-generation evidence, not a launch preflight or resource-ownership proof.
-Run `rein spec check /abs/source.md <rein-contract-name>` before Task creation/dispatch. Install hooks then prepare the configured route before launch; all model argv go through `rein route launch` with explicit task/run/model. The wrapper injects current task-bound Codex hooks and Kiro agent flags; do not add conflicting hook/model/provider overrides. Native Orca Codex/Kiro/OpenCode are rejected by the routed launcher. For Task-ID worker-start, keep it immediately before the launch with `&&` in the same shell call, using that checked source's Task receipt and exact worktree. Negated/background checks, semicolon/OR separation, and mismatched sources/contracts do not qualify. The guard cannot fetch a Task's source spec; never invent it. Literal inline specs are linted against the exact worktree contract; use the Task-ID recipe for shell-expanded file contents.
+Run `rein spec check /abs/source.md <rein-contract-name>` before Task creation/dispatch. For Task-ID worker-start, keep it immediately before the launch with `&&` in the same shell call, using that checked source's Task receipt and exact worktree. Negated/background checks, semicolon/OR separation, and mismatched sources/contracts do not qualify. The guard cannot fetch a Task's source spec; never invent it. Literal inline specs are linted against the exact worktree contract; use the Task-ID recipe for shell-expanded file contents.
 
-- **codex:** `worker-start --agent codex` cannot pass CLI flags (only `--model`, `--effort`). The guard needs `--dangerously-bypass-hook-trust` plus the two `-c 'hooks.PreToolUse=[...]'` / `-c 'hooks.Stop=[...]'` flags, so start a guarded codex worker in a shell terminal (preamble route: `rein route launch --task <contract> --run <run> -- codex exec --model <selected-model> "$(cat preamble)"`) or with the direct routed `codex exec --model <selected-model> ...` fallback. Without the flags the hook is skipped silently (`rein drift` then says GUARD_INACTIVE).
-- **kiro:** `rein route launch --task <contract> --run <run> -- kiro-cli chat --trust-all-tools --model <selected-model> "$(cat preamble)"` (injects `--agent rein`); the `--agent rein` is what loads the hook.
+- **codex:** `worker-start --agent codex` cannot pass CLI flags (only `--model`, `--effort`). The guard needs `--dangerously-bypass-hook-trust` plus the two `-c 'hooks.PreToolUse=[...]'` / `-c 'hooks.Stop=[...]'` flags, so start a guarded codex worker in a shell terminal (preamble route: `codex <printed flags> -C <worktree> "$(cat preamble)"`) or with the direct `codex exec <printed flags> -C <worktree> ...` fallback. Without the flags the hook is skipped silently (`rein drift` then says GUARD_INACTIVE).
+- **kiro:** `kiro-cli chat --agent rein --trust-all-tools --model <model> "$(cat preamble)"`; the `--agent rein` is what loads the hook.
 - **agy, opencode2:** no flag; start them inside the worktree.
 
 ## Quirks and the fix for each
@@ -57,15 +57,14 @@ Run `rein spec check /abs/source.md <rein-contract-name>` before Task creation/d
     `codex exec <hook flags from rein hooks install> --dangerously-bypass-approvals-and-sandbox --ephemeral --color never -m gpt-6.1-sol -c model_reasoning_effort=high -C <worktree> -o <final.txt> - < prompt.md > log 2>&1`
     It can run docker, vitest and e2e. Tell it: "Orca is unavailable, do NOT run any orca command; end with a 3-sentence summary, files and commits".
   - agy has a direct form too: `agy --print "$(cat prompt)" --mode accept-edits --dangerously-skip-permissions --model gemini-3.8-flash-high --output-format text`.
-  - When Orca comes back, enumerate every worker page and inspect positive liveness evidence. Timeout, lost `worker_done`, missing state and `unverifiable` never authorize cleanup. `orca_cleanup.py --stop` refuses unless the dispatch has positively exited and its exact `projection.nextAction.argv` recommends `worker-stop`; a `worker-read` or `worker-show` recommendation requires inspection first.
-- **Cleanup follows Orca ownership receipts.** `python3 -B scripts/orca_cleanup.py <run> [--dry-run]` resolves `ORCA_CLI_COMMAND`, then `ORCA_DEV_REPO_ROOT` → `orca-dev`, then Linux `orca-ide`, otherwise `orca`, once per invocation. It reads all pages before mutation and requires an exact release recommendation plus `dispatchStatus` or authoritative `projection.outcome` of `succeeded`/`failed`. Accepted settled workers may be released while the TUI is live; exited liveness alone never authorizes release.
-- **Retained/reused terminals remain preserved.** `worker-release` archives output and closes only the terminal owned by the settled dispatch; reused, setup, coordinator, active and unproven terminals are retained. For `release_pending` or `release_unknown`, inspect the receipt and follow its exact recovery action. Never substitute `terminal close` for supervised release. After release the helper re-enumerates all pages and requires fresh `terminalState: released`; unconfirmed closure exits nonzero.
-- **Current recovery authority:** load `orca skills get orchestration --reference references/recovery-and-cleanup.md` and `orca skills get orchestration --reference references/messaging-and-gates.md`; a listing argument is never proof of exit.
+  - When Orca comes back, settle the lost dispatches with `orca_cleanup.py --stop`.
+- **Too many open terminals slow the Orca renderer.** Close finished ones promptly (`orca_cleanup.py`).
+- **The worker-list `terminalState` stays `retained`** after a release. Closing the terminal is what frees it.
 
 ## opencode / kiro (verified 2026-10-08)
-- **opencode2 (v2.0.20)** is a native Orca agent: `worker-start ... --agent opencode2` (or `opencode`). `--model` is ignored for it; the model comes from `~/.config/opencode/opencode.jsonc` (`model`). For a different model per task use the routed shell path: `rein route launch --task <contract> --run <run> -- opencode2 run --model <selected-model> "$(cat preamble)"`. List models: `opencode2 models`. Headless probe answered in seconds.
+- **opencode2 (v2.0.20)** is a native Orca agent: `worker-start ... --agent opencode2` (or `opencode`). `--model` is ignored for it; the model comes from `~/.config/opencode/opencode.jsonc` (`model`). For a different model per task use the shell route: `opencode2 run -m <provider/model> "$(cat preamble)"`. List models: `opencode2 models`. Headless probe answered in seconds.
 - **kiro-cli (2.21.0)** IS a known Orca TUI agent (Orca 1.4.219 app bundle: `agent-kind.js`, launched with `--trust-all-tools`; the `worker-start --help` agent list is only examples). But `worker-start --agent kiro` cannot pass `--model` (help: --model only for Claude, Codex, Cursor, Antigravity, Muse) nor `--agent rein`, so it runs kiro's configured default model (here `claude-opus-4.8`, effort max, 2.2x credits) WITHOUT the rein hook. Until kiro defaults are verified, run a guarded kiro worker in an Orca shell terminal + `dispatch --return-preamble` (authoritative Orca Task/Dispatch context; operator-owned unsupervised process):
-  `rein route launch --task <contract> --run <run> -- kiro-cli chat --no-interactive --trust-all-tools --model <selected-model> "$(cat preamble)"` (worker; it needs write + shell tools), or headless in the background with the same flags and the output to a log.
+  `kiro-cli chat --no-interactive --trust-all-tools --agent rein --model claude-sonnet-5.5 "$(cat preamble)"` (worker; it needs write + shell tools), or headless in the background with the same flags and the output to a log.
   - **Always pass `--model`** (`kiro-cli chat --list-models`); the configured default is `claude-opus-4.8` at effort max.
   - Each answer ends with `▸ Credits: N` — record it in the model ledger (`--credits`).
   - **Read-only mode** = `--trust-tools=read,grep,glob`: reads run, writes and shell are rejected ("non-interactive mode (no user to approve)"). A batch that mixes a rejected call with a read cancels the read too. `scripts/advise.sh` uses this with `ADVISE_PROVIDER=kiro`.
@@ -88,16 +87,3 @@ Orca provides native browser automation (`orca tab`, `orca goto`, `orca snapshot
 - **Execute scenario:** `rein e2e run <spec.json|spec.md> [--out <dir>] [--base-url <url>]`
 - **Evidence:** Automatically captures pass/fail screenshots, accessibility tree snapshots, and `report.md` for `rein contract` audits.
 - Full reference: [`skills/worktree-pipeline/references/orca-browser-e2e.md`](orca-browser-e2e.md).
-
-## Mandatory finished-session closure
-Session closure is a completion gate in the pipeline, not optional end-of-run housekeeping. Archive the final result and finish coordinator verification, then close run-created worker/reviewer/helper sessions (including Kiro TUI) and unused launch shells without waiting for merge. Retain only at the user's explicit request.
-
-For supervised workers use worker-release and authoritative recovery. For operator-owned fallback/advisor sessions, match terminal show against the original launch handle, incarnation, host and worktree, verify completion and no newer activity/takeover, archive output, then terminal close that exact handle. Verify ptyKilled=true and absence in a fresh worktree terminal list. Idle alone is not completion proof, headless CLI exit leaves the enclosing shell alive, and a release failure never authorizes this operator path. Preserve the main session, active or unknown sessions, history and worktrees still needed for active work or an open integration MR. Every session must be accounted for as closed, explicitly retained, or unresolved before final reporting.
-
-The supervised cleanup gate also fails on retries when a finished dispatch remains retained/pending/unknown and only inspection is recommended; a new invocation cannot turn unresolved closure into success. Operator-owned sessions still follow the separate identity-verified procedure above.
-
-Finished auxiliary worktrees are removed after their contribution is integrated and verified, even before the integration MR merges. Archive reports, ignored/local files and a verified Git bundle outside them first; require a clean checkout, no live terminal/job or active dispatch, exact repo/host/worktree identity and no dependency needing the checkout. Re-check before exact Orca worktree removal, preserve unmerged branches and verify absence in Orca/Git/disk. A failed or unverifiable check retains the worktree with a reason, with no raw-deletion fallback. Keep main and the integration/review checkout for an open MR; account for every run-created worktree as removed or retained with its reason.
-
-Executable completion gates: `orca_cleanup.py <run> --close-operator <launch.json> <completed-show.json> <report> --check-worktree <exact selector>` (repeat options). The coordinator declares verified operator completion; all Runs/workers are enumerated only to veto coordinator/supervised/active ownership. Exact local identity/runtime/output rechecks, positive PTY receipt and fresh absence are mandatory. Stop as well as release must have fresh released-state proof.
-
-Then `cleanup_worktrees.py <main> --root <worktree-root> --keep <running/open-MR names|none> --archive-dir <external run archive> [--integrated-into <full SHA>] [--dry-run]`. Mark only verified finished worktrees completed. No force, raw Git fallback or branch -D; required archives and fresh process/terminal/Orca/Git/disk checks fail nonzero if unverifiable. Keep main, active work, linked reviews and dependent children with reasons. Coordinator must exclude concurrent reuse/writers while checking and closing/removing because Orca provides no atomic conditional primitive.
