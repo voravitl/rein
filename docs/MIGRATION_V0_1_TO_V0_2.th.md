@@ -35,5 +35,5 @@
 
 ## 5. สิ่งที่เป็น draft (ห้ามเปิดใช้จริง)
 
-- supervised mode ทั้งชุด (supervisor/event/checkpoint/policy ใหม่ + hunter production wiring — registry ยังเป็น test-only library)
+- supervised mode ทั้งชุด (supervisor/event/checkpoint/policy ใหม่ + hunter production wiring ตาม `cmd/rein/hunter.go` — supervised mode แบบ live และ remote recovery ยังคงถูก fence)
 - เปิดได้เมื่อ: Phase B–D เสร็จตาม TEST_PLAN + live pilot ได้รับ authorization (Phase E)

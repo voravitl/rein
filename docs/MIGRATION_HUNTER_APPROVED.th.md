@@ -14,7 +14,7 @@ Owner authorized further local bug fixes and goal implementation while preservin
 | อนุมัติแล้ว | ยังไม่อนุมัติ |
 |---|---|
 | ใช้ hunter workflow ได้แบบ report-only + มีคนคุม (เจอแล้วรายงาน ไม่แก้เอง) | supervised mode ทั้งชุด (supervisor daemon, loop skeleton) |
-| อ้าง `agents/rein-bug-hunter.md` เป็น approved workflow ได้ | อ้าง registry (`internal/hunter/finding.go`) เป็น production API — ยังเป็น test-only library |
+| อ้าง `agents/rein-bug-hunter.md` เป็น approved workflow ได้ | hunter registry/report/reproduce/verify/review/approve ถูก wire เข้า production CLI แล้ว (`cmd/rein/hunter.go`, `docs/CLI_REFERENCE.md`); supervised mode แบบ live และ remote recovery ยังคงถูก fence |
 | รัน `advise.sh` review ผ่าน review receipt ตาม OMC contract | auto-fix, unattended runs, live pilot, push/merge/deploy |
 
 ## 2. เงื่อนไขที่อนุมัติตั้งอยู่บน (evidence — ตรวจซ้ำได้)
@@ -53,7 +53,7 @@ Owner authorized further local bug fixes and goal implementation while preservin
 
 1. `mv agents/rein-bug-hunter.md agents/rein-bug-hunter.draft.md` + เปลี่ยน header กลับเป็น DRAFT
 2. ติ๊ก BACKLOG checklist ข้อ owner approval กลับเป็น `[ ]` พร้อมเหตุผล
-3. ไม่มี code ต้อง revert (approval นี้เปลี่ยนแค่ docs + ชื่อไฟล์ — registry ยังเป็น test-only เหมือนเดิม)
+3. ไม่มี code ต้อง revert (approval นี้เปลี่ยนแค่ docs + ชื่อไฟล์ — hunter ถูก wire เข้า production CLI แล้ว ตาม `cmd/rein/hunter.go`)
 
 ## 6. คำสั่ง verify (ทั้งหมดใน docker — ไม่แตะ host)
 

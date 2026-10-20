@@ -33,7 +33,7 @@
 - [x] F-01 side fix (lead): revision identity คำนวณจาก SHA ที่ระบุ ไม่ใช่ HEAD — 6 จุด (RecordVerdict, verdict check/approve/summary, hook approval, tier inference) + regression 2 ตัว (record + CLI) fail-before→pass-after
 - [x] U7a (lead): CI wiring — เพิ่ม `python3 -B -m unittest discover -s scripts -p 'test*.py'` + `node --test test/*.test.mjs` ใน `ci.yml`
 - [x] U7b (lead): final gates (`go test -count=1 ./...` + `-race` + vet + gofmt + python/node), CLI repro F-01, trail rows, handover, รายงานไทย — DONE (ทุก gate เขียว; CLI: B exit 0, C exit 1; ยังไม่ commit ตามกติกาเจ้าของ)
-- [ ] Follow-up (ไม่ block audit): `scripts/install.ps1` release download (Windows), version/tag consistency check, ADR 0002 B2.2 text, docs ประวัติศาสตร์ที่ยังบอก test-only, hunter usage ใน `docs/CLI_REFERENCE.md` + `main.go` help
+- [x] Follow-up (Windows dropped): version/tag consistency อยู่ใน CI+release แล้ว (`scripts/check-version-consistency.sh`); ADR 0002 B2.2 text อยู่แล้ว; docs ประวัติศาสตร์ที่ยังบอก test-only ปรับแล้ว (`MIGRATION_HUNTER_APPROVED.th.md`, `MIGRATION_V0_1_TO_V0_2.th.md`); hunter usage อยู่ใน `docs/CLI_REFERENCE.md` + `main.go` help แล้ว
 
 ## Autonomous run (playbook steps, verbatim — ขับ remediation F-01..F-12, 2026-10-19)
 
