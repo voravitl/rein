@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.1 — 2026-10-20
+
+### Changed
+
+- Dropped Windows from the supported scope; removed the `GOOS=windows` vet step and the Windows installer follow-up.
+- Closed remaining audit follow-ups: historical docs no longer claim the hunter registry is test-only; hunter usage already documented in `CLI_REFERENCE.md` and `main.go` help; version/tag consistency already enforced in CI and release.
+
 ## 0.9.0 — 2026-10-19
 
 ### Added
