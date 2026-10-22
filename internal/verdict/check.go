@@ -113,6 +113,9 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
+	if fi, statErr := os.Stat(path); statErr == nil {
+		mode = fi.Mode().Perm()
+	}
 	if err := f.Chmod(mode); err != nil {
 		f.Close()
 		return err
