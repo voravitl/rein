@@ -171,6 +171,27 @@ func TestFileOutsideReportDirectoryIsDrift(t *testing.T) {
 	}
 }
 
+// An explicitly allowed file (--writable) is the worker's own too: the guard lets it write it, so drift must not
+// count it as uncommitted work.
+func TestWritablePathIsNotDrift(t *testing.T) {
+	wt, c := repo(t, "writable-path")
+	c.ReportPath = filepath.Join(wt, "report", "report.md")
+	c.WorkerWritable = []string{filepath.Join(wt, "notes", "scratch.md")}
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
+	write(t, filepath.Join(wt, "report", "report.md"), "# report\n## S1 done\nfiles: backend/Routing/A.cs\n\n## S2 done\nchecks passed\n")
+	write(t, filepath.Join(wt, "notes", "scratch.md"), "worker scratch\n")
+	sh(t, wt, "git", "add", "backend/Routing/A.cs")
+	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
+
+	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(r.Drift); strings.Contains(got, "UNCOMMITTED") || strings.Contains(got, "OUT_OF_SCOPE") {
+		t.Errorf("the allowed file counted as drift: %s", got)
+	}
+}
+
 func TestDriftClean(t *testing.T) {
 	wt, c := repo(t, "good")
 	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
