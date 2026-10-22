@@ -614,6 +614,11 @@ func writeHermes(wt string, c *contract.Contract, bin string) ([]string, error) 
 			return nil, err
 		}
 	}
+	// The task's Hermes home is the guard's own state (plugin, config, runtime caches); a worker's
+	// `git add -A` would otherwise stage the guard's files into the worktree's commit.
+	if err := sandbox.Exclude(wt, ".hermes/"); err != nil {
+		return nil, fmt.Errorf("written, but could not exclude .hermes/ from git status: %w", err)
+	}
 	return rels, nil
 }
 

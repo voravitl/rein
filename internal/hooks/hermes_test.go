@@ -116,6 +116,30 @@ func TestHermesHomeIsNotOverwritten(t *testing.T) {
 	}
 }
 
+// TestHermesHomeIsExcludedFromGitStatus checks that the task's Hermes home cannot be staged by a worker's
+// `git add -A`: the guard's own files would end up in the worktree's commit.
+func TestHermesHomeIsExcludedFromGitStatus(t *testing.T) {
+	root, wt, c := setup(t)
+	if _, _, err := Install(c, filepath.Join(root, "rein"), []string{"hermes"}); err != nil {
+		t.Fatal(err)
+	}
+	// a runtime file the Hermes home writes while the worker runs
+	runtime := filepath.Join(wt, ".hermes", "cache", "tool_discovery_cache.json")
+	if err := os.MkdirAll(filepath.Dir(runtime), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runtime, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if out := git(t, "-C", wt, "status", "--porcelain"); out != "" {
+		t.Errorf("the whole Hermes home must stay out of git status, got %q", out)
+	}
+	git(t, "-C", wt, "add", "-A")
+	if out := git(t, "-C", wt, "diff", "--cached", "--name-only"); strings.Contains(out, ".hermes/") {
+		t.Errorf("a worker's `git add -A` must not stage the guard's own files, got %q", out)
+	}
+}
+
 // TestHermesPluginIsBoundToItsTask checks that a second task's plugin cannot judge the first one.
 func TestHermesPluginIsBoundToItsTask(t *testing.T) {
 	root, wt, c := setup(t)
