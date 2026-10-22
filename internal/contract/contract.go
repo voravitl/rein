@@ -197,7 +197,7 @@ var ErrNone = errors.New("no contract")
 
 func Load(name string) (*Contract, error) {
 	if !ValidName(name) {
-		return nil, fmt.Errorf("contract name %q is not a plain name (letters, digits, dot, dash, underscore)", name)
+		return nil, fmt.Errorf("contract name %q must be one path component (no slash, backslash, NUL, CR, or LF; not . or ..)", name)
 	}
 	b, err := os.ReadFile(PathOf(name))
 	if errors.Is(err, os.ErrNotExist) {
@@ -274,7 +274,7 @@ func splitList(s string) []string {
 // worktreeRoot "" falls back to the profile's worktree_root.
 func New(name string, issue int, runDir, allow, deny, scope, worktreeRoot, reportPath, writable string, maxLines int, prof *Profile) (*Contract, error) {
 	if !ValidName(name) {
-		return nil, fmt.Errorf("contract name %q is not a plain name (letters, digits, dot, dash, underscore)", name)
+		return nil, fmt.Errorf("contract name %q must be one path component (no slash, backslash, NUL, CR, or LF; not . or ..)", name)
 	}
 	expand := expandHome
 	if prof == nil {
