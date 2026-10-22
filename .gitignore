@@ -8,3 +8,4 @@ __pycache__/
 .omc/
 .agents/
 .rein/
+.audit/
