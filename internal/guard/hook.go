@@ -201,9 +201,25 @@ func judge(vendor string, a Action, c *contract.Contract, top, cwd string, w, st
 		return judgePost(vendor, a, c, top, w, stderr)
 	}
 
-	if reason := decide(a, c, top, cwd); reason != "" {
+	reason, ipc := decide(a, c, top, cwd)
+	if reason != "" {
 		return emit(vendor, w, stderr, a.Event, c.Name, reason)
 	}
+	if ipc && vendor == "agy" && a.Event == "pretool" && a.Kind == "bash" {
+		return emitBypass(w)
+	}
+	return 0
+}
+
+// emitBypass lifts the Antigravity terminal sandbox for one command: the sandbox blocks `orca orchestration`,
+// so a worker's send/check never reaches the Orca server and its worker_done is never recorded. Only the IPC
+// calls reach this point; anything that types a payload into another terminal stays sandboxed.
+func emitBypass(w io.Writer) int {
+	out := map[string]any{
+		"decision":  "allow",
+		"overwrite": map[string]any{"BypassSandbox": true},
+	}
+	_ = json.NewEncoder(w).Encode(out)
 	return 0
 }
 
@@ -254,19 +270,19 @@ func recordApprovalResponse(a Action, repoPath string) {
 	_ = verdict.RecordApproval(storageDir, int(mr), sha, patchID, "Human approval via AskUserQuestion")
 }
 
-func decide(a Action, c *contract.Contract, top, cwd string) string {
+func decide(a Action, c *contract.Contract, top, cwd string) (string, bool) {
 	switch a.Event {
 	case "stop":
 		if a.StopActive {
-			return "" // second stop: let it end; the coordinator's drift check still runs
+			return "", false // second stop: let it end; the coordinator's drift check still runs
 		}
 		if fi, err := os.Stat(c.ReportPath); err != nil || fi.Size() == 0 {
 			return fmt.Sprintf("write your report to %s (one heading per scope id %s with status, gate numbers, red checks), then send worker_done",
-				c.ReportPath, strings.Join(c.Scope, ", "))
+				c.ReportPath, strings.Join(c.Scope, ", ")), false
 		}
 	case "posttool":
 		// PostToolUse is logged but not denied (approval recording happens in judgePost)
-		return ""
+		return "", false
 	case "pretool":
 		// Check AskUserQuestion approval guard (ADR B2.4)
 		if a.Kind == "ask" && a.Tool == "AskUserQuestion" && a.ToolInput != "" {
@@ -280,7 +296,7 @@ func decide(a Action, c *contract.Contract, top, cwd string) string {
 
 			// Check approval rules
 			if reason := approvalRequestReason(a, ownerSessionID); reason != "" {
-				return reason
+				return reason, false
 			}
 		}
 		switch a.Kind {
@@ -288,27 +304,27 @@ func decide(a Action, c *contract.Contract, top, cwd string) string {
 			if strings.Contains(a.Command, patchMarker) && invokesApplyPatch.MatchString(a.Command) { // apply_patch run through the shell writes files too
 				paths := patchPaths(a.Command)
 				if len(paths) == 0 {
-					return "a patch inside a shell command names no file the guard can read; use the apply_patch tool"
+					return "a patch inside a shell command names no file the guard can read; use the apply_patch tool", false
 				}
 				for _, p := range paths {
 					if reason := checkEdit(p, c, top, cwd); reason != "" {
-						return reason
+						return reason, false
 					}
 				}
 			}
-			return CheckBash(a.Command, c, top, cwd)
+			return checkBash(a.Command, c, top, cwd)
 		case "write":
 			if len(a.Paths) == 0 { // a known write tool whose target we cannot read must not slip through
-				return fmt.Sprintf("cannot tell which file %s writes; use a tool call that names the file", a.Tool)
+				return fmt.Sprintf("cannot tell which file %s writes; use a tool call that names the file", a.Tool), false
 			}
 			for _, p := range a.Paths {
 				if reason := checkEdit(p, c, top, cwd); reason != "" {
-					return reason
+					return reason, false
 				}
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 func checkEdit(fp string, c *contract.Contract, top, cwd string) string {

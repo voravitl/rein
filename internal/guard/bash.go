@@ -48,6 +48,8 @@ type ctx struct {
 	pipeRHS     map[*syntax.Stmt]bool // statements that read a pipe
 	specChecked bool                  // current direct call has an adjacent successful source preflight
 	coord       *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
+	ipc         bool                  // the line contains an allowlisted `orca orchestration` IPC call
+	other       bool                  // the line also runs something else, so it is not IPC-only
 }
 
 type stdinKind int
@@ -77,13 +79,24 @@ var textOnly = map[string]bool{"git": true, "echo": true, "printf": true, "grep"
 
 // CheckBash returns a non-empty reason when the command must be denied.
 func CheckBash(cmd string, c *contract.Contract, top, cwd string) string {
+	reason, _ := checkBash(cmd, c, top, cwd)
+	return reason
+}
+
+// checkBash is CheckBash plus the sandbox finding: whether the line runs nothing but allowlisted `orca
+// orchestration` IPC calls (optionally behind a wrapper and a cd). The Antigravity terminal sandbox blocks those
+// calls, so a worker's `orca orchestration send` fails and its worker_done never lands.
+func checkBash(cmd string, c *contract.Contract, top, cwd string) (string, bool) {
 	top = contract.Real(top)
 	cwd = contract.Real(cwd)
 	x := &ctx{c: c, top: top, cwd: cwd, vars: map[string]string{}, ports: portRx(c.Profile.ProtectPorts), pipeRHS: map[*syntax.Stmt]bool{}}
 	if h, err := os.UserHomeDir(); err == nil {
 		x.vars["HOME"] = h
 	}
-	return x.script(cmd)
+	if reason := x.script(cmd); reason != "" {
+		return reason, false
+	}
+	return "", x.ipc && !x.other
 }
 
 func (x *ctx) script(src string) string {
@@ -275,6 +288,7 @@ func (x *ctx) call(args []string) string {
 	prof := &x.c.Profile
 	name := base(args[0])
 	rest := args[1:]
+	x.classify(name, args)
 	if x.coord != nil { // the coordinator pushes, merges and drives gh/glab: only its own rules apply
 		if r := x.coordCall(args[0], name, rest); r != "" {
 			return r

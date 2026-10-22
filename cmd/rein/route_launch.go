@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -152,10 +153,9 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		fmt.Fprintln(os.Stderr, "[route] Orca dispatch requires an attributable task lease")
 		return 1
 	}
-	if isOrcaLaunch(argv) && agent == "antigravity" {
-		if spec, _ := launchFlag(argv[1:], "--spec"); !strings.Contains(spec, "BypassSandbox") {
-			fmt.Fprintln(os.Stderr, "[route] antigravity terminal sandbox: tell the worker to run every orca command with BypassSandbox: true, or worker_done never arrives")
-		}
+	// The agy hook enforces the sandbox bypass itself, so only a launch without it still needs the spec instruction.
+	if isOrcaLaunch(argv) && agent == "antigravity" && !slices.Contains(c.HooksInstalled, "agy") {
+		fmt.Fprintln(os.Stderr, "[route] no agy hook installed: rein hooks install <task> --vendors agy enforces the terminal-sandbox bypass, or tell the worker to run every orca command with BypassSandbox: true")
 	}
 	if !isOrcaLaunch(argv) && agent == "codex" {
 		bin, binErr := os.Executable()
