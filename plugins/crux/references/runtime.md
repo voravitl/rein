@@ -12,6 +12,7 @@ Read the shared [thai-communication skill](../skills/thai-communication/SKILL.md
 - **Claude Code:** read [the Claude adapter](../adapters/claude/runtime.md) for native plugin hooks and roles.
 - **Antigravity:** read [the Antigravity adapter](../adapters/antigravity/runtime.md). Select the native Crux main agent explicitly; this adapter supplies no prompt-scoped global hook.
 - **OpenCode2:** read [the OpenCode V2 adapter](../adapters/opencode2/runtime.md) for prompt/context hooks and session-scoped storage.
+- **Hermes Agent:** read [the Hermes adapter](../adapters/hermes/runtime.md) for the `pre_llm_call` plugin hook and session-scoped mode state.
 
 Use only tools actually exposed by the selected harness. Do bounded sequential work if delegation is unavailable or forbidden; do not copy another client’s tool names or assume model/history APIs.
 

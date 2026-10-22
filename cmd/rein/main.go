@@ -1,7 +1,7 @@
 // rein keeps pipeline worker models on task.
 //
-//	rein hook [--vendor V]          worker hook (claude|codex|agy|kiro|opencode); reads the event on stdin
-//	rein hooks install <task>       write the codex/agy/kiro/opencode (and claude) hook files into the worktree
+//	rein hook [--vendor V]          worker hook (claude|codex|agy|kiro|opencode|hermes); reads the event on stdin
+//	rein hooks install <task>       write the codex/agy/kiro/opencode/hermes (and claude) hook files into the worktree
 //	rein contract new|show|path     task contract the hook and the drift check enforce
 //	rein drift <task> [...]         judge a worker's result against its contract (exit 0 ok, 1 drift, 2 cannot judge)
 //	rein run start|end|resume|allow|audit   coordinator run guard (allow and end --abandon are user-only)
@@ -104,12 +104,12 @@ func usage() {
   rein config init|check --dir DIR                     Crux provider config (disabled by default; --quota orca reads cached quota)
   rein hunter report|get|list|triage|authorize-fix|start-fix|reproduce|verify|review|approve|scan-report    report-only findings and the gated fix lifecycle
   rein orca launch|wait|drain|close|tidy|census              native Orca orchestration, worker management and census verify
-  rein hook [--vendor claude|codex|agy|kiro|opencode]     (default claude; stdin = the vendor's hook event)
-  rein hooks install|uninstall <name> [--vendors codex,agy,kiro,opencode,claude]   hook files in the worktree + launch flags
+  rein hook [--vendor claude|codex|agy|kiro|opencode|hermes]     (default claude; stdin = the vendor's hook event)
+  rein hooks install|uninstall <name> [--vendors codex,agy,kiro,opencode,hermes,claude]   hook files in the worktree + launch flags
   rein contract new --name N --run-dir D --allow 'g1,g2' --scope S1,S2 [--profile P] [--issue 169] [--deny g] [--worktree-root R] [--report-path P] [--writable f1,f2] [--max-changed-lines N]
   rein contract show|path <name>
   rein spec check <spec> <contract> [--standing PATH] [--repo PATH]    exits 0 (pass), 1 (lint failures), 2 (file/arg error)
-  rein drift <name> [--worktree P] [--base origin/main] [--claimed-files a,b] [--expect-guard codex|agy|kiro|opencode|claude] [--json]
+  rein drift <name> [--worktree P] [--base origin/main] [--claimed-files a,b] [--expect-guard codex|agy|kiro|opencode|hermes|claude] [--json]
   rein run start [repo] --run NAME [--profile P] [--session S --pid N]    (coordinator guard on; owner from CLAUDE_CODE_SESSION_ID / CLAUDE_PID)
   rein run end [repo] [--pinned sha,..] | rein run audit [repo] [--pinned sha,..] [--json]   (exit 1 = COORDINATOR_DRIFT)
   rein run resume [repo] [--session S --pid N]

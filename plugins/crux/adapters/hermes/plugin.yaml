@@ -1,0 +1,11 @@
+name: crux
+version: 0.9.1
+description: "Crux engineering playbooks for Hermes Agent: ADLC mode, shared skills and clear Thai communication."
+author:
+  name: "P' Tik"
+homepage: "https://github.com/voravitl/rein/tree/main/plugins/crux"
+repository: "https://github.com/voravitl/rein"
+license: "MIT"
+kind: standalone
+provides_hooks:
+  - pre_llm_call

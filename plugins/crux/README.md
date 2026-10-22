@@ -12,7 +12,7 @@ Crux owns the ADLC conversation: clarifying the objective, choosing a playbook, 
 
 ## ภาษาไทยและแผนเชื่อมระบบ
 
-เป้าหมายต้องรองรับ **Claude Code, Codex, Antigravity และ OpenCode2** ครบทั้งสี่ตัว มี adapter ครบทั้งสี่ตัวแล้ว แต่หลักฐานแต่ละตัวต่างกัน: tests ใน repo ผ่าน และ manifest ของ Claude กับ Antigravity ผ่านตัวตรวจของ CLI Claude พบ skills/agents ผ่าน SDK initialize ส่วน Antigravity เลือก Crux ผ่าน native workspace initialize ได้ และ OpenCode2 ผ่าน native loader ใน private server แล้ว ส่วนการทำงานกับโมเดลจริงยังตรวจไม่ครบ การเชื่อม runtime ครบวงจรยังไม่ยืนยัน
+เป้าหมายต้องรองรับ **Claude Code, Codex, Antigravity, OpenCode2 และ Hermes Agent** ครบทั้งห้าตัว มี adapter ครบทั้งห้าตัวแล้ว แต่หลักฐานแต่ละตัวต่างกัน: tests ใน repo ผ่าน และ manifest ของ Claude กับ Antigravity ผ่านตัวตรวจของ CLI Claude พบ skills/agents ผ่าน SDK initialize ส่วน Antigravity เลือก Crux ผ่าน native workspace initialize ได้ และ OpenCode2 ผ่าน native loader ใน private server แล้ว ส่วนการทำงานกับโมเดลจริงยังตรวจไม่ครบ การเชื่อม runtime ครบวงจรยังไม่ยืนยัน
 
 Crux ตอบผู้ใช้เป็นภาษาไทยโดยค่าเริ่มต้น ทั้งความคืบหน้า คำอธิบาย แผน รีวิว และสรุปผล ถ้าผู้ใช้ขอภาษาอื่น ให้ใช้ตามที่ขอ คำสั่ง ชื่อไฟล์ และ error ยังคงต้นฉบับ
 
@@ -27,6 +27,7 @@ Crux ตอบผู้ใช้เป็นภาษาไทยโดยค่
 | --- | --- |
 | `skills/`, `agents/` | One shared copy of skills, principles, playbooks and role briefs |
 | [runtime](references/runtime.md) | Harness selection and shared scope/authority boundaries |
+| [adapters](references/integration-plan.md) | One adapter per harness: claude, codex, antigravity, opencode2, hermes |
 | [ADLC](references/adlc.md), [handoff](references/handoff.md) | Existing Rein interfaces, evidence and a contextual handoff brief |
 | [Codex adapter](adapters/codex/runtime.md) | Native tool mapping, session hooks and role templates |
 | `scripts/agents.mjs` | Scoped, portable native-agent installation/removal |
