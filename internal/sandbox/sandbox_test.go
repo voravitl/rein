@@ -65,3 +65,26 @@ func TestApplyNeedsWorktree(t *testing.T) {
 		t.Errorf("want a create-it-first error, got %v", err)
 	}
 }
+
+// The OS sandbox must allow the report's own directory, not only the report file: the guard lets the worker write a
+// sibling of the report there, and the sandbox is the wall that would stop it.
+func TestSettingsAllowsTheReportDirectory(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "contracts"))
+	c, err := contract.New("t", 0, filepath.Join(root, "run"), "src/**", "", "S1", filepath.Join(root, "wts"),
+		"report/task-1.md", "", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := Settings(c)["filesystem"].(map[string]any)["allowWrite"].([]string)
+	area := contract.Real(filepath.Join(c.Worktree, "report"))
+	found := false
+	for _, p := range allow {
+		if contract.Real(p) == area {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the report directory %s is not writable in the sandbox: %v", area, allow)
+	}
+}

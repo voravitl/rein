@@ -50,6 +50,26 @@ func reportRelOf(c *contract.Contract, wt string) string {
 	return filepath.ToSlash(rel)
 }
 
+// reportDirRelOf is the worker's own report directory relative to the worktree, in slash form; "" when the report
+// has no report directory (outside the worktree, or sitting at the worktree root). The guard allows a worker to
+// write a sibling of its report there, so drift must not judge that directory as work either.
+func reportDirRelOf(c *contract.Contract, wt string) string {
+	area := c.ReportArea()
+	if area == "" {
+		return ""
+	}
+	rel, err := filepath.Rel(contract.Real(wt), area)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
+// inReportArea reports whether rel (a worktree-relative, slash-separated path) is the report directory or inside it.
+func inReportArea(rel, dir string) bool {
+	return dir != "" && (rel == dir || strings.HasPrefix(rel, dir+"/"))
+}
+
 var (
 	fake = regexp.MustCompile(`(TODO|FIXME|\.skip\(|\.only\(|\[Fact\(Skip|\[Ignore|throw new NotImplementedException|it\.todo|\bxit\(|\bxdescribe\()`)
 	// Secrets: known token shapes, private keys, and credential-named keys with a literal value in code,
@@ -189,8 +209,10 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 	r.Files = len(files)
 
 	// The contract's report path is the worker's own file, not part of the work: the guard tells the worker to
-	// write it, so it is never out of scope and never counted as an uncommitted change.
+	// write it, so it is never out of scope and never counted as an uncommitted change. The same holds for a
+	// sibling of the report in its own directory: the guard allows the worker to write it.
 	reportRel := reportRelOf(c, wt)
+	reportDir := reportDirRelOf(c, wt)
 
 	// Compute tier from allow globs, then escalate from actual changed files (ADR B2.1)
 	baseTier := tier.EvaluateFromAllowGlobs(c.Allow, c.Profile.SensitivePaths)
@@ -234,7 +256,7 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 			continue
 		}
 		p := strings.TrimSuffix(l[3:], "/")
-		if p == reportRel { // the worker's own report: the guard orders it written, drift does not judge it as work
+		if p == reportRel || inReportArea(p, reportDir) { // the worker's own report: the guard orders it written, drift does not judge it as work
 			continue
 		}
 		arts := c.Profile.LocalArtifacts
@@ -251,7 +273,7 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 		switch {
 		case glob.Match(f, c.Deny):
 			d("DENIED_PATH", "%s", f)
-		case f != reportRel && !glob.Match(f, c.Allow):
+		case f != reportRel && !inReportArea(f, reportDir) && !glob.Match(f, c.Allow):
 			d("OUT_OF_SCOPE", "%s", f)
 		}
 	}

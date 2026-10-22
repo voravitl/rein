@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/voravitl/rein/internal/run"
@@ -134,6 +135,69 @@ func contains(s []string, v string) bool {
 
 var syncLedgerFile = (*os.File).Sync
 
+// ledgerCache is the process-local view of the ledger used by Append. Append re-read and re-validated the whole file
+// on every call, so n appends cost O(n^2). The cache keeps the charge index and re-reads only when the file's path or
+// size says another process appended.
+var ledgerCache struct {
+	mu      sync.Mutex
+	path    string
+	size    int64
+	charges map[[2]string]Row
+}
+
+// chargeIndex returns the recorded (attempt, charge_id) -> row map of the ledger. The file is read and validated in
+// full once; a later append only has to check its own row. A file that another process changed is re-read, so a
+// conflict introduced elsewhere still fails the append.
+func chargeIndex() (map[[2]string]Row, error) {
+	path, err := filepath.Abs(Path())
+	if err != nil {
+		return nil, err
+	}
+	size := int64(0)
+	if fi, err := os.Stat(path); err == nil {
+		size = fi.Size()
+	}
+	ledgerCache.mu.Lock()
+	defer ledgerCache.mu.Unlock()
+	if ledgerCache.charges != nil && ledgerCache.path == path && ledgerCache.size == size {
+		return ledgerCache.charges, nil
+	}
+	rows, err := loadStrict("")
+	if err != nil {
+		return nil, err
+	}
+	idx := make(map[[2]string]Row)
+	for _, row := range rows {
+		if row.Kind != "cost" || row.ChargeID == "" {
+			continue
+		}
+		idx[[2]string{row.Attempt, row.ChargeID}] = row
+	}
+	ledgerCache.charges, ledgerCache.path, ledgerCache.size = idx, path, size
+	return idx, nil
+}
+
+// cacheCharge records one appended row in the process-local index, so the next Append need not re-read the file.
+func cacheCharge(r Row) {
+	size := int64(0)
+	path := Path()
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
+		if fi, err := os.Stat(abs); err == nil {
+			size = fi.Size()
+		}
+	}
+	ledgerCache.mu.Lock()
+	defer ledgerCache.mu.Unlock()
+	if ledgerCache.charges == nil {
+		ledgerCache.charges = make(map[[2]string]Row)
+	}
+	if r.Kind == "cost" && r.ChargeID != "" {
+		ledgerCache.charges[[2]string{r.Attempt, r.ChargeID}] = r
+	}
+	ledgerCache.path, ledgerCache.size = path, size
+}
+
 func Append(r Row) error {
 	path, err := filepath.Abs(Path())
 	if err != nil {
@@ -145,12 +209,12 @@ func Append(r Row) error {
 	}
 	defer unlock()
 	if r.Kind == "cost" && r.ChargeID != "" {
-		rows, err := LoadStrict("")
+		idx, err := chargeIndex()
 		if err != nil {
 			return err
 		}
-		if err := validateCharges(append(rows, r)); err != nil {
-			return err
+		if first, ok := idx[[2]string{r.Attempt, r.ChargeID}]; ok && !sameCharge(first, r) {
+			return fmt.Errorf("conflicting duplicate charge %q of attempt %q", r.ChargeID, r.Attempt)
 		}
 	}
 
@@ -172,6 +236,7 @@ func Append(r Row) error {
 	if err := syncAndCloseLedger(f); err != nil {
 		return err
 	}
+	cacheCharge(r)
 	return syncLedgerDirectories(path)
 }
 
@@ -202,8 +267,11 @@ func Load(since string) ([]Row, error) {
 
 // LoadStrict refuses corrupt records instead of undercounting spend at a budget gate.
 func LoadStrict(since string) ([]Row, error) {
-	return load(since, true)
+	return loadStrict(since)
 }
+
+// loadStrict is the seam tests use to count strict loads.
+var loadStrict = func(since string) ([]Row, error) { return load(since, true) }
 
 func load(since string, strict bool) ([]Row, error) {
 	f, err := os.Open(Path())

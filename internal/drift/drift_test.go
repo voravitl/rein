@@ -132,6 +132,45 @@ func TestReportInsideWorktreeIsNotDrift(t *testing.T) {
 	}
 }
 
+// A sibling of the report in its own directory is the worker's own file too: the guard allows the worker to write it,
+// so drift must not count it as uncommitted work or as out of scope.
+func TestReportSiblingIsNotDrift(t *testing.T) {
+	wt, c := repo(t, "report-sibling")
+	c.ReportPath = filepath.Join(wt, "report", "report.md")
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
+	write(t, filepath.Join(wt, "report", "report.md"), "# report\n## S1 done\nfiles: backend/Routing/A.cs\n\n## S2 done\nchecks passed\n")
+	write(t, filepath.Join(wt, "report", "notes.md"), "worker scratch\n")
+	sh(t, wt, "git", "add", "backend/Routing/A.cs")
+	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
+
+	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(r.Drift); strings.Contains(got, "UNCOMMITTED") || strings.Contains(got, "OUT_OF_SCOPE") {
+		t.Errorf("the report directory counted as drift: %s", got)
+	}
+}
+
+// A file outside the report directory is still the worker's uncommitted work.
+func TestFileOutsideReportDirectoryIsDrift(t *testing.T) {
+	wt, c := repo(t, "outside-report")
+	c.ReportPath = filepath.Join(wt, "report", "report.md")
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
+	write(t, filepath.Join(wt, "report", "report.md"), "# report\n## S1 done\nfiles: backend/Routing/A.cs\n\n## S2 done\nchecks passed\n")
+	write(t, filepath.Join(wt, "scratch.md"), "not the report\n")
+	sh(t, wt, "git", "add", "backend/Routing/A.cs")
+	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
+
+	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(r.Drift); !strings.Contains(got, "UNCOMMITTED") {
+		t.Errorf("a file outside the report directory was not counted: %s", got)
+	}
+}
+
 func TestDriftClean(t *testing.T) {
 	wt, c := repo(t, "good")
 	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")

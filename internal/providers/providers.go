@@ -56,6 +56,11 @@ type Bound struct {
 // DiscoverySpec pins the executable used for catalog discovery of one harness (argv prefix; adapter flags are appended).
 type DiscoverySpec struct {
 	Command []string `json:"command"`
+	// CatalogURL is the harness's own remote catalog endpoint. When set, the adapter revalidates it with the
+	// provider's cache validator (ETag) and the inventory reports `remote_verified` freshness: the provider itself
+	// confirmed the catalog is current. An endpoint that does not confirm currency fails the refresh; the prior
+	// snapshot is never reused silently.
+	CatalogURL string `json:"catalog_url,omitempty"`
 }
 
 type Config struct {

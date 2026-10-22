@@ -108,7 +108,10 @@ var (
 )
 
 var (
-	idRx      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+~-]*$`)
+	// idRx accepts a model id as a harness prints it. A context variant suffix ("[1m]") is part of the id the
+	// catalog lists, so it must be accepted: opencode 2.1.0 lists ids like "9router/ag/claude-opus-5-5-high[1m]"
+	// and a stricter pattern failed the whole refresh with "invalid schema".
+	idRx      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+~\[\]-]*$`)
 	versionRx = regexp.MustCompile(`\d+\.\d+(\.\d+)*`)
 )
 
@@ -233,6 +236,9 @@ func discoverOne(ctx context.Context, cfg *Config, harness, dir string, timeout 
 	}
 	inv.Freshness = ClientCatalog // every adapter: the local client answered; none proves the upstream catalog is current
 	hint := ""
+	// A harness that names its own remote catalog endpoint can prove currency with the provider's cache validator.
+	// The revalidation runs after the local query: the local list is the catalog, the validator says it is current.
+	catalogURL := cfg.Discovery[harness].CatalogURL
 	switch harness {
 	case "claude":
 		collectClaude(ctx, argv, dir, &inv)
@@ -244,6 +250,16 @@ func discoverOne(ctx context.Context, cfg *Config, harness, dir string, timeout 
 		collectAgy(ctx, argv, dir, &inv)
 	default:
 		collectOpencode(ctx, argv, dir, &inv)
+	}
+	if catalogURL != "" && inv.Status == InvComplete {
+		at, err := revalidateCatalog(ctx, catalogURL)
+		if err != nil {
+			// A failed refresh must not silently reuse the prior snapshot: the harness is excluded.
+			inv.fail(InvFailed, "remote catalog revalidation failed: "+err.Error())
+		} else {
+			inv.Freshness = RemoteVerified
+			inv.EvidenceAt = &at
+		}
 	}
 	if inv.Status != InvComplete && inv.Status != InvPartial {
 		inv.Freshness = FreshnessUnknown
