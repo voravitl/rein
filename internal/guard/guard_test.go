@@ -597,3 +597,21 @@ func TestRelativeCwdOutsideWorkerIsSilent(t *testing.T) {
 		t.Fatalf("relative cwd outside a worker must stay silent, got %q %q (exit %d)", out.String(), errb.String(), code)
 	}
 }
+
+func TestRelativeCwdInsideWorkerIsJudged(t *testing.T) {
+	wt, _ := setup(t)
+	t.Chdir(wt)
+	run := func(fp string) string {
+		in, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": ".",
+			"tool_input": map[string]string{"file_path": fp}})
+		var out bytes.Buffer
+		Run(bytes.NewReader(in), &out)
+		return out.String()
+	}
+	if out := run("backend/Routing/new.go"); out != "" {
+		t.Errorf("owned relative write denied: %s", out)
+	}
+	if out := run("frontend/src/new.ts"); !strings.Contains(out, `"deny"`) {
+		t.Errorf("relative write outside ownership must be denied, got %q", out)
+	}
+}
