@@ -95,10 +95,15 @@ func assembleCensus(root int, rows []censusRow) (*CensusSnapshot, bool) {
 		return nil, false
 	}
 	nodes := []censusRow{}
+	seen := map[int]bool{root: true}
 	queue := append([]censusRow{}, children[root]...)
 	for len(queue) > 0 { // breadth-first within the one scan; a row becomes a node only once
 		row := queue[0]
 		queue = queue[1:]
+		if seen[row.PID] {
+			continue
+		}
+		seen[row.PID] = true
 		nodes = append(nodes, row)
 		queue = append(queue, children[row.PID]...)
 	}

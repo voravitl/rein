@@ -316,3 +316,14 @@ func TestCensusResidualSpawnAfterRecord(t *testing.T) {
 		t.Log("group still existed at cleanup")
 	}
 }
+
+func TestAssembleCensusStopsOnCyclicParentLinks(t *testing.T) {
+	rows := []censusRow{{PID: 1, PPID: 2}, {PID: 2, PPID: 1}}
+	snap, ok := assembleCensus(1, rows)
+	if !ok {
+		t.Fatal("root not found")
+	}
+	if len(snap.Nodes) != 1 || snap.Nodes[0].PID != 2 {
+		t.Fatalf("nodes = %+v, want only pid 2", snap.Nodes)
+	}
+}
