@@ -92,4 +92,9 @@ func TestReportPathInsideWorktree(t *testing.T) {
 	if out.String() != "" {
 		t.Errorf("report edit inside the worktree denied: %s", out.String())
 	}
+	// the coordinator's run dir must stay protected now that the report no longer lives under <run>/reports
+	runFile := filepath.Join(filepath.Dir(filepath.Dir(c.RunCopy)), "other.md")
+	if out := bashCase(t, wt, "echo x > "+runFile); !strings.Contains(out, `"deny"`) {
+		t.Errorf("run-dir write must stay denied, got %q", out)
+	}
 }

@@ -213,6 +213,7 @@ func Load(name string) (*Contract, error) {
 	if c.Name == "" || c.Worktree == "" || len(c.Allow) == 0 || len(c.Scope) == 0 || c.ReportPath == "" {
 		return nil, fmt.Errorf("contract %s: name, worktree, allow, scope and report_path are required", name)
 	}
+	c.resolveReport() // a contract written by an older rein (or by hand) may carry a relative report path
 	return &c, nil
 }
 
@@ -229,6 +230,7 @@ func LoadFile(path string) (*Contract, error) {
 	if c.Name == "" || c.Worktree == "" || len(c.Allow) == 0 || len(c.Scope) == 0 || c.ReportPath == "" {
 		return nil, fmt.Errorf("contract %s: name, worktree, allow, scope and report_path are required", path)
 	}
+	c.resolveReport() // a contract written by an older rein (or by hand) may carry a relative report path
 	return &c, nil
 }
 
@@ -240,6 +242,15 @@ func (c *Contract) Writable(abs string) bool {
 		}
 	}
 	return false
+}
+
+// resolveReport makes the report path absolute, so the guard, the drift check and the OS sandbox all compare the
+// same path. A relative one belongs to the task's worktree: that is where the worker runs and writes the report.
+func (c *Contract) resolveReport() {
+	if c.ReportPath == "" || filepath.IsAbs(c.ReportPath) {
+		return
+	}
+	c.ReportPath = filepath.Join(c.Worktree, c.ReportPath)
 }
 
 // SamePath compares two paths after resolving symlinks where possible (macOS /tmp -> /private/tmp).
@@ -309,6 +320,7 @@ func New(name string, issue int, runDir, allow, deny, scope, worktreeRoot, repor
 	if c.ReportPath == "" {
 		c.ReportPath = filepath.Join(runDir, "reports", name+".md")
 	}
+	c.resolveReport() // a relative report path belongs to the task's worktree, where the worker writes it
 	for _, w := range splitList(writable) {
 		c.WorkerWritable = append(c.WorkerWritable, expand(w))
 	}

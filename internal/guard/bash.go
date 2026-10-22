@@ -863,6 +863,16 @@ func mustRel(base, p string) string {
 	return r
 }
 
+// runDirOf is the coordinator's run dir. It comes from the durable contract copy (always <run>/contracts/<name>.json)
+// rather than from the report path, so the run dir stays protected when the report lives inside the worktree
+// instead of in <run>/reports.
+func runDirOf(c *contract.Contract) string {
+	if c.RunCopy != "" && filepath.IsAbs(c.RunCopy) && filepath.Base(filepath.Dir(c.RunCopy)) == "contracts" {
+		return contract.Real(filepath.Dir(filepath.Dir(c.RunCopy)))
+	}
+	return contract.Real(filepath.Dir(filepath.Dir(c.ReportPath)))
+}
+
 // outsideWrite judges a write outside the worktree. Order matters: the contract index and the run dir are
 // protected BEFORE the temp-dir allowance, because a run dir may itself live under a temp dir.
 func outsideWrite(p, shown string, c *contract.Contract, top string) string {
@@ -875,7 +885,7 @@ func outsideWrite(p, shown string, c *contract.Contract, top string) string {
 	if inside(p, filepath.Dir(top)) {
 		return fmt.Sprintf("%s is in another task's worktree area (%s); stay inside %s", shown, filepath.Dir(top), top)
 	}
-	runDir := contract.Real(filepath.Dir(filepath.Dir(c.ReportPath)))
+	runDir := runDirOf(c)
 	if inside(p, runDir) {
 		return fmt.Sprintf("%s belongs to the coordinator's run dir; only your report %s may be written there", shown, c.ReportPath)
 	}

@@ -40,6 +40,16 @@ func withChildren(gs []string) []string {
 	return out
 }
 
+// reportRelOf is the contract's report path relative to the worktree, in slash form. It is "" when the report
+// lives outside the worktree (the default: the run dir), because then it never appears in the worktree's git state.
+func reportRelOf(c *contract.Contract, wt string) string {
+	rel, err := filepath.Rel(contract.Real(wt), contract.Real(c.ReportPath))
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return ""
+	}
+	return filepath.ToSlash(rel)
+}
+
 var (
 	fake = regexp.MustCompile(`(TODO|FIXME|\.skip\(|\.only\(|\[Fact\(Skip|\[Ignore|throw new NotImplementedException|it\.todo|\bxit\(|\bxdescribe\()`)
 	// Secrets: known token shapes, private keys, and credential-named keys with a literal value in code,
@@ -178,6 +188,10 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 	files := nulSplit(names) // -z: no C-style quoting, so non-ASCII names match the globs as written
 	r.Files = len(files)
 
+	// The contract's report path is the worker's own file, not part of the work: the guard tells the worker to
+	// write it, so it is never out of scope and never counted as an uncommitted change.
+	reportRel := reportRelOf(c, wt)
+
 	// Compute tier from allow globs, then escalate from actual changed files (ADR B2.1)
 	baseTier := tier.EvaluateFromAllowGlobs(c.Allow, c.Profile.SensitivePaths)
 	computedTier := tier.EvaluateFromChangedFiles(files, c.Profile.SensitivePaths, baseTier)
@@ -220,6 +234,9 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 			continue
 		}
 		p := strings.TrimSuffix(l[3:], "/")
+		if p == reportRel { // the worker's own report: the guard orders it written, drift does not judge it as work
+			continue
+		}
 		arts := c.Profile.LocalArtifacts
 		if strings.HasPrefix(l, "?? ") && glob.Match(p, append(arts, withChildren(arts)...)) {
 			continue
@@ -234,7 +251,7 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 		switch {
 		case glob.Match(f, c.Deny):
 			d("DENIED_PATH", "%s", f)
-		case !glob.Match(f, c.Allow):
+		case f != reportRel && !glob.Match(f, c.Allow):
 			d("OUT_OF_SCOPE", "%s", f)
 		}
 	}
