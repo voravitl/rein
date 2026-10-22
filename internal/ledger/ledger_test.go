@@ -116,3 +116,14 @@ func TestLoadStrictRejectsCorruptionWithoutChangingReports(t *testing.T) {
 		t.Fatalf("strict corruption result: %v", err)
 	}
 }
+
+func TestCorruptPricesFileLeavesCostUnknown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PIPELINE_PRICES", filepath.Join(dir, "prices.json"))
+	if err := os.WriteFile(filepath.Join(dir, "prices.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadPrices(); len(got) != 0 {
+		t.Fatalf("corrupt prices loaded %d entries, want none", len(got))
+	}
+}
