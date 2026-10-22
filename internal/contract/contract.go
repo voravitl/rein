@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 )
 
@@ -129,12 +128,13 @@ func IndexDir() string {
 	return filepath.Join(home, ".cache", "worktree-pipeline", "contracts")
 }
 
-var taskName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
-// ValidName reports whether name is safe to use as a file name and worktree
-// directory. The hook derives it from a directory name, so it is deliberately
-// narrow.
-func ValidName(name string) bool { return taskName.MatchString(name) }
+// ValidName reports whether name is safe to use as one file name and worktree
+// directory. It rejects path separators and directory entries that would escape,
+// but keeps the spaces and Unicode that existing contracts may use.
+func ValidName(name string) bool {
+	return name != "" && name != "." && name != ".." &&
+		!strings.ContainsAny(name, "/\\\x00\n\r")
+}
 
 func PathOf(name string) string { return filepath.Join(IndexDir(), name+".json") }
 

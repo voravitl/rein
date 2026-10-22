@@ -55,3 +55,11 @@ func TestContractNameCannotEscapeIndexDir(t *testing.T) {
 		t.Fatalf("traversing name wrote outside the index: %v", err)
 	}
 }
+
+func TestContractNameKeepsSpacesAndUnicode(t *testing.T) {
+	for _, name := range []string{"my task", "แก้ล็อกอิน"} {
+		if !ValidName(name) {
+			t.Fatalf("ValidName rejected %q", name)
+		}
+	}
+}

@@ -180,3 +180,13 @@ func TestReproduceSetupAndTimeoutNeverProveBug(t *testing.T) {
 		t.Fatal("stale baseline accepted")
 	}
 }
+
+func TestReproduceRejectsTraversingAttempt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("reproduction is refused on Windows")
+	}
+	_, err := Reproduce(context.Background(), "H-0001", t.TempDir(), "../escape", time.Second, 7, []string{"true"})
+	if err == nil || !strings.Contains(err.Error(), "safe attempt name") {
+		t.Fatalf("traversing attempt accepted: %v", err)
+	}
+}
