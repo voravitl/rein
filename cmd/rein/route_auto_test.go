@@ -224,7 +224,7 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 	agy := filepath.Join(root, "agy")
 	logf := filepath.Join(root, "launch.log")
 	t.Setenv("TEST_LAUNCH_LOG", logf)
-	if err := os.WriteFile(agy, []byte("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$TEST_LAUNCH_LOG\"\nsleep \"${TEST_LAUNCH_SLEEP:-0}\"\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(agy, []byte("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$TEST_LAUNCH_LOG\"\nif [ -n \"${TEST_LAUNCH_RELEASE:-}\" ]; then while [ ! -f \"$TEST_LAUNCH_RELEASE\" ]; do sleep 0.05; done; fi\nsleep \"${TEST_LAUNCH_SLEEP:-0}\"\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	launch := func(effort ...string) []string {
@@ -333,7 +333,8 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 	}
 
 	// two writers on one checkout: with a run in flight, a freshly prepared receipt is refused (and stays unused)
-	t.Setenv("TEST_LAUNCH_SLEEP", "2")
+	release := filepath.Join(root, "release")
+	t.Setenv("TEST_LAUNCH_RELEASE", release)
 	prepare := func() string {
 		out, code := capture(t, func() int { return cmdRoute(base) })
 		var r struct {
@@ -345,11 +346,24 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 		return r.Attempt
 	}
 	second := prepare()
+	os.Remove(logf)
 	var wg sync.WaitGroup
 	var firstCode int
 	wg.Add(1)
 	go func() { defer wg.Done(); firstCode = cmdRouteLaunch(launch("--effort", "high")) }()
-	time.Sleep(700 * time.Millisecond)
+	// the lease is taken before the provider starts, so the launch log proves the first writer owns it
+	waitFor := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(logf); err == nil {
+			break
+		}
+		if time.Now().After(waitFor) {
+			os.WriteFile(release, nil, 0o600)
+			wg.Wait()
+			t.Fatal("the first writer never started its provider")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	third := prepare() // the first run is in flight: it is not yet evidence, so the model still qualifies
 	if code := cmdRouteLaunch(launch("--effort", "high")); code == 0 {
 		t.Error("a second writer was admitted beside a running one")
@@ -357,11 +371,13 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 	if routing.ReceiptUsed(third) {
 		t.Error("a launch refused for the running writer consumed its receipt")
 	}
+	os.WriteFile(release, nil, 0o600)
 	wg.Wait()
 	if firstCode != 0 || !routing.ReceiptUsed(second) {
 		t.Errorf("the first writer: code %d, receipt used %v", firstCode, routing.ReceiptUsed(second))
 	}
-	t.Setenv("TEST_LAUNCH_SLEEP", "0")
+	os.Remove(release)
+	t.Setenv("TEST_LAUNCH_RELEASE", "")
 
 	// a review: its tier follows the real git diff, `route check` binds the effort and spends the receipt once
 	if _, err := exec.LookPath("git"); err == nil {

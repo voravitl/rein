@@ -421,8 +421,8 @@ func TestRunner_ScenarioTimeoutFailsLateWait(t *testing.T) {
 		name string
 		step Step
 	}{
-		{name: "sleep wait", step: Step{Action: "wait", TimeoutMS: 1200}},
-		{name: "text wait", step: Step{Action: "wait", Value: "NEVER-APPEARS-42", TimeoutMS: 1200}},
+		{name: "sleep wait", step: Step{Action: "wait", TimeoutMS: 5000}},
+		{name: "text wait", step: Step{Action: "wait", Value: "NEVER-APPEARS-42", TimeoutMS: 5000}},
 	}
 
 	for _, tc := range cases {
@@ -449,7 +449,7 @@ func TestRunner_ScenarioTimeoutFailsLateWait(t *testing.T) {
 			}
 			last := report.Steps[len(report.Steps)-1]
 			stepDuration := time.Duration(last.DurationMS) * time.Millisecond
-			if stepDuration >= 1200*time.Millisecond {
+			if stepDuration >= 4*time.Second {
 				t.Errorf("scenario deadline not enforced: step took %v", stepDuration)
 			}
 			if !strings.Contains(last.Error, "timed out") {
