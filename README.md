@@ -17,7 +17,7 @@ behaving well.
                                 ▼                         ▼
                   guard hook (rein hook)          drift check (rein drift)
                   Claude, codex, agy, kiro,       every vendor: Claude, codex,
-                  opencode workers                Gemini/Antigravity, opencode, kiro
+                  opencode, Hermes workers        Gemini/Antigravity, opencode, kiro, Hermes
                   blocks the action now           judges the result
                                 │                         │
                                 └──── under an OS sandbox (the real wall) ────┘
@@ -40,7 +40,7 @@ The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](http
 
 [**Crux**](plugins/crux/README.md) is the separate ADLC workflow plugin: shared engineering playbooks, a session-scoped mode module, and native adapters for Claude Code, Codex, Antigravity and OpenCode2. It builds on Rein's existing execution interfaces; live four-harness activation and cross-provider continuation remain unverified.
 
-`rein` delivers unified deterministic guardrails across **5 major AI coding harnesses**:
+`rein` delivers unified deterministic guardrails across **6 major AI coding harnesses**:
 
 | Harness | Bundle Type | Configuration Path | How to Install |
 |---|---|---|---|
@@ -167,7 +167,7 @@ rein hooks install fix-login            # --vendors codex,agy,kiro,opencode,herm
 ```
 
 This writes each CLI's project hook file inside the worktree (`.codex/hooks.json`, `.agents/hooks.json`,
-`.kiro/agents/rein.json`, `.opencode/plugins/rein/server.js`), every one calling the absolute path of this `rein` with
+`.kiro/agents/rein.json`, `.opencode/plugins/rein/server.js`, `.hermes/plugins/rein-guard/`), every one calling the absolute path of this `rein` with
 `hook --vendor X`, keeps them out of git status, records the vendors in the contract, and prints the launch flags each
 vendor needs (codex: `--dangerously-bypass-hook-trust` plus `-c hooks...`; kiro: `--agent rein`; hermes: `HERMES_ENABLE_PROJECT_PLUGINS=1` and the task's `HERMES_HOME`). Every hook call
 inside a worktree appends a line to `<contracts dir>/seen/<task>.log`; `rein drift` reports `GUARD_INACTIVE` when no

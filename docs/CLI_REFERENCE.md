@@ -76,9 +76,9 @@ rein hooks install <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude]
 rein hooks uninstall <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude]
 ```
 
-Removes only identifiable Rein task hooks and updates both contract copies. Default removal scans all five supported vendors and every shared hook event; modified executable commands or residual copies outside the owned layout return exit 2 and retain that vendor's metadata. Other owners' hooks, settings and sibling files remain. Conflicting or modified artifacts and symlink destinations fail closed; inspect the error instead of deleting the parent directory. Repeated removal is safe. Reinstall with `rein hooks install` and use the newly printed launch flags. Restart an already-running harness to unload cached hooks; removal on disk cannot revoke a running process's launch arguments.
+Removes only identifiable Rein task hooks and updates both contract copies. Default removal scans all six supported vendors and every shared hook event; modified executable commands or residual copies outside the owned layout return exit 2 and retain that vendor's metadata. Other owners' hooks, settings and sibling files remain. Conflicting or modified artifacts and symlink destinations fail closed; inspect the error instead of deleting the parent directory. Repeated removal is safe. Reinstall with `rein hooks install` and use the newly printed launch flags. Restart an already-running harness to unload cached hooks; removal on disk cannot revoke a running process's launch arguments.
 
-Codex, OpenCode and Kiro hooks are task-bound project artifacts, not global plugin registrations. Native plugin registration is a separate operation (`scripts/install-harness.sh`); failures return nonzero rather than printing success.
+Codex, OpenCode, Kiro and Hermes hooks are task-bound project artifacts, not global plugin registrations. Native plugin registration is a separate operation (`scripts/install-harness.sh`); failures return nonzero rather than printing success.
 
 ### `rein hook`
 Invoked automatically on every tool call by the agent harness via stdin:

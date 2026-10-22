@@ -9,7 +9,7 @@ rein contract new --name TASK --run-dir /tmp/runs/run1 --allow 'src/**,tests/**'
 rein contract show TASK
 
 # Install hooks into worktree
-rein hooks install TASK --vendors codex,agy,kiro,opencode,claude
+rein hooks install TASK --vendors codex,agy,kiro,opencode,hermes,claude
 
 # Verify drift
 rein drift TASK --expect-guard kiro --claimed-files src/main.go

@@ -26,7 +26,7 @@ Invoke subagent capabilities according to the active provider:
 - **Antigravity (AGY):**
   - Researcher: `invoke_subagent(TypeName="research", Prompt="...")`.
   - Specialized: `invoke_subagent(TypeName="self", Prompt="[REIN ROLE: <ROLE>] ...")`.
-- **Codex / Kiro / OpenCode (No native subagent tool):**
+- **Codex / Kiro / OpenCode / Hermes (No native subagent tool):**
   - *Option A (Advisor Script):* Run `<skill>/scripts/advise.sh <role> <worktree> <task-file> <report-out>`.
   - *Option B (In-Process Phasing):* Execute in strict phases:
     1. Phase 1 (Explore): Read/grep only; formulate plan with file:line citations.

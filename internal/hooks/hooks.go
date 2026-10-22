@@ -578,8 +578,34 @@ def _guard(i=None, **kwargs):
     return None
 
 
+def _report_gate(**kwargs):
+    """Hermes' round-end gate: the counterpart of the other vendors' Stop hook.
+
+    Hermes fires pre_verify only when a plugin registered it, and it keeps the turn
+    going when the hook returns {"action": "continue", "message": ...}.
+    """
+    payload = {"tool": "pre_verify", "input": {}, "cwd": WORKTREE,
+               "hook_event_name": "pre_verify"}
+    r = subprocess.run([REIN, "hook", "--vendor", "hermes", "--task", REIN_TASK],
+                       input=json.dumps(payload), capture_output=True, text=True, timeout=10)
+    try:
+        out = json.loads(r.stdout) if r.stdout.strip() else {}
+    except Exception:
+        out = {}
+    msg = out.get("message")
+    if out.get("action") == "continue" and msg:
+        return {"action": "continue", "message": msg}
+    # A guard that could not run is a denial, not a silent allow: the turn must not end
+    # with the report unchecked.
+    if r.returncode not in (0, None) or (not r.stdout.strip() and r.stderr.strip()):
+        return {"action": "continue",
+                "message": "[rein] guard did not run: " + (r.stderr.strip() or "exit " + str(r.returncode))}
+    return None
+
+
 def register(ctx):
     ctx.register_hook("pre_tool_call", _guard)
+    ctx.register_hook("pre_verify", _report_gate)
 `
 
 func writeHermes(wt string, c *contract.Contract, bin string) ([]string, error) {

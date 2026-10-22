@@ -35,6 +35,7 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
 - **codex:** `worker-start --agent codex` cannot pass CLI flags (only `--model`, `--effort`). The guard needs `--dangerously-bypass-hook-trust` plus the two `-c 'hooks.PreToolUse=[...]'` / `-c 'hooks.Stop=[...]'` flags, so start a guarded codex worker in a shell terminal (preamble route: `codex <printed flags> -C <worktree> "$(cat preamble)"`) or with the direct `codex exec <printed flags> -C <worktree> ...` fallback. Without the flags the hook is skipped silently (`rein drift` then says GUARD_INACTIVE).
 - **kiro:** `kiro-cli chat --agent rein --trust-all-tools --model <model> "$(cat preamble)"`; the `--agent rein` is what loads the hook.
 - **agy, opencode2:** no flag; start them inside the worktree.
+- **hermes:** `HERMES_ENABLE_PROJECT_PLUGINS=1` **and** the task's `HERMES_HOME` set to `<worktree>/.hermes`, started inside the worktree; the guard loads from `<worktree>/.hermes/plugins/rein-guard/`.
 
 ## Quirks and the fix for each
 - **The codex update prompt blocks start-up** (`agent-update-prompt`): pick "Skip until next version" (send `3`), then retry the start with `--retry-of`.

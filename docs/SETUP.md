@@ -116,8 +116,9 @@ main session ──> rein:orca-swarm (Opus coordinator)
                    │  advise.sh: OMC critic/tracer/code-reviewer prompts, read-only codex or kiro
                    │  rein contract new ──> rein sandbox ──> orca worktree create / worker-start
                    ▼
-         Orca workers (Claude / codex / agy / opencode / kiro), one worktree each
+         Orca workers (Claude / codex / agy / opencode / kiro / Hermes), one worktree each
            Claude workers: rein guard hook (plugin) + OS sandbox (settings.local.json)
+           every other worker: rein hooks install <task> (the vendor's hook files)
                    │ worker_done
                    ▼
          rein drift ──> project gates (pack) ──> cross-vendor review ──> MR
@@ -171,13 +172,20 @@ tracks is refused, not overwritten (it would show up as the worker's uncommitted
 | codex 0.161.0 | `.codex/hooks.json` (PreToolUse + Stop) | `--dangerously-bypass-hook-trust` **and** the two `-c hooks.PreToolUse=...` / `-c hooks.Stop=...` flags that `rein hooks install` prints | Claude-style `permissionDecision: deny` (model sees `Command blocked by PreToolUse hook: [rein] ...`) | `apply_patch` (every `*** Add/Update/Delete File:` and `*** Move to:` path in the patch), `Edit`/`Write`/`MultiEdit` | `decision: block`; the worker is sent back to write the report (verified) | shell-run `apply_patch` heredocs and interpreter writes are not parsed; Orca `worker-start --agent codex` cannot pass the flags |
 | agy 1.3.1 | `.agents/hooks.json` (PreToolUse + flat Stop) | none; start agy inside the worktree | JSON `decision: deny` (model sees `tool call denied by pre-tool hook: [rein] ...`) | `write_to_file`, `replace_file_content`, `multi_replace_file_content`, and any tool whose args carry `TargetFile` | `decision: continue` with the reason; agy re-enters the loop (verified) | a write tool that names its file with another key is allowed and only logged |
 | kiro-cli 2.21.0 | `.kiro/agents/rein.json` | `kiro-cli chat --agent rein ...` on **every** launch (the file defines the agent; without the flag no hook runs) | exit 2 + reason on stderr (model sees `PreToolHook blocked the tool execution: [rein] ...`) | `fs_write` (create, str_replace, insert, append), `write` | exit 2 only **warns**: kiro cannot force a continue, so a missing report is caught by `rein drift` (NO_REPORT) | `--agent rein` replaces the user's default agent (its MCP servers and prompt) for that run |
-| opencode2 2.0.20 | `.opencode/plugins/rein/server.js` (v2 plugin, loads without config) | none; start opencode2 inside the worktree |
-| Hermes (Agent) | `<worktree>/.hermes/plugins/rein-guard/` (project plugin: `plugin.yaml` + `__init__.py`) and `<worktree>/.hermes/config.yaml` | `HERMES_ENABLE_PROJECT_PLUGINS=1` **and** the task's `HERMES_HOME` set to `<worktree>/.hermes`; start Hermes inside the worktree | Hermes directive `{"action":"block","message":"[rein] ..."}` (the model sees the text as the tool error) | `write_file`, `patch`, and any tool naming `path`/`file_path`/`filePath` unless it is known to only read (`read_*`, `list_*`, `search_*`, `view_*`, `grep_*`) | `{"action":"continue","message":...}` on `pre_verify` (Hermes' round-end gate); the worker is sent back to write the report | Hermes writes runtime files (caches, logs) into the task home: the install excludes `.hermes/` from git status so a `git add -A` cannot stage the guard. A Hermes session that starts outside the worktree judges paths against that other directory: start it inside the worktree | the plugin pipes `{tool,input,cwd}` to `rein hook --vendor opencode` and throws on exit 2 (model sees the `[rein] ...` text; in a parallel batch it may see the first refusal for every call) | `edit`, `write`, `multiedit`, `patch`, `apply_patch` (`path`/`filePath`/`file_path`, or a patch body) | no stop hook is wired; `rein drift` (NO_REPORT) is the backstop | the `execute` code-mode tool (MCP catalog) is unclassified; a plugin that cannot run the binary denies the call |
+| opencode2 2.0.20 | `.opencode/plugins/rein/server.js` (v2 plugin, loads without config) | none; start opencode2 inside the worktree | the plugin pipes `{tool,input,cwd}` to `rein hook --vendor opencode` and throws on exit 2 (model sees the `[rein] ...` text; in a parallel batch it may see the first refusal for every call) | `edit`, `write`, `multiedit`, `patch`, `apply_patch` (`path`/`filePath`/`file_path`, or a patch body) | no stop hook is wired; `rein drift` (NO_REPORT) is the backstop | the `execute` code-mode tool (MCP catalog) is unclassified; a plugin that cannot run the binary denies the call |
+| Hermes (Agent) | `<worktree>/.hermes/plugins/rein-guard/` (project plugin: `plugin.yaml` + `__init__.py`) and `<worktree>/.hermes/config.yaml` | `HERMES_ENABLE_PROJECT_PLUGINS=1` **and** the task's `HERMES_HOME` set to `<worktree>/.hermes`; start Hermes inside the worktree | Hermes directive `{"action":"block","message":"[rein] ..."}` (the model sees the text as the tool error) | `write_file`, `patch`, `edit_file`, `create_file`, and any tool naming `path`/`file_path`/`filePath`/`target_file` unless it is known to only read (`read_*`, `list_*`, `search_*`, `view_*`, `grep_*`) | `{"action":"continue","message":...}` on `pre_verify` (Hermes' round-end gate, the counterpart of the other vendors' Stop hook); the worker is sent back to write the report | Hermes writes runtime files (caches, logs) into the task home: the install excludes `.hermes/` from git status so a `git add -A` cannot stage the guard. A Hermes session that starts outside the worktree judges paths against that other directory: start it inside the worktree |
 | Claude (opt-in) | `.claude/settings.local.json` `hooks`, merged with the sandbox block | none | as in section 4 | Edit, Write, MultiEdit, NotebookEdit | `decision: block` | only for machines without the plugin: with the plugin installed the guard would run twice |
 
 **Policy for tools the guard cannot classify:** they are allowed (reads must work) but every call is written to the seen
 log with the tool name, and `rein drift` judges the resulting diff. A tool known to write files never bypasses the
 ownership check: if its target cannot be read from the event, the call is denied.
+
+**The Hermes `pre_verify` gate is live.** The generated plugin registers **both** hooks
+(`internal/hooks/hooks.go`): `pre_tool_call` for the tool call and `pre_verify` for the round-end report gate.
+Hermes fires `pre_verify` only for plugins that registered it (`hermes_cli/plugins.py`: `has_hook("pre_verify")`),
+so a Hermes worker that stops without a report is sent back to write it — the same contract the other vendors'
+Stop hook enforces. A gate that cannot run the guard answers `{"action": "continue",
+"message": "[rein] guard did not run: ..."}`, so the turn never ends with the report unchecked.
 
 **Binding.** Installed hooks run `rein hook --vendor X --task <name>` (the opencode plugin embeds the task and the
 canonical worktree path). A bound hook judges that task's contract and worktree whatever directory the CLI reports, and
@@ -196,7 +204,7 @@ canonical worktree path). A bound hook judges that task's contract and worktree 
   body goes through the same checks. `bash script.sh`, `bash -c '...'`, `bash -euo pipefail -c ...`, `sh -e x.sh` stay
   allowed. (codex `write_stdin` does not reach PreToolUse, so typed input could not be judged.)
 - The installed hook files are never editable by the worker: `.codex/hooks.json`, `.agents/hooks.json`,
-  `.kiro/agents/rein.json`, `.opencode/plugins/rein/**`, `.claude/settings.local.json`, and the directories that hold
+  `.kiro/agents/rein.json`, `.opencode/plugins/rein/**`, `.hermes/plugins/rein-guard/**`, `.claude/settings.local.json`, and the directories that hold
   them, against `rm`, `mv`, `cp` targets, redirects, `sed -i`, `tee`, `truncate`. An operand with glob characters is
   denied when it could expand to one of those paths or directories (`.codex/*`, `.*`, `.[a-z]*`; a leading dot needs a
   literal dot, so `*` alone is fine). `find` with `-delete`, `-exec`, `-execdir`, `-ok` or `-okdir` is denied when its
@@ -227,7 +235,9 @@ command); `write_stdin` does **not** reach PreToolUse (see the stdin-shell rule 
 `mcp__cua_repl__js` (allowed and logged). Not verified: kiro `use_subagent` (whether subagent tool calls run the agent's
 hooks) and opencode's `execute` code-mode tool. agy treats any tool with a path-like argument (`TargetFile`,
 `AbsolutePath`, `FilePath`, `Path`, `File`) as a write unless it is known to only read (`view_*`, `read_*`, `list_*`,
-`find_*`, `grep_*`, `search_*`).
+`find_*`, `grep_*`, `search_*`). Hermes is judged the same way: `write_file`, `patch`, `edit_file` and `create_file`
+are writes; a tool that carries `path`/`file_path`/`filePath`/`target_file` is a write unless it is known to only read
+(`read_*`, `list_*`, `search_*`, `view_*`, `grep_*`); a tool whose write path it cannot read is **denied**, not allowed.
 
 **Codex trust (verified with codex 0.161.0).**
 - An untrusted project hook is skipped silently. The persisted trust is a hash in `~/.codex/config.toml`
@@ -255,12 +265,12 @@ listed; whether codex honours `hooks.state` trust given through `CODEX_HOME` (no
 For existing task contracts, use the task-scoped commands; installation resolves the executable and generates the actual vendor files inside that contract's worktree:
 
 ```sh
-rein hooks install <task> --vendors codex,agy,kiro,opencode,claude
+rein hooks install <task> --vendors codex,agy,kiro,opencode,hermes,claude
 rein hooks uninstall <task>  # all supported vendors, including stale metadata
 ```
 
-Removal preserves other owners' settings, namespaces, sibling hooks and plugin files. It refuses ambiguous/modified artifacts, tracked files and symlink destinations. Repeated install/remove is supported; rerun install to obtain fresh Codex launch flags. An OpenCode plugin includes its own generated package metadata and script, both removed on uninstall.
+Removal preserves other owners' settings, namespaces, sibling hooks and plugin files. It refuses ambiguous/modified artifacts, tracked files and symlink destinations. Repeated install/remove is supported; rerun install to obtain fresh Codex launch flags. An OpenCode plugin includes its own generated package metadata and script, both removed on uninstall. The Hermes uninstall removes only the two files rein wrote (`plugin.yaml` and `__init__.py`) and refuses a foreign file in the guard directory; the task's `.hermes/` home is left in place.
 
-`scripts/install-harness.sh` handles separate native plugin registrations. Claude uses its native CLI and SessionStart binary bootstrap. AGY requires a runnable Rein binary on PATH before native registration. Codex/OpenCode/Kiro must use task-scoped hooks; a global alias to a task-bound artifact would apply the wrong contract to other projects. Native removal names only Rein and propagates errors; legacy symlink removal checks exact ownership. It does not delete foreign registrations or settings.
+`scripts/install-harness.sh` handles separate native plugin registrations. Claude uses its native CLI and SessionStart binary bootstrap. AGY requires a runnable Rein binary on PATH before native registration. Codex/OpenCode/Kiro/Hermes must use task-scoped hooks; a global alias to a task-bound artifact would apply the wrong contract to other projects. Native removal names only Rein and propagates errors; legacy symlink removal checks exact ownership. It does not delete foreign registrations or settings.
 
 Restart an already-running harness before treating a cached plugin or supplied launch flags as unloaded. Source/config removal on disk does not prove in-memory unload. Local lifecycle tests execute generated hooks and an OpenCode plugin callback in disposable repositories; this is separate from a full session on every vendor/version/OS.

@@ -7,7 +7,7 @@ description: "Interactive help, architecture guide, cross-vendor agent workflows
 
 # `rein` Interactive Help & Operational Manual
 
-`rein` is a deterministic supervisor and guardrail engine for AI coding harnesses (**Claude Code**, **OpenAI Codex**, **Google Antigravity**, **AWS Kiro**, **OpenCode**). It ensures zero unchecked operations by binding workers to git worktree contracts, tracking multi-model telemetry, and natively coordinating parallel Orca workers.
+`rein` is a deterministic supervisor and guardrail engine for AI coding harnesses (**Claude Code**, **OpenAI Codex**, **Google Antigravity**, **AWS Kiro**, **OpenCode**, **Hermes Agent**). It ensures zero unchecked operations by binding workers to git worktree contracts, tracking multi-model telemetry, and natively coordinating parallel Orca workers.
 
 ---
 

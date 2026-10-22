@@ -78,7 +78,7 @@ Harness หมายถึงโปรแกรมที่ใช้รัน ag
 
 Mapping อ้างจาก [routing.go](../../../internal/routing/routing.go), [hooks.go](../../../internal/hooks/hooks.go), [route_launch.go](../../../cmd/rein/route_launch.go) และ [discover.go](../../../internal/providers/discover.go) OpenCode2 เป็นชื่อ executable/provider ที่ repo ใช้ ต้องผูกกับ binary/version จริง ไม่เดาว่า plugin v1 ใช้กับ v2 ได้
 
-ตัวอย่างรายชื่อ vendor ที่ Rein รับคือ `--vendors claude,codex,agy,opencode` ไม่ใช่ `antigravity,opencode2` ต้องติดตั้ง hooks ก่อนสร้าง contract hash/profile ที่ผูก generation ส่วน Claude ตรวจ global guard เดิมก่อน opt-in เพื่อไม่ติดตั้งซ้ำ
+ตัวอย่างรายชื่อ vendor ที่ Rein รับคือ `--vendors claude,codex,agy,opencode,hermes` ไม่ใช่ `antigravity,opencode2` ต้องติดตั้ง hooks ก่อนสร้าง contract hash/profile ที่ผูก generation ส่วน Claude ตรวจ global guard เดิมก่อน opt-in เพื่อไม่ติดตั้งซ้ำ
 
 Claude discovery รองรับ SDK initialize สำหรับ Claude Code 2.1.302 ขึ้นไปใน major 2 แล้ว โดยอ่าน resolvedModel และ effort จาก client catalog เท่านั้น ยังต้องผ่าน entitlement/quota, quality evidence, billing และ guard ก่อนเลือกอัตโนมัติ Routed Orca ปฏิเสธ Codex/OpenCode2 และ direct `rein orca launch` ยังไม่รับ OpenCode2 ดังนั้นแผนสี่ harness ผ่าน Orca ทั้งหมดต้องแก้ runtime integration ไม่ใช่เพิ่มชื่อในตาราง
 

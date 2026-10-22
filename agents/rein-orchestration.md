@@ -133,7 +133,7 @@ rein orca call tidy
 - Route worker: `rein route prepare --task <task-name> --run <run-id> --chain worker:default`
 - Install guard hooks for the target harness:
   - Claude: `rein sandbox <task-name>`
-  - Codex / Kiro / AGY: `rein hooks install <task-name>`
+  - Codex / Kiro / AGY / OpenCode / Hermes: `rein hooks install <task-name>`
 
 ### Stage 4: Orca Worker Dispatch
 - Launch worker:

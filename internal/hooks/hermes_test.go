@@ -1,7 +1,10 @@
 package hooks
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -137,6 +140,108 @@ func TestHermesHomeIsExcludedFromGitStatus(t *testing.T) {
 	git(t, "-C", wt, "add", "-A")
 	if out := git(t, "-C", wt, "diff", "--cached", "--name-only"); strings.Contains(out, ".hermes/") {
 		t.Errorf("a worker's `git add -A` must not stage the guard's own files, got %q", out)
+	}
+}
+
+// TestHermesReportGateIsRegistered checks that the generated plugin registers the
+// round-end gate: Hermes fires pre_verify only for plugins that registered it, so a
+// manifest that declares it while register() skips it leaves the report unchecked.
+func TestHermesReportGateIsRegistered(t *testing.T) {
+	root, wt, c := setup(t)
+	if _, _, err := Install(c, filepath.Join(root, "rein"), []string{"hermes"}); err != nil {
+		t.Fatal(err)
+	}
+	init := filepath.Join(wt, ".hermes", "plugins", "rein-guard", "__init__.py")
+	src, err := os.ReadFile(init)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plugin := string(src)
+	if !strings.Contains(plugin, `ctx.register_hook("pre_verify"`) {
+		t.Error("the report gate must be registered")
+	}
+	if !strings.Contains(plugin, `"hook_event_name": "pre_verify"`) {
+		t.Error("the gate must identify its event to the guard")
+	}
+	// The manifest must not advertise a hook the plugin does not register.
+	manifest, err := os.ReadFile(filepath.Join(wt, ".hermes", "plugins", "rein-guard", "plugin.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, hook := range []string{"pre_tool_call", "pre_verify"} {
+		if !strings.Contains(string(manifest), hook) {
+			t.Errorf("the manifest must declare %s", hook)
+		}
+	}
+}
+
+// TestHermesReportGateIsLive drives the generated plugin's gate through the real guard
+// binary: a worker that has not written its report must be sent back, and the gate
+// must be a no-op once the report is there.
+func TestHermesReportGateIsLive(t *testing.T) {
+	root, wt, c := setup(t)
+	bin := filepath.Join(root, "rein")
+	if _, _, err := Install(c, bin, []string{"hermes"}); err != nil {
+		t.Fatal(err)
+	}
+	// The rein binary the plugin calls must exist.
+	build := exec.Command("go", "build", "-o", bin, "github.com/voravitl/rein/cmd/rein")
+	build.Dir = filepath.Join("..", "..")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("cannot build rein: %v\n%s", err, out)
+	}
+
+	init := filepath.Join(wt, ".hermes", "plugins", "rein-guard", "__init__.py")
+	body, err := os.ReadFile(init)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The plugin hardcodes the rein binary, the task and the worktree at install time;
+	// point them at this test's values.
+	plugin := strings.Replace(string(body), "REIN = ", "REIN = \""+bin+"\"\n_UNUSED_REIN = ", 1)
+	plugin = strings.Replace(plugin, "REIN_TASK = ", "REIN_TASK = \""+c.Name+"\"\n_UNUSED_TASK = ", 1)
+	plugin = strings.Replace(plugin, "WORKTREE = ", "WORKTREE = \""+wt+"\"\n_UNUSED_WT = ", 1)
+
+	dir := t.TempDir()
+	pluginDir := filepath.Join(dir, "rein-guard")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "__init__.py"), []byte(plugin), 0644); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(dir, "gate.py")
+	wrapper := `import json, sys
+sys.path.insert(0, sys.argv[1])
+import __init__ as plugin
+
+class Ctx:
+    def __init__(self): self.hooks = {}
+    def register_hook(self, name, cb): self.hooks[name] = cb
+
+ctx = Ctx()
+plugin.register(ctx)
+print(json.dumps(ctx.hooks["pre_verify"](session_id="s", final_response="done", changed_paths=[])))
+`
+	if err := os.WriteFile(script, []byte(wrapper), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("python3", script, pluginDir).CombinedOutput()
+	if err != nil {
+		t.Fatalf("the gate crashed: %v\n%s", err, out)
+	}
+	var directive struct {
+		Action  string `json:"action"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(out), &directive); err != nil {
+		t.Fatalf("the gate did not answer with a Hermes directive: %s", out)
+	}
+	if directive.Action != "continue" {
+		t.Errorf("a worker that has not reported must be sent back, got action %q (%s)", directive.Action, directive.Message)
+	}
+	if !strings.Contains(directive.Message, "report") {
+		t.Errorf("the worker must be told what is missing, got %q", directive.Message)
 	}
 }
 
