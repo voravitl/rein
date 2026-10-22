@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -125,5 +126,30 @@ func TestCorruptPricesFileLeavesCostUnknown(t *testing.T) {
 	}
 	if got := loadPrices(); len(got) != 0 {
 		t.Fatalf("corrupt prices loaded %d entries, want none", len(got))
+	}
+}
+
+func TestCorruptPricesFileWarns(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "prices.json")
+	t.Setenv("PIPELINE_PRICES", path)
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	loadPrices()
+	w.Close()
+	os.Stderr = old
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "not valid JSON") {
+		t.Fatalf("warning = %q, want a parse error", b)
 	}
 }
