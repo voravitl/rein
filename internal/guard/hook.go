@@ -100,6 +100,13 @@ func emit(vendor string, w, stderr io.Writer, event, name, reason string) int {
 		}
 		_ = json.NewEncoder(w).Encode(out)
 		return 0
+	case "hermes": // the rein-guard plugin reads a Hermes directive: {"action":"block"|"continue","message":...}
+		out := map[string]string{"action": "block", "message": "[rein] " + reason}
+		if event == "stop" {
+			out = map[string]string{"action": "continue", "message": reason}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+		return 0
 	}
 	var out any
 	if event == "stop" {

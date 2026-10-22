@@ -525,7 +525,7 @@ func launchFlag(args []string, names ...string) (string, error) {
 
 func launchIdentity(argv []string, c *contract.Contract, runID string) (string, string, error) {
 	name, args := filepath.Base(argv[0]), argv[1:]
-	agent := map[string]string{"claude": "claude", "codex": "codex", "agy": "antigravity", "kiro-cli": "kiro", "opencode": "opencode", "opencode2": "opencode2"}[name]
+	agent := map[string]string{"claude": "claude", "codex": "codex", "agy": "antigravity", "kiro-cli": "kiro", "opencode": "opencode", "opencode2": "opencode2", "hermes": "hermes"}[name]
 	if isOrcaLaunch(argv) {
 		if _, err := orcaObservationSelectors(argv); err != nil {
 			return "", "", err

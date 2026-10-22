@@ -69,7 +69,7 @@ func TestInstallWritesExcludesAndRecords(t *testing.T) {
 			t.Errorf("both contract copies must be updated, got %v", saved)
 		}
 		now := map[string]string{}
-		for _, f := range []string{".codex/hooks.json", ".agents/hooks.json", ".kiro/agents/rein.json", ".opencode/plugins/rein/server.js", ".claude/settings.local.json"} {
+		for _, f := range []string{".codex/hooks.json", ".agents/hooks.json", ".kiro/agents/rein.json", ".opencode/plugins/rein/server.js", ".claude/settings.local.json", ".hermes/plugins/rein-guard/plugin.yaml", ".hermes/plugins/rein-guard/__init__.py", ".hermes/config.yaml"} {
 			b, err := os.ReadFile(filepath.Join(wt, filepath.FromSlash(f)))
 			if err != nil {
 				t.Fatal(err)
@@ -217,7 +217,7 @@ func TestInstallWritesExcludesAndRecords(t *testing.T) {
 	}
 	for _, p := range []string{contract.PathOf("w"), c.RunCopy} {
 		got := mustJSON(t, p)["hooks_installed"].([]any)
-		if len(got) != 5 {
+		if len(got) != 6 {
 			t.Errorf("%s: hooks_installed = %v", p, got)
 		}
 	}

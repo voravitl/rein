@@ -18,7 +18,7 @@ import (
 )
 
 var Types = []string{"backend", "frontend", "fullstack", "docs", "mechanical", "review"}
-var Agents = []string{"claude", "codex", "antigravity", "opencode", "opencode2", "kiro"}
+var Agents = []string{"claude", "codex", "antigravity", "opencode", "opencode2", "kiro", "hermes"}
 
 type AgentModel struct {
 	Agent string `json:"agent"`
