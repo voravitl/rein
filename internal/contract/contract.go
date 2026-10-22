@@ -128,6 +128,14 @@ func IndexDir() string {
 	return filepath.Join(home, ".cache", "worktree-pipeline", "contracts")
 }
 
+// ValidName reports whether name is safe to use as one file name and worktree
+// directory. It rejects path separators and directory entries that would escape,
+// but keeps the spaces and Unicode that existing contracts may use.
+func ValidName(name string) bool {
+	return name != "" && name != "." && name != ".." &&
+		!strings.ContainsAny(name, "/\\\x00\n\r")
+}
+
 func PathOf(name string) string { return filepath.Join(IndexDir(), name+".json") }
 
 // LogDir is where the guard writes guard.log.
@@ -188,6 +196,9 @@ func (c *Contract) Save() ([]string, error) {
 var ErrNone = errors.New("no contract")
 
 func Load(name string) (*Contract, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("contract name %q must be one path component (no slash, backslash, NUL, CR, or LF; not . or ..)", name)
+	}
 	b, err := os.ReadFile(PathOf(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNone
@@ -262,6 +273,9 @@ func splitList(s string) []string {
 // New builds a contract from CLI values plus a profile and writes it to the run dir and the index.
 // worktreeRoot "" falls back to the profile's worktree_root.
 func New(name string, issue int, runDir, allow, deny, scope, worktreeRoot, reportPath, writable string, maxLines int, prof *Profile) (*Contract, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("contract name %q must be one path component (no slash, backslash, NUL, CR, or LF; not . or ..)", name)
+	}
 	expand := expandHome
 	if prof == nil {
 		prof = &Profile{}

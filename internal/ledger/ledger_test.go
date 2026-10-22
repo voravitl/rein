@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,5 +115,41 @@ func TestLoadStrictRejectsCorruptionWithoutChangingReports(t *testing.T) {
 	}
 	if _, err := LoadStrict(""); err == nil || !strings.Contains(err.Error(), "line 2") {
 		t.Fatalf("strict corruption result: %v", err)
+	}
+}
+
+func TestCorruptPricesFileLeavesCostUnknown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PIPELINE_PRICES", filepath.Join(dir, "prices.json"))
+	if err := os.WriteFile(filepath.Join(dir, "prices.json"), []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := loadPrices(); len(got) != 0 {
+		t.Fatalf("corrupt prices loaded %d entries, want none", len(got))
+	}
+}
+
+func TestCorruptPricesFileWarns(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "prices.json")
+	t.Setenv("PIPELINE_PRICES", path)
+	if err := os.WriteFile(path, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	loadPrices()
+	w.Close()
+	os.Stderr = old
+	b, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "not valid JSON") {
+		t.Fatalf("warning = %q, want a parse error", b)
 	}
 }

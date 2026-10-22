@@ -295,7 +295,11 @@ func (p *coordPolicy) treeOf(abs string) string {
 
 // contracted reports whether a worktree is a worker's (a contract names it).
 func (p *coordPolicy) contracted(tree string) bool {
-	c, err := contract.Load(filepath.Base(tree))
+	name := filepath.Base(tree)
+	if !contract.ValidName(name) {
+		return false
+	}
+	c, err := contract.Load(name)
 	if err != nil {
 		return !errors.Is(err, contract.ErrNone) // a broken contract still marks a worker
 	}

@@ -4,10 +4,12 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/voravitl/rein/internal/tier"
@@ -988,5 +990,51 @@ func TestCheckVerdicts_Evidence(t *testing.T) {
 	}
 	if !strings.Contains(evidence, sha) {
 		t.Errorf("evidence missing sha: %s", evidence)
+	}
+}
+
+func TestConcurrentVerdictRecordsAreNotLost(t *testing.T) {
+	storageDir := filepath.Join(t.TempDir(), "verdicts")
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := RecordVerdict(storageDir, 9, "abc123", Approve, fmt.Sprintf("reviewer-%d", i), "worker", ""); err != nil {
+				t.Errorf("RecordVerdict %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	records, err := loadVerdictRecords(VerdictPath(storageDir, 9))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != n {
+		t.Fatalf("lost verdicts: got %d, want %d", len(records), n)
+	}
+}
+
+func TestConcurrentApprovalRecordsAreNotLost(t *testing.T) {
+	storageDir := filepath.Join(t.TempDir(), "verdicts")
+	const n = 20
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := RecordApproval(storageDir, 9, "abc123", "patch", fmt.Sprintf("approval-%d", i)); err != nil {
+				t.Errorf("RecordApproval %d: %v", i, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	records, err := loadApprovalRecords(ApprovalPath(storageDir, 9))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != n {
+		t.Fatalf("lost approvals: got %d, want %d", len(records), n)
 	}
 }

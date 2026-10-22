@@ -376,3 +376,41 @@ func TestCodexLaunchAdviceOwnership(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteJSONKeepsExistingMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(path, map[string]any{"a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %o, want 600", fi.Mode().Perm())
+	}
+}
+
+func TestWriteJSONLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := writeJSON(path, map[string]any{"a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(got), `"a": 1`) {
+		t.Fatalf("read back: %q, %v", got, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".rein-write-") {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
+	}
+}

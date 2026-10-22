@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/tier"
 )
 
@@ -37,11 +39,17 @@ func RecordVerdict(storageDir string, mr int, sha string, verdict Verdict, revie
 	}
 
 	path := VerdictPath(storageDir, mr)
-	records, err := loadVerdictRecords(path)
+	unlock, err := run.LockFile(path+".lock", 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to lock verdicts: %w", err)
+	}
+	defer unlock()
+
+	var records []VerdictRecord
+	records, err = loadVerdictRecords(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to load existing verdicts: %w", err)
 	}
-
 	records = append(records, record)
 
 	data, err := json.MarshalIndent(records, "", "  ")
@@ -49,7 +57,7 @@ func RecordVerdict(storageDir string, mr int, sha string, verdict Verdict, revie
 		return fmt.Errorf("failed to marshal verdicts: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := writeFileAtomic(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write verdicts: %w", err)
 	}
 
@@ -71,11 +79,17 @@ func RecordApproval(storageDir string, mr int, sha, patchID, reason string) erro
 	}
 
 	path := ApprovalPath(storageDir, mr)
-	records, err := loadApprovalRecords(path)
+	unlock, err := run.LockFile(path+".lock", 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to lock approvals: %w", err)
+	}
+	defer unlock()
+
+	var records []ApprovalRecord
+	records, err = loadApprovalRecords(path)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to load existing approvals: %w", err)
 	}
-
 	records = append(records, record)
 
 	data, err := json.MarshalIndent(records, "", "  ")
@@ -83,11 +97,41 @@ func RecordApproval(storageDir string, mr int, sha, patchID, reason string) erro
 		return fmt.Errorf("failed to marshal approvals: %w", err)
 	}
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := writeFileAtomic(path, data, 0644); err != nil {
 		return fmt.Errorf("failed to write approvals: %w", err)
 	}
 
 	return nil
+}
+
+// writeFileAtomic replaces path through a temp file in the same directory, so a
+// crash or full disk never leaves a truncated verdict or approval log.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".rein-write-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if fi, statErr := os.Stat(path); statErr == nil {
+		mode = fi.Mode().Perm()
+	}
+	if err := f.Chmod(mode); err != nil {
+		f.Close()
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // CheckResult represents the result of a verdict check.

@@ -279,16 +279,24 @@ type price struct {
 func loadPrices() map[string]price {
 	b, err := os.ReadFile(PricesPath())
 	if err != nil {
+		if !os.IsNotExist(err) {
+			fmt.Fprintf(os.Stderr, "rein ledger: cannot read prices file %s: %v\n", PricesPath(), err)
+		}
 		return nil
 	}
 	raw := map[string]json.RawMessage{}
-	_ = json.Unmarshal(b, &raw)
+	if err := json.Unmarshal(b, &raw); err != nil {
+		fmt.Fprintf(os.Stderr, "rein ledger: prices file %s is not valid JSON; costs stay unknown: %v\n", PricesPath(), err)
+		return nil
+	}
 	out := map[string]price{}
 	for k, v := range raw {
 		var p price
-		if json.Unmarshal(v, &p) == nil {
-			out[k] = p
+		if err := json.Unmarshal(v, &p); err != nil {
+			fmt.Fprintf(os.Stderr, "rein ledger: prices entry %q is invalid; cost stays unknown: %v\n", k, err)
+			continue
 		}
+		out[k] = p
 	}
 	return out
 }

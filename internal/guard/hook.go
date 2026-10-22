@@ -26,18 +26,23 @@ import (
 // stopping there would look up a contract by the nested folder's name, find none, and leave the write unguarded.
 // found is false when no ancestor is a worker (an ordinary session); err is a contract that exists but cannot be read.
 func workerRoot(dir string) (top string, c *contract.Contract, found bool, name string, err error) {
+	if abs, aerr := filepath.Abs(dir); aerr == nil {
+		dir = abs
+	}
 	d := contract.Real(dir)
 	for {
 		if _, serr := os.Stat(filepath.Join(d, ".git")); serr == nil {
 			name = filepath.Base(d)
-			c, err = contract.Load(name)
-			switch {
-			case err == nil:
-				if contract.Real(c.Worktree) == d {
-					return d, c, true, name, nil
-				} // same directory name, different tree: keep walking
-			case !errors.Is(err, contract.ErrNone):
-				return d, nil, false, name, err // a worker whose contract is broken: the caller fails closed
+			if contract.ValidName(name) {
+				c, err = contract.Load(name)
+				switch {
+				case err == nil:
+					if contract.Real(c.Worktree) == d {
+						return d, c, true, name, nil
+					} // same directory name, different tree: keep walking
+				case !errors.Is(err, contract.ErrNone):
+					return d, nil, false, name, err // a worker whose contract is broken: the caller fails closed
+				}
 			}
 		}
 		parent := filepath.Dir(d)
@@ -147,6 +152,9 @@ func RunTask(vendor, task string, r io.Reader, w, stderr io.Writer) int {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
+	if abs, aerr := filepath.Abs(cwd); aerr == nil {
+		cwd = abs
+	}
 	anchor := a.Anchor
 	if anchor == "" {
 		anchor = cwd
@@ -176,6 +184,9 @@ func runBound(vendor, task string, a Action, ok bool, w, stderr io.Writer) int {
 	cwd := a.Cwd
 	if cwd == "" {
 		cwd = top
+	}
+	if abs, aerr := filepath.Abs(cwd); aerr == nil {
+		cwd = abs
 	}
 	return judge(vendor, a, c, top, cwd, w, stderr)
 }

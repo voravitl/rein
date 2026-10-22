@@ -583,3 +583,35 @@ func TestPostToolUseRecordsApproval(t *testing.T) {
 		t.Errorf("Approval file should be created at %s", approvalPath)
 	}
 }
+
+func TestRelativeCwdOutsideWorkerIsSilent(t *testing.T) {
+	setup(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":".","tool_input":{"command":"git push"}}`
+	var out, errb bytes.Buffer
+	if code := RunVendor("claude", strings.NewReader(in), &out, &errb); code != 0 || out.Len() != 0 {
+		t.Fatalf("relative cwd outside a worker must stay silent, got %q %q (exit %d)", out.String(), errb.String(), code)
+	}
+}
+
+func TestRelativeCwdInsideWorkerIsJudged(t *testing.T) {
+	wt, _ := setup(t)
+	t.Chdir(wt)
+	run := func(fp string) string {
+		in, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": ".",
+			"tool_input": map[string]string{"file_path": fp}})
+		var out bytes.Buffer
+		Run(bytes.NewReader(in), &out)
+		return out.String()
+	}
+	if out := run("backend/Routing/new.go"); out != "" {
+		t.Errorf("owned relative write denied: %s", out)
+	}
+	if out := run("frontend/src/new.ts"); !strings.Contains(out, `"deny"`) {
+		t.Errorf("relative write outside ownership must be denied, got %q", out)
+	}
+}

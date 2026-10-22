@@ -41,3 +41,25 @@ func TestProfileCoordinatorFields(t *testing.T) {
 		t.Fatalf("profile = %+v", prof)
 	}
 }
+
+func TestContractNameCannotEscapeIndexDir(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "idx"))
+	if _, err := New("../escape", 0, filepath.Join(root, "run"), "src/**", "", "S1", filepath.Join(root, "wt"), "", "", 0, nil); err == nil {
+		t.Fatal("New accepted a traversing contract name")
+	}
+	if _, err := Load("../escape"); err == nil {
+		t.Fatal("Load accepted a traversing contract name")
+	}
+	if _, err := os.Stat(filepath.Join(root, "escape.json")); !os.IsNotExist(err) {
+		t.Fatalf("traversing name wrote outside the index: %v", err)
+	}
+}
+
+func TestContractNameKeepsSpacesAndUnicode(t *testing.T) {
+	for _, name := range []string{"my task", "แก้ล็อกอิน"} {
+		if !ValidName(name) {
+			t.Fatalf("ValidName rejected %q", name)
+		}
+	}
+}
