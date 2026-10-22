@@ -43,7 +43,7 @@ Keep your repo's Orca id (`--repo id:<repo-id>`) in the project pack's `PACK.md`
   2. run `dispatch --return-preamble` and save the preamble to a file;
   3. run `agy --model gemini-3.8-flash-high --mode accept-edits --dangerously-skip-permissions -i "$(cat preamble)"`;
   4. send later tasks with `terminal send` ("read preamble file …").
-- **agy sometimes forgets `worker_done`:** ask it to send it.
+- **agy `worker_done` hangs and never reaches Orca:** the Antigravity terminal sandbox (`enableTerminalSandbox: true`) has no network, and `orca orchestration send` does not fail fast. Put this in every agy spec: "Run every `orca` command (especially the final `orca orchestration send`) with the `run_command` tool option `BypassSandbox: true`; do not run orca inside the sandbox." Verified 2026-10-22: dispatch `completed`, task `completed`, 35s. Without it the worker hung for 95s+ and no message was recorded. `rein route launch` warns when an antigravity spec lacks the instruction.
 - **Out of credits:** agy exits 3 with `RESOURCE_EXHAUSTED (429)` → move the task to codex.
 - **codex terminals become "not a recognized agent" after a task:** use the same preamble route, or close the terminal and start a fresh worker.
 - **Claude terminals reuse fine** with `worker-start --terminal <term> --worktree path:...`.
