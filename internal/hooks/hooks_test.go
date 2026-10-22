@@ -376,3 +376,24 @@ func TestCodexLaunchAdviceOwnership(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteJSONLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "settings.json")
+	if err := writeJSON(path, map[string]any{"a": 1}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(got), `"a": 1`) {
+		t.Fatalf("read back: %q, %v", got, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".rein-write-") {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
+	}
+}
