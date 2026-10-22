@@ -583,3 +583,17 @@ func TestPostToolUseRecordsApproval(t *testing.T) {
 		t.Errorf("Approval file should be created at %s", approvalPath)
 	}
 }
+
+func TestRelativeCwdOutsideWorkerIsSilent(t *testing.T) {
+	setup(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	in := `{"hook_event_name":"PreToolUse","tool_name":"Bash","cwd":".","tool_input":{"command":"git push"}}`
+	var out, errb bytes.Buffer
+	if code := RunVendor("claude", strings.NewReader(in), &out, &errb); code != 0 || out.Len() != 0 {
+		t.Fatalf("relative cwd outside a worker must stay silent, got %q %q (exit %d)", out.String(), errb.String(), code)
+	}
+}

@@ -26,6 +26,9 @@ import (
 // stopping there would look up a contract by the nested folder's name, find none, and leave the write unguarded.
 // found is false when no ancestor is a worker (an ordinary session); err is a contract that exists but cannot be read.
 func workerRoot(dir string) (top string, c *contract.Contract, found bool, name string, err error) {
+	if abs, aerr := filepath.Abs(dir); aerr == nil {
+		dir = abs
+	}
 	d := contract.Real(dir)
 	for {
 		if _, serr := os.Stat(filepath.Join(d, ".git")); serr == nil {
