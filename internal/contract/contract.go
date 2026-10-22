@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -128,6 +129,13 @@ func IndexDir() string {
 	return filepath.Join(home, ".cache", "worktree-pipeline", "contracts")
 }
 
+var taskName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// ValidName reports whether name is safe to use as a file name and worktree
+// directory. The hook derives it from a directory name, so it is deliberately
+// narrow.
+func ValidName(name string) bool { return taskName.MatchString(name) }
+
 func PathOf(name string) string { return filepath.Join(IndexDir(), name+".json") }
 
 // LogDir is where the guard writes guard.log.
@@ -188,6 +196,9 @@ func (c *Contract) Save() ([]string, error) {
 var ErrNone = errors.New("no contract")
 
 func Load(name string) (*Contract, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("contract name %q is not a plain name (letters, digits, dot, dash, underscore)", name)
+	}
 	b, err := os.ReadFile(PathOf(name))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNone
@@ -262,6 +273,9 @@ func splitList(s string) []string {
 // New builds a contract from CLI values plus a profile and writes it to the run dir and the index.
 // worktreeRoot "" falls back to the profile's worktree_root.
 func New(name string, issue int, runDir, allow, deny, scope, worktreeRoot, reportPath, writable string, maxLines int, prof *Profile) (*Contract, error) {
+	if !ValidName(name) {
+		return nil, fmt.Errorf("contract name %q is not a plain name (letters, digits, dot, dash, underscore)", name)
+	}
 	expand := expandHome
 	if prof == nil {
 		prof = &Profile{}
