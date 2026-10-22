@@ -1,6 +1,8 @@
 package guard
 
 import (
+	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -68,5 +70,26 @@ func TestShellWriteOwnership(t *testing.T) {
 				t.Errorf("expected allowed operation, got %q", out)
 			}
 		})
+	}
+}
+
+// A report path inside the worktree must stay writable even when the ownership globs do not cover it: the guard's
+// own Stop hook tells the worker to write the report there, so denying that write makes the task unfinishable.
+func TestReportPathInsideWorktree(t *testing.T) {
+	wt, c := setup(t)
+	report := filepath.Join(wt, "report", "task.md")
+	c.ReportPath = report
+	if _, err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if out := bashCase(t, wt, "echo report > "+report); out != "" {
+		t.Errorf("report write inside the worktree denied: %s", out)
+	}
+	in, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": wt,
+		"tool_input": map[string]string{"file_path": report}})
+	var out bytes.Buffer
+	Run(bytes.NewReader(in), &out)
+	if out.String() != "" {
+		t.Errorf("report edit inside the worktree denied: %s", out.String())
 	}
 }
