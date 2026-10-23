@@ -94,3 +94,52 @@ func TestCmdVerdictCheck_UsesCheckedSHAForRevisionIdentity(t *testing.T) {
 		t.Errorf("check for S must not accept a verdict recorded for B (exit %d; a HEAD-derived identity would bind B's patch to S)", code)
 	}
 }
+
+func TestMutableRefsAreFrozenAndCannotApproveNextCommit(t *testing.T) {
+	root := contract.Real(t.TempDir())
+	gitIn(t, root, "init", "-q", "-b", "main")
+	path := filepath.Join(root, "a.txt")
+	os.WriteFile(path, []byte("base\n"), 0600)
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-qm", "base")
+	gitIn(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	os.WriteFile(path, []byte("reviewed\n"), 0600)
+	gitIn(t, root, "commit", "-qam", "reviewed")
+	sha, err := verdict.ResolveCommit(root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, code := capture(t, func() int {
+		return cmdVerdictRecord([]string{"--repo", root, "--mr", "42", "--sha", "HEAD", "--verdict", "APPROVE", "--reviewer", "claude-opus-4.8", "--worker", "gpt-5.6"})
+	})
+	if code != 0 {
+		t.Fatalf("record exit %d", code)
+	}
+	// The terminal entry point must freeze explicit refs as well as its HEAD default.
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CLAUDE_PID", "")
+	_, code = capture(t, func() int { return cmdApprove([]string{"--repo", root, "--mr", "42", "--sha", "HEAD"}) })
+	if code != 0 {
+		t.Fatalf("approve exit %d", code)
+	}
+	b, err := os.ReadFile(verdict.ApprovalPath(verdict.StorageDir("", root), 42))
+	if err != nil || !strings.Contains(string(b), sha) || strings.Contains(string(b), `"HEAD"`) {
+		t.Fatalf("approval not immutable: %s %v", b, err)
+	}
+	_, code = capture(t, func() int { return cmdVerdictCheck([]string{"--repo", root, "--mr", "42", "--sha", "HEAD"}) })
+	if code != 0 {
+		t.Fatalf("reviewed HEAD rejected: %d", code)
+	}
+	os.WriteFile(path, []byte("unreviewed\n"), 0600)
+	gitIn(t, root, "commit", "-qam", "next")
+	_, code = capture(t, func() int { return cmdVerdictCheck([]string{"--repo", root, "--mr", "42", "--sha", "HEAD"}) })
+	if code == 0 {
+		t.Fatal("old HEAD authority approved new commit")
+	}
+	if _, err := verdict.ResolveCommit(root, "--all"); err == nil {
+		t.Fatal("option accepted as commit")
+	}
+	if _, err := verdict.ResolveCommit(root, "does-not-exist"); err == nil {
+		t.Fatal("missing ref accepted")
+	}
+}

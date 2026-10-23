@@ -24,6 +24,7 @@ type Step struct {
 
 // Spec defines an E2E scenario executed against Orca Browser.
 type Spec struct {
+	RequirePDF     bool   `json:"require_pdf,omitempty"` // fail the run if PDF evidence cannot be produced
 	Name           string `json:"name"`
 	Description    string `json:"description,omitempty"`
 	BaseURL        string `json:"base_url,omitempty"`
@@ -44,16 +45,17 @@ type StepReport struct {
 
 // TestReport is the final aggregated outcome of an E2E scenario run.
 type TestReport struct {
-	SpecName       string       `json:"spec_name"`
-	TotalSteps     int          `json:"total_steps"`
-	PassedSteps    int          `json:"passed_steps"`
-	FailedSteps    int          `json:"failed_steps"`
-	Success        bool         `json:"success"`
-	DurationMS     int64        `json:"duration_ms"`
-	FailureMessage string       `json:"failure_message,omitempty"`
-	EvidenceDir    string       `json:"evidence_dir,omitempty"`
-	PDFPath        string       `json:"pdf_path,omitempty"`
-	Steps          []StepReport `json:"steps"`
+	SpecName         string       `json:"spec_name"`
+	TotalSteps       int          `json:"total_steps"`
+	PassedSteps      int          `json:"passed_steps"`
+	FailedSteps      int          `json:"failed_steps"`
+	Success          bool         `json:"success"`
+	DurationMS       int64        `json:"duration_ms"`
+	FailureMessage   string       `json:"failure_message,omitempty"`
+	EvidenceDir      string       `json:"evidence_dir,omitempty"`
+	EvidenceWarnings []string     `json:"evidence_warnings,omitempty"`
+	PDFPath          string       `json:"pdf_path,omitempty"`
+	Steps            []StepReport `json:"steps"`
 }
 
 var jsonBlockRx = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")

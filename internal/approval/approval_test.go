@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// TestGoldenCase_A_RealClick tests case (a): real click -> should pass and record approval
-func TestGoldenCase_A_RealClick(t *testing.T) {
+// TestUnpairedClickCannotAuthorize tests case (a): real click -> should pass and record approval
+func TestUnpairedClickCannotAuthorize(t *testing.T) {
 	payload := AskUserQuestionPayload{
 		Question: "Approve merge for MR 42?\n\nSHA: abc123\nTier: T1\n\nVerdicts:\n- claude-opus: APPROVE\n\nThis approval gates the merge.",
 		Options:  []string{"Approve"},
@@ -16,8 +16,8 @@ func TestGoldenCase_A_RealClick(t *testing.T) {
 	input, _ := json.Marshal(payload)
 
 	reason := CheckPreToolUse(string(input), "", "session-123", "session-123")
-	if reason != "" {
-		t.Errorf("Real click should pass PreToolUse, got denial: %s", reason)
+	if !strings.Contains(reason, "interactive merge approval is disabled") {
+		t.Errorf("unpaired prompt must use terminal fallback: %s", reason)
 	}
 
 	// Simulate PostToolUse with Approve answer
@@ -30,8 +30,8 @@ func TestGoldenCase_A_RealClick(t *testing.T) {
 	if err != nil {
 		t.Errorf("ProcessPostToolUse failed: %v", err)
 	}
-	if !recorded {
-		t.Error("Real approve click should trigger recording")
+	if recorded {
+		t.Error("unpaired answer must not trigger recording")
 	}
 }
 
@@ -315,8 +315,8 @@ func TestRealSHA(t *testing.T) {
 	input, _ := json.Marshal(payload)
 
 	reason := CheckPreToolUse(string(input), "", "s1", "s1")
-	if reason != "" {
-		t.Errorf("Canonical template with real SHA should pass validation, got denial: %s", reason)
+	if !strings.Contains(reason, "interactive merge approval is disabled") {
+		t.Errorf("expected terminal fallback: %s", reason)
 	}
 
 	// Test with full SHA in both places
@@ -328,13 +328,13 @@ func TestRealSHA(t *testing.T) {
 	input2, _ := json.Marshal(payload2)
 
 	reason2 := CheckPreToolUse(string(input2), "", "s1", "s1")
-	if reason2 != "" {
-		t.Errorf("Full SHA in question should also pass validation, got denial: %s", reason2)
+	if !strings.Contains(reason2, "interactive merge approval is disabled") {
+		t.Errorf("expected terminal fallback: %s", reason2)
 	}
 }
 
 // TestGeneratorValidatorCoherence tests that the canonical template produced by
-// cmdApprovePrompt is always accepted by CheckPreToolUse.
+// a structurally valid preview still requires terminal approval.
 // This simulates the real canonical template with 8-char SHA in question and full SHA in metadata.
 func TestGeneratorValidatorCoherence(t *testing.T) {
 	// Use the real SHA from the current worktree (from the review report)
@@ -357,9 +357,9 @@ func TestGeneratorValidatorCoherence(t *testing.T) {
 	}
 	input, _ := json.Marshal(payload)
 
-	// This must NOT be denied
+	// A preview must not mint approval authority.
 	reason := CheckPreToolUse(string(input), "", "session-123", "session-123")
-	if reason != "" {
-		t.Errorf("Generator-produced canonical template should always pass CheckPreToolUse, got denial: %s", reason)
+	if !strings.Contains(reason, "interactive merge approval is disabled") {
+		t.Errorf("expected terminal fallback: %s", reason)
 	}
 }

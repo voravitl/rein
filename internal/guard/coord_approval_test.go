@@ -72,16 +72,15 @@ func TestCoordApprovalPromptIsValidated(t *testing.T) {
 			t.Errorf("%s: want an APPROVAL_DENIED decision, got code %d output %q", c.name, code, out)
 		}
 	}
-	// the canonical prompt from the owner session is the legitimate path and stays allowed
+	// Even a well-formed owner prompt requires the terminal fallback.
 	out, code := runHook(t, approvalEvent("PreToolUse", e.root, approvalInput(mr, false)))
-	if code != 0 || out != "" {
-		t.Errorf("the owner's canonical prompt must pass, got code %d output %q", code, out)
+	if !isDeny(out) {
+		t.Errorf("owner prompt requires terminal fallback, got code %d output %q", code, out)
 	}
 }
 
-// F-03: an answered approval in the owner session must leave the MR approval record on disk where the worker path
-// writes it, next to the decision trail the coordinator already kept.
-func TestCoordApprovalResponseIsRecorded(t *testing.T) {
+// An unpaired answer must leave no approval; the decision trail remains advisory.
+func TestCoordUnpairedApprovalResponseIsNotRecorded(t *testing.T) {
 	e := newCoordEnv(t)
 	e.m.RunDir = filepath.Join(e.outside, "run")
 	e.save()
@@ -103,16 +102,8 @@ func TestCoordApprovalResponseIsRecorded(t *testing.T) {
 	if code != 0 || out != "" {
 		t.Fatalf("PostToolUse must stay silent, got code %d output %q", code, out)
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("no MR approval record where the worker path writes it (%s): %v", path, err)
-	}
-	var records []verdict.ApprovalRecord
-	if err := json.Unmarshal(b, &records); err != nil {
-		t.Fatalf("approval record %s is unreadable: %v", path, err)
-	}
-	if len(records) != 1 || records[0].MR != mr || records[0].SHA != approvalSHA {
-		t.Errorf("approval record = %+v, want one MR %d record for %s", records, mr, approvalSHA)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("unpaired PostToolUse must not create approval: %v", err)
 	}
 	// the run's decision trail is still appended (ADR 0002 B4.1)
 	if b, err := os.ReadFile(filepath.Join(e.m.RunDir, "decisions.tsv")); err != nil || !strings.Contains(string(b), "Approve merge for MR 42") {
@@ -120,8 +111,8 @@ func TestCoordApprovalResponseIsRecorded(t *testing.T) {
 	}
 }
 
-// F-03 (c): the worker path keeps the approval behavior it had.
-func TestWorkerApprovalFlowUnchanged(t *testing.T) {
+// Workers also cannot turn unpaired tool responses into merge authority.
+func TestWorkerUnpairedApprovalIsNotRecorded(t *testing.T) {
 	e := newCoordEnv(t)
 	wt := filepath.Join(contract.Real(filepath.Dir(e.root)), "wts", "task-a")
 	linkWorktree(t, e.root, wt, "task-a")
@@ -136,8 +127,8 @@ func TestWorkerApprovalFlowUnchanged(t *testing.T) {
 		t.Errorf("worker prefilled prompt must stay denied, got %q", out)
 	}
 	out, code := runHook(t, approvalEvent("PreToolUse", wt, approvalInput(mr, false)))
-	if code != 0 || out != "" {
-		t.Errorf("worker canonical prompt from the owner session must stay allowed, got code %d output %q", code, out)
+	if !isDeny(out) {
+		t.Errorf("worker prompt requires terminal fallback, got code %d output %q", code, out)
 	}
 	out, code = runHook(t, approvalEvent("PostToolUse", wt, approvalInput(mr, false),
 		map[string]any{"tool_response": map[string]any{"answers": []string{"Approve"}}}))
@@ -145,7 +136,7 @@ func TestWorkerApprovalFlowUnchanged(t *testing.T) {
 		t.Fatalf("worker PostToolUse must stay silent, got code %d output %q", code, out)
 	}
 	path := verdict.ApprovalPath(verdict.StorageDir("", wt), mr)
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("worker approval record missing at %s: %v", path, err)
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("worker must not create unpaired approval at %s: %v", path, err)
 	}
 }

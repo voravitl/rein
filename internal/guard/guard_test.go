@@ -558,8 +558,8 @@ func TestPostToolUseRecordsApproval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessPostToolUse failed: %v", err)
 	}
-	if !recorded {
-		t.Error("ProcessPostToolUse should return true for Approve answer")
+	if recorded {
+		t.Error("ProcessPostToolUse must reject unpaired Approve answer")
 	}
 
 	// Verify metadata extraction works by checking the stored approval

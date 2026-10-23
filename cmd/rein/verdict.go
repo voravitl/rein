@@ -78,6 +78,12 @@ func cmdVerdictRecord(args []string) int {
 		return 2
 	}
 
+	resolved, err := verdict.ResolveCommit(*repoPath, *sha)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	*sha = resolved
 	storageDir := verdict.StorageDir(*runDir, *repoPath)
 	if err := verdict.RecordVerdict(storageDir, *mr, *sha, v, *reviewer, *worker, *repoPath); err != nil {
 		fmt.Fprintf(os.Stderr, "error recording verdict: %v\n", err)
@@ -123,6 +129,13 @@ func cmdVerdictCheck(args []string) int {
 		fmt.Fprintf(os.Stderr, "error: invalid tier %q, must be T1, T2, or T3\n", *tierStr)
 		return 2
 	}
+
+	resolved, err := verdict.ResolveCommit(*repoPath, *sha)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	*sha = resolved
 
 	// Compute the patch ID of the revision under review, not of whatever HEAD
 	// happens to be: the identity must describe the SHA the verdicts bind to.
@@ -177,7 +190,7 @@ func cmdApprove(args []string) int {
 	// Direct approval command (user-only)
 	if inClaudeCode() {
 		fmt.Fprintln(os.Stderr, "error: rein approve is user-only and cannot be run inside Claude Code")
-		fmt.Fprintln(os.Stderr, "Run this command in your own terminal, or use the AskUserQuestion flow")
+		fmt.Fprintln(os.Stderr, "Run this command in your own terminal; interactive merge approvals are disabled pending authenticated hook pairing")
 		return 1
 	}
 
@@ -197,15 +210,14 @@ func cmdApprove(args []string) int {
 		return 2
 	}
 
-	// Resolve SHA if not provided
-	actualSHA := *sha
-	if actualSHA == "" {
-		out, err := execOutput(*repoPath, "git", "rev-parse", "HEAD")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: could not resolve HEAD: %v\n", err)
-			return 1
-		}
-		actualSHA = strings.TrimSpace(string(out))
+	ref := *sha
+	if ref == "" {
+		ref = "HEAD"
+	}
+	actualSHA, err := verdict.ResolveCommit(*repoPath, ref)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 
 	// Compute the patch ID of the approved revision, not of whatever HEAD
@@ -250,15 +262,14 @@ func cmdApprovePrompt(args []string) int {
 		return 2
 	}
 
-	// Resolve SHA if not provided
-	actualSHA := *sha
-	if actualSHA == "" {
-		out, err := execOutput(*repoPath, "git", "rev-parse", "HEAD")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: could not resolve HEAD: %v\n", err)
-			return 1
-		}
-		actualSHA = strings.TrimSpace(string(out))
+	ref := *sha
+	if ref == "" {
+		ref = "HEAD"
+	}
+	actualSHA, err := verdict.ResolveCommit(*repoPath, ref)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
 	}
 
 	// Get MR title
@@ -309,19 +320,21 @@ func cmdApprovePrompt(args []string) int {
 	storageDir := verdict.StorageDir(*runDir, *repoPath)
 	verdictSummary := getVerdictSummary(storageDir, *mr, actualSHA, *repoPath)
 
-	// Build AskUserQuestion payload
+	// Render a preview only. Unpaired tool responses never authorize a merge.
 	question := fmt.Sprintf(`Approve merge for %s?
 
 SHA: %s
 Tier: %s
 Verdicts: %s
 
-This approval gates the merge. Review the verdicts and changes before approving.`,
+This preview does not authorize a merge. Review the verdicts and changes, then run the terminal command yourself.`,
 		mrTitle, actualSHA[:min(8, len(actualSHA))], taskTier, verdictSummary)
 
 	payload := map[string]interface{}{
-		"question": question,
-		"options":  []string{"Approve"},
+		"question":         question,
+		"approval_mode":    "terminal_only",
+		"terminal_command": fmt.Sprintf("rein approve --mr %d --sha %s", *mr, actualSHA),
+		"options":          []string{"Approve"},
 		"metadata": map[string]interface{}{
 			"mr":   *mr,
 			"sha":  actualSHA,

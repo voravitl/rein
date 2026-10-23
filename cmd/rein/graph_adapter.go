@@ -41,7 +41,7 @@ type graphExecution struct {
 	HandoffPath     string    `json:"handoff_path,omitempty"`
 	HandoffDigest   string    `json:"handoff_digest,omitempty"`
 	CompletedAt     time.Time `json:"completed_at"`
-	inputDigest     string
+	InputDigest     string    `json:"input_digest,omitempty"`
 }
 
 func graphEvidencePath(attempt, kind string) string {
@@ -230,7 +230,7 @@ func graphOperations(p supervisor.Plan) supervisor.Operations {
 			if err != nil {
 				return supervisor.Dispatch{}, err
 			}
-			e.inputDigest = digest
+			e.InputDigest = digest
 			argv = enriched
 			e.HandoffPath = handoffs[t.Task].Path
 			e.HandoffDigest = handoffs[t.Task].Digest

@@ -173,7 +173,7 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	}
 	launchNote := map[string]any{"provider": d.Provider, "chain": d.Chain, "launch": launch, "configured_launch": d.Launch}
 	if controller != nil && result != nil {
-		launchNote["input_digest"] = result.inputDigest
+		launchNote["input_digest"] = result.InputDigest
 	}
 	note, _ := json.Marshal(launchNote)
 	row := ledger.Row{Kind: "routing_launch", Task: c.Name, Run: *runID, Provider: d.Provider,
