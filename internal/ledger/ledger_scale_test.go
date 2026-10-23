@@ -134,3 +134,54 @@ func TestReviewNonCostAppendMustNotHideExternalAppend(t *testing.T) {
 		t.Fatal("conflicting externally appended charge accepted after intervening non-cost append")
 	}
 }
+
+func TestReviewChargeCacheOwnsSerializedRow(t *testing.T) {
+	for _, field := range []string{"amount", "worker", "risk"} {
+		t.Run(field, func(t *testing.T) {
+			t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "ledger.jsonl"))
+			row, _ := NewChargeRow("attempt", "shared", "worker", "pool", "usd", "w", "m", 1)
+			row.Worker = &AgentModel{Agent: "codex", Model: "original"}
+			row.Risk = []string{"original"}
+			if err := Append(row); err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "amount":
+				*row.Amount = 99
+			case "worker":
+				row.Worker.Model = "mutated"
+			case "risk":
+				row.Risk[0] = "mutated"
+			}
+			if err := Append(row); err == nil {
+				t.Fatal("caller mutation changed cached historical charge")
+			}
+		})
+	}
+}
+
+func TestReviewChargeCacheUsesJSONNormalization(t *testing.T) {
+	for _, cold := range []bool{false, true} {
+		t.Run(map[bool]string{false: "warm", true: "cold"}[cold], func(t *testing.T) {
+			t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "ledger.jsonl"))
+			row, _ := NewChargeRow("attempt", "same", "worker", "pool", "usd", "w", "m", 1)
+			row.Risk = []string{}
+			if err := Append(row); err != nil {
+				t.Fatal(err)
+			}
+			if cold {
+				ledgerCache.mu.Lock()
+				ledgerCache.charges = nil
+				ledgerCache.mu.Unlock()
+			}
+			same := row
+			same.Risk = nil
+			if err := Append(same); err != nil {
+				t.Fatalf("JSON-equivalent charge rejected: %v", err)
+			}
+			if _, err := LoadStrict(""); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

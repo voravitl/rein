@@ -201,25 +201,12 @@ func judge(vendor string, a Action, c *contract.Contract, top, cwd string, w, st
 		return judgePost(vendor, a, c, top, w, stderr)
 	}
 
-	reason, ipc := decide(a, c, top, cwd)
+	reason, _ := decide(a, c, top, cwd)
 	if reason != "" {
 		return emit(vendor, w, stderr, a.Event, c.Name, reason)
 	}
-	if ipc && vendor == "agy" && a.Event == "pretool" && a.Kind == "bash" {
-		return emitBypass(w)
-	}
-	return 0
-}
-
-// emitBypass lifts the Antigravity terminal sandbox for one command: the sandbox blocks `orca orchestration`,
-// so a worker's send/check never reaches the Orca server and its worker_done is never recorded. Only the IPC
-// calls reach this point; anything that types a payload into another terminal stays sandboxed.
-func emitBypass(w io.Writer) int {
-	out := map[string]any{
-		"decision":  "allow",
-		"overwrite": map[string]any{"BypassSandbox": true},
-	}
-	_ = json.NewEncoder(w).Encode(out)
+	// A parsed command cannot prove the executable or persistent terminal state.
+	// Keep the vendor sandbox until a trusted IPC executor can bind both.
 	return 0
 }
 

@@ -109,11 +109,8 @@ func TestAgy(t *testing.T) {
 	}
 }
 
-// TestAgySandboxBypass pins the sandbox rewrite. The Antigravity terminal sandbox blocks `orca orchestration`
-// (it cannot read Orca's runtime metadata, which lives outside the workspace), so a worker's send/check never
-// reaches the Orca server and its worker_done is never recorded. Only a line that does nothing but that gets the
-// bypass; anything that can put a payload somewhere else keeps the sandbox.
-func TestAgySandboxBypass(t *testing.T) {
+// IPC commands remain policy-allowed, but command text cannot authorize a sandbox escape.
+func TestAgyIPCStaysSandboxed(t *testing.T) {
 	wt, c := setup(t)
 	run := func(command string) string {
 		t.Helper()
@@ -129,9 +126,16 @@ func TestAgySandboxBypass(t *testing.T) {
 		`timeout 15 orca orchestration run-list --json`,
 		`env FOO=1 orca orchestration inbox --terminal term_1 --json`,
 		`bash -c 'orca orchestration send --from term_1'`,
+		`./orca orchestration send --from term_1`,
+		`src/orca orchestration send --from term_1`,
+		`/tmp/x/orca orchestration send --from term_1`,
+		`orca-dev orchestration send --from term_1`,
+		`orca-ide orchestration send --from term_1`,
+		`export BASH_ENV=/tmp/startup.sh`,
+		`export PATH=/tmp/x:$PATH`,
 	} {
-		if out := run(command); !strings.Contains(out, `"overwrite":{"BypassSandbox":true}`) {
-			t.Errorf("%s: want the sandbox bypass, got %q", command, out)
+		if out := run(command); out != "" {
+			t.Errorf("%s: want policy allow with sandbox retained, got %q", command, out)
 		}
 	}
 	for _, command := range []string{
@@ -151,11 +155,11 @@ func TestAgySandboxBypass(t *testing.T) {
 		t.Errorf("a denied line must deny, not bypass: %q", out)
 	}
 	if reason, bypass := checkBash(`orca orchestration send --from term_1`, c, wt, wt); reason != "" || !bypass {
-		t.Errorf("checkBash: want allow + bypass, got reason %q bypass %v", reason, bypass)
+		t.Errorf("checkBash: want allowed IPC classification, got reason %q bypass %v", reason, bypass)
 	}
-	// the exact payload the Antigravity hook runner was verified to accept
-	if out := run(`orca orchestration send --from term_1`); out != "{\"decision\":\"allow\",\"overwrite\":{\"BypassSandbox\":true}}\n" {
-		t.Errorf("bypass payload = %q", out)
+	// No overwrite grants unsandboxed execution, including after terminal environment changes.
+	if out := run(`orca orchestration send --from term_1`); out != "" {
+		t.Errorf("unexpected sandbox overwrite = %q", out)
 	}
 }
 

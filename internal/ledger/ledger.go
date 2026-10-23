@@ -201,6 +201,18 @@ func Append(r Row) error {
 		return err
 	}
 	defer unlock()
+	r.RecordedAt = time.Now().Format(time.RFC3339)
+	b, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("not recorded: %w", err)
+	}
+	// Compare and cache the serialized snapshot: caller pointers and omitempty
+	// values must have identical semantics before and after a cache reload.
+	var snapshot Row
+	if err := json.Unmarshal(b, &snapshot); err != nil {
+		return fmt.Errorf("not recorded: %w", err)
+	}
+	r = snapshot
 	if r.Kind == "cost" && r.ChargeID != "" {
 		idx, err := chargeIndex()
 		if err != nil {
@@ -211,11 +223,6 @@ func Append(r Row) error {
 		}
 	}
 
-	r.RecordedAt = time.Now().Format(time.RFC3339)
-	b, err := json.Marshal(r)
-	if err != nil {
-		return fmt.Errorf("not recorded: %w", err)
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

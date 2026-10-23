@@ -40,18 +40,16 @@ func withChildren(gs []string) []string {
 	return out
 }
 
-// workerOwned is the set of worktree-relative paths the worker owns: the report, the report's own directory, and the
+// workerOwned is the set of worktree-relative paths the worker owns: the report and the
 // explicitly allowed files. The guard lets the worker write exactly these, so drift must not judge any of them as the
 // worker's uncommitted work. It asks the contract for the same answer the guard gets, so the two cannot disagree.
 type workerOwned struct {
 	files map[string]bool // exact paths
-	dirs  []string        // directory prefixes, slash-separated
 }
 
 func newWorkerOwned(c *contract.Contract, wt string) workerOwned {
 	o := workerOwned{files: map[string]bool{}}
 	root := contract.Real(wt)
-	area := c.ReportArea()
 	for _, p := range c.OwnedPaths() {
 		abs := p
 		if !filepath.IsAbs(abs) {
@@ -62,10 +60,6 @@ func newWorkerOwned(c *contract.Contract, wt string) workerOwned {
 			continue
 		}
 		rel = filepath.ToSlash(rel)
-		if area != "" && contract.SamePath(abs, area) {
-			o.dirs = append(o.dirs, rel)
-			continue
-		}
 		o.files[rel] = true
 	}
 	return o
@@ -73,15 +67,7 @@ func newWorkerOwned(c *contract.Contract, wt string) workerOwned {
 
 // has reports whether rel (a worktree-relative, slash-separated path) is one the worker owns.
 func (o workerOwned) has(rel string) bool {
-	if o.files[rel] {
-		return true
-	}
-	for _, dir := range o.dirs {
-		if strings.HasPrefix(rel, dir+"/") {
-			return true
-		}
-	}
-	return false
+	return o.files[rel]
 }
 
 var (

@@ -11,9 +11,8 @@ import (
 	"github.com/voravitl/rein/internal/contract"
 )
 
-// A sibling of the report in the report's own directory is the worker's own file: the guard orders the worker to
-// write its report there, so the whole directory stays writable without the coordinator having to list it in --allow.
-func TestReportDirectoryIsWritable(t *testing.T) {
+// Only the exact report is implicitly writable; siblings need explicit ownership.
+func TestReportDirectoryDoesNotGrantSiblingOwnership(t *testing.T) {
 	wt, c := setup(t)
 	report := filepath.Join(wt, "report", "task.md")
 	c.ReportPath = report
@@ -23,20 +22,18 @@ func TestReportDirectoryIsWritable(t *testing.T) {
 	if _, err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
-	sibling := filepath.Join(wt, "report", "notes.md")
-	if out := bashCase(t, wt, "echo notes > "+sibling); out != "" {
-		t.Errorf("a sibling of the report was denied: %s", out)
+	if out := bashCase(t, wt, "echo notes > "+report); out != "" {
+		t.Fatal(out)
 	}
-	in, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": wt,
-		"tool_input": map[string]string{"file_path": sibling}})
+	sibling := filepath.Join(wt, "report", "notes.md")
+	if out := bashCase(t, wt, "echo notes > "+sibling); !strings.Contains(out, `"deny"`) {
+		t.Errorf("sibling allowed: %s", out)
+	}
+	in, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "Write", "cwd": wt, "tool_input": map[string]string{"file_path": sibling}})
 	var out bytes.Buffer
 	Run(bytes.NewReader(in), &out)
-	if out.String() != "" {
-		t.Errorf("editing a sibling of the report was denied: %s", out.String())
-	}
-	// The report directory is the worker's own, but the rest of the worktree is not.
-	if out := bashCase(t, wt, "echo x > "+filepath.Join(wt, "docs", "design", "other.md")); !strings.Contains(out, `"deny"`) {
-		t.Errorf("a file outside the report directory was allowed: %q", out)
+	if !strings.Contains(out.String(), `"deny"`) {
+		t.Errorf("sibling edit allowed: %s", out.String())
 	}
 }
 
@@ -137,5 +134,23 @@ func TestReviewInheritedShellStartupEnvRemainsSandboxed(t *testing.T) {
 				t.Fatalf("direct IPC changed: reason=%q bypass=%v", reason, bypass)
 			}
 		})
+	}
+}
+
+func TestReviewPathQualifiedOrcaImpostorsStaySandboxed(t *testing.T) {
+	wt, c := setup(t)
+	for _, exe := range []string{"./orca", "src/orca", "/tmp/x/orca", "orca-dev", "orca-ide"} {
+		cmd := exe + " orchestration send --from term_1"
+		if reason, bypass := checkBash(cmd, c, wt, wt); reason == "" && bypass {
+			t.Errorf("impostor received bypass: %s", cmd)
+		}
+	}
+}
+
+func TestReviewReportBesideCodeDoesNotOwnCode(t *testing.T) {
+	wt, c := setup(t)
+	c.ReportPath = filepath.Join(wt, "backend", "REPORT.md")
+	if c.Writable(filepath.Join(wt, "backend", "Auth", "Login.cs")) {
+		t.Fatal("report parent grants unrelated code")
 	}
 }

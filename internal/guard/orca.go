@@ -25,7 +25,7 @@ func orcaIPC(args []string) bool {
 	if len(args) < 3 {
 		return false
 	}
-	if !isOrca(base(args[0])) {
+	if args[0] != "orca" {
 		return false
 	}
 	return args[1] == "orchestration" && orcaIPCSubs[base(args[2])]

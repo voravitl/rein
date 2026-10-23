@@ -66,9 +66,8 @@ func TestApplyNeedsWorktree(t *testing.T) {
 	}
 }
 
-// The OS sandbox must allow the report's own directory, not only the report file: the guard lets the worker write a
-// sibling of the report there, and the sandbox is the wall that would stop it.
-func TestSettingsAllowsTheReportDirectory(t *testing.T) {
+// The OS sandbox grants the report file without exposing its parent subtree.
+func TestSettingsAllowsOnlyTheReportFile(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "contracts"))
 	c, err := contract.New("t", 0, filepath.Join(root, "run"), "src/**", "", "S1", filepath.Join(root, "wts"),
@@ -81,10 +80,13 @@ func TestSettingsAllowsTheReportDirectory(t *testing.T) {
 	found := false
 	for _, p := range allow {
 		if contract.Real(p) == area {
+			t.Errorf("report parent exposed: %v", allow)
+		}
+		if contract.SamePath(p, c.ReportPath) {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("the report directory %s is not writable in the sandbox: %v", area, allow)
+		t.Errorf("the report file %s is not writable in the sandbox: %v", area, allow)
 	}
 }

@@ -132,9 +132,8 @@ func TestReportInsideWorktreeIsNotDrift(t *testing.T) {
 	}
 }
 
-// A sibling of the report in its own directory is the worker's own file too: the guard allows the worker to write it,
-// so drift must not count it as uncommitted work or as out of scope.
-func TestReportSiblingIsNotDrift(t *testing.T) {
+// A report's sibling needs explicit ownership.
+func TestReportSiblingIsDrift(t *testing.T) {
 	wt, c := repo(t, "report-sibling")
 	c.ReportPath = filepath.Join(wt, "report", "report.md")
 	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
@@ -147,8 +146,8 @@ func TestReportSiblingIsNotDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := kinds(r.Drift); strings.Contains(got, "UNCOMMITTED") || strings.Contains(got, "OUT_OF_SCOPE") {
-		t.Errorf("the report directory counted as drift: %s", got)
+	if got := kinds(r.Drift); !strings.Contains(got, "UNCOMMITTED") {
+		t.Errorf("the unowned report sibling was not counted as drift: %s", got)
 	}
 }
 
@@ -388,5 +387,34 @@ func TestDriftErrorExitIsNotSkippedTest(t *testing.T) {
 	}
 	if !strings.Contains(kinds(r.Drift), "FAKE_COMPLETION") {
 		t.Fatal("actual skipped test was not detected")
+	}
+}
+
+// A report beside tracked code must not exempt unrelated code from either drift gate.
+func TestReportBesideTrackedCodeDoesNotHideDrift(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		name := "uncommitted"
+		if committed {
+			name = "committed"
+		}
+		t.Run(name, func(t *testing.T) {
+			wt, c := repo(t, "report-code")
+			c.ReportPath = filepath.Join(wt, "backend", "REPORT.md")
+			write(t, filepath.Join(wt, "backend", "REPORT.md"), "# report\n## S1 done\nfiles: backend/Auth/Login.cs\n## S2 done\nchecks passed\n")
+			write(t, filepath.Join(wt, "backend/Auth/Login.cs"), "unowned code\n")
+			want := "UNCOMMITTED"
+			if committed {
+				sh(t, wt, "git", "add", "backend/Auth/Login.cs")
+				sh(t, wt, "git", "commit", "-qm", "fix(auth): unowned #169")
+				want = "OUT_OF_SCOPE"
+			}
+			r, err := Check(c, wt, "origin/main", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(kinds(r.Drift), want) {
+				t.Fatalf("missing %s: %+v", want, r.Drift)
+			}
+		})
 	}
 }

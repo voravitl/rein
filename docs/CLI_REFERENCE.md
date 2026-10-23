@@ -62,6 +62,10 @@ rein contract path <TASK_ID>
 
 ---
 
+The report path and each `--writable` entry grant access to that exact file only. Placing a report beside source code does not grant access to its parent directory or siblings; add evidence paths explicitly to the contract's allow list.
+
+Antigravity IPC commands remain subject to its terminal sandbox. Rein does not emit `BypassSandbox`: command text and the hook environment cannot establish the executable and shell state that the terminal will use. If the sandbox blocks Orca runtime metadata, coordination requires a separately trusted IPC execution path; automated unsandboxed IPC is not currently supported.
+
 ## 2. `rein hook` & `rein hooks install` — PreToolUse Guard
 
 ### `rein hooks install`

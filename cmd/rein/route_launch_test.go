@@ -280,8 +280,25 @@ esac
 		t.Fatal(err)
 	}
 	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high"}
-	if code := cmdRouteLaunch(args); code != 0 {
+	stderr := os.Stderr
+	warning, err := os.CreateTemp(t.TempDir(), "launch-stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer warning.Close()
+	os.Stderr = warning
+	defer func() { os.Stderr = stderr }()
+	code := cmdRouteLaunch(args)
+	os.Stderr = stderr
+	if code != 0 {
 		t.Fatalf("launch: %d", code)
+	}
+	message, err := os.ReadFile(warning.Name())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(message), "native AGY sandbox IPC is unsupported") || strings.Contains(string(message), "BypassSandbox: true") {
+		t.Fatalf("missing safe functionality warning with agy hook installed: %s", message)
 	}
 	b, err := os.ReadFile(filepath.Join(contract.IndexDir(), "routes", "leases", "task.json"))
 	if err != nil {

@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -153,9 +152,9 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		fmt.Fprintln(os.Stderr, "[route] Orca dispatch requires an attributable task lease")
 		return 1
 	}
-	// The agy hook enforces the sandbox bypass itself, so only a launch without it still needs the spec instruction.
-	if isOrcaLaunch(argv) && agent == "antigravity" && !slices.Contains(c.HooksInstalled, "agy") {
-		fmt.Fprintln(os.Stderr, "[route] no agy hook installed: rein hooks install <task> --vendors agy enforces the terminal-sandbox bypass, or tell the worker to run every orca command with BypassSandbox: true")
+	// Installing a hook cannot bind the executable or state of the vendor terminal.
+	if isOrcaLaunch(argv) && agent == "antigravity" {
+		fmt.Fprintln(os.Stderr, "[route] native AGY sandbox IPC is unsupported: rein retains the terminal sandbox; Orca worker_done requires a separately trusted IPC execution path")
 	}
 	if !isOrcaLaunch(argv) && agent == "codex" {
 		bin, binErr := os.Executable()

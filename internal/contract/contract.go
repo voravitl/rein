@@ -234,49 +234,21 @@ func LoadFile(path string) (*Contract, error) {
 	return &c, nil
 }
 
-// Writable reports whether abs (an absolute, cleaned path) is a file the worker may write: the report path, a file in
-// the report's own directory (see ReportArea), or an explicitly allowed exact file. The guard's Stop hook orders the
-// worker to write its report, so those paths stay writable even when the ownership globs do not cover them.
+// Writable reports whether abs is the exact report or an explicitly writable file.
+// A report's parent directory grants no ownership of sibling files or subdirectories.
 func (c *Contract) Writable(abs string) bool {
-	for _, p := range append([]string{c.ReportPath}, c.WorkerWritable...) {
+	for _, p := range c.OwnedPaths() {
 		if SamePath(abs, p) {
 			return true
 		}
 	}
-	if dir := c.ReportArea(); dir != "" && insideDir(Real(abs), dir) {
-		return true
-	}
 	return false
 }
 
-// OwnedPaths are the paths the worker owns: the report, the report's own directory, and the explicitly allowed
-// files. The guard and the drift check both ask this, so the two cannot disagree about the same file.
+// OwnedPaths are exact report and explicitly writable paths shared by the guard,
+// drift check and OS sandbox. Directory access requires an explicit allow glob.
 func (c *Contract) OwnedPaths() []string {
-	out := []string{c.ReportPath}
-	out = append(out, c.WorkerWritable...)
-	if dir := c.ReportArea(); dir != "" {
-		out = append(out, dir)
-	}
-	return out
-}
-
-// ReportArea is the worker's own report directory: the directory holding the report path, when that directory is
-// strictly inside the worktree. The guard orders the worker to write its report there, so a sibling of the report is
-// the worker's own file too. It is "" when the report sits at the worktree root (its directory would be the whole
-// worktree, and the ownership globs would stop meaning anything) or outside it (the coordinator's run dir stays
-// protected).
-func (c *Contract) ReportArea() string {
-	dir := filepath.Dir(Real(c.ReportPath))
-	wt := Real(c.Worktree)
-	if dir == wt || !insideDir(dir, wt) {
-		return ""
-	}
-	return dir
-}
-
-func insideDir(p, dir string) bool {
-	rel, err := filepath.Rel(dir, p)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return append([]string{c.ReportPath}, c.WorkerWritable...)
 }
 
 // resolvePaths makes the worker's own paths absolute, so the guard, the drift check and the OS sandbox all compare

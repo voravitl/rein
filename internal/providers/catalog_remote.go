@@ -57,8 +57,11 @@ func readCatalogCache(url string) (CatalogCache, error) {
 	if err != nil {
 		return c, err
 	}
-	err = json.Unmarshal(b, &c)
-	return c, err
+	if json.Unmarshal(b, &c) != nil {
+		// A corrupt derived cache is a miss, never a partially decoded validator.
+		return CatalogCache{}, nil
+	}
+	return c, nil
 }
 
 func writeCatalogCache(url string, c CatalogCache) error {
@@ -70,11 +73,18 @@ func writeCatalogCache(url string, c CatalogCache) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+	f, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp-*")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	defer os.Remove(f.Name())
+	if _, err := f.Write(b); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // revalidateCatalog asks the provider's catalog endpoint whether the stored snapshot is still current. It returns the
