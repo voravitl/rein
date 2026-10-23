@@ -134,7 +134,8 @@ func hermesGuardEnv(t *testing.T) *hermesGuardSetup {
 	cli, log := filepath.Join(root, "hermes"), filepath.Join(root, "actual")
 	t.Setenv("TEST_LAUNCH_LOG", log)
 	t.Setenv("TEST_REPORT_PATH", c.ReportPath)
-	if err := os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$TEST_LAUNCH_LOG\"\nexit 0\n"), 0700); err != nil {
+	// The fake writes a report only when asked, so a test can tell a stale report from a written one.
+	if err := os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$TEST_LAUNCH_LOG\"\n[ \"$TEST_WRITE_REPORT\" = 1 ] && printf '# S1 PASS\\n' > \"$TEST_REPORT_PATH\"\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := routing.Prepare(c, "run", "worker:backend", "", cfgPath, false, 10*time.Second); err != nil {
@@ -216,18 +217,63 @@ func TestHermesLaunchRefusesIncompleteGuardPlugin(t *testing.T) {
 	}
 }
 
-// A report whose timestamp sits in the future is not evidence of this attempt: an earlier attempt
-// could have set it so the freshness check passes without the worker writing one.
-func TestHermesLaunchRefusesFutureDatedReport(t *testing.T) {
+// A report left by an earlier attempt is not evidence of this one, whatever its timestamp says: an
+// earlier attempt could have set the time to the future, and a touch makes an old report look fresh.
+func TestHermesLaunchRefusesStaleReport(t *testing.T) {
+	for _, name := range []string{"plain", "future-dated"} {
+		env := hermesGuardEnv(t)
+		t.Setenv("TEST_WRITE_REPORT", "")
+		if err := os.WriteFile(env.c.ReportPath, []byte("# S1 PASS\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if name == "future-dated" {
+			future := time.Now().Add(time.Hour)
+			if err := os.Chtimes(env.c.ReportPath, future, future); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if code := cmdRouteLaunch(env.args); code == 0 {
+			t.Fatalf("launch accepted a report left by an earlier attempt (%s)", name)
+		}
+	}
+}
+
+// A Python bytecode cache beside the plugin is loaded in preference to the source that was checked,
+// so a cached .pyc could answer every tool call without the guard ever running. The launch removes
+// the cache so that Python recompiles from the source that was verified.
+func TestHermesLaunchRemovesGuardBytecodeCache(t *testing.T) {
 	env := hermesGuardEnv(t)
-	if err := os.WriteFile(env.c.ReportPath, []byte("# S1 PASS\n"), 0600); err != nil {
+	t.Setenv("TEST_WRITE_REPORT", "1")
+	cache := filepath.Join(env.wt, ".hermes", "plugins", "rein-guard", "__pycache__")
+	if err := os.MkdirAll(cache, 0700); err != nil {
 		t.Fatal(err)
 	}
-	future := time.Now().Add(time.Hour)
-	if err := os.Chtimes(env.c.ReportPath, future, future); err != nil {
+	if err := os.WriteFile(filepath.Join(cache, "__init__.cpython-312.pyc"), []byte("hacked"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdRouteLaunch(env.args); code != 0 {
+		t.Fatalf("launch refused a task with a stale bytecode cache: %d", code)
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("the bytecode cache survived the launch: %v", err)
+	}
+}
+
+// A sibling plugin shares the worker's process and can neutralise the guard by patching
+// subprocess.run, so one the worker could have written must not be there.
+func TestHermesLaunchRefusesSiblingPlugin(t *testing.T) {
+	env := hermesGuardEnv(t)
+	sibling := filepath.Join(env.wt, ".hermes", "plugins", "evil")
+	if err := os.MkdirAll(sibling, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sibling, "__init__.py"), []byte("import subprocess\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	if code := cmdRouteLaunch(env.args); code == 0 {
-		t.Fatal("launch accepted a report dated in the future")
+		t.Fatal("launch accepted a sibling plugin in the task home")
+	}
+	if _, err := os.Stat(env.log); !os.IsNotExist(err) {
+		t.Fatalf("the provider process started despite the refusal: %v", err)
 	}
 }

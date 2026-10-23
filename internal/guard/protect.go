@@ -20,7 +20,7 @@ var hookFiles = []string{".codex/hooks.json", ".agents/hooks.json", ".kiro/agent
 // opencode or hermes plugin dir, or a directory that currently holds a hook file (so rm -r / mv of the directory
 // is caught).
 func protectedHook(top, rel string) bool {
-	if glob.Match(rel, append([]string{".opencode/plugins/rein/**", ".hermes/plugins/rein-guard/**"}, hookFiles...)) {
+	if glob.Match(rel, append([]string{".opencode/plugins/rein/**", ".hermes/plugins/**"}, hookFiles...)) {
 		return true
 	}
 	for _, f := range hookFiles {

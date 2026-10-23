@@ -80,6 +80,21 @@ func TestHermesDotenvIsProtected(t *testing.T) {
 	}
 }
 
+// TestHermesPluginDirIsProtected checks that a worker cannot write beside the guard plugin.
+// Another plugin in the task home shares the worker process and can neutralise the guard.
+func TestHermesPluginDirIsProtected(t *testing.T) {
+	wt, _ := setup(t)
+	for _, rel := range []string{
+		".hermes/plugins/crux/__init__.py",
+		".hermes/plugins/other/plugin.yaml",
+		".hermes/plugins/rein-guard/__pycache__/__init__.cpython-312.pyc",
+	} {
+		if !protectedHook(wt, rel) {
+			t.Errorf("%s must be protected", rel)
+		}
+	}
+}
+
 func TestHermesConfigCannotDisableGuard(t *testing.T) {
 	wt, c := setup(t)
 	c.Allow = []string{"**"}

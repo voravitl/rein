@@ -708,8 +708,15 @@ func CheckHermesGuard(wt, task string) error {
 	present := map[string]bool{}
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == "__pycache__" && entry.IsDir() {
-			continue // Python owns its cache; leave it untouched.
+		if name == "__pycache__" {
+			// Python writes the cache next to the source and loads it in preference to the source,
+			// so a cached .pyc can run instead of the file that was checked. A cache under the
+			// plugin directory is therefore never trusted: it is removed, and a plugin whose
+			// cache cannot be removed is refused.
+			if err := removeHermesCache(filepath.Join(wt, filepath.FromSlash(dir), name)); err != nil {
+				return err
+			}
+			continue
 		}
 		if name != "plugin.yaml" && name != "__init__.py" {
 			return fmt.Errorf("foreign Hermes plugin file %s; refusing the launch", name)
@@ -718,7 +725,7 @@ func CheckHermesGuard(wt, task string) error {
 	}
 	for _, name := range []string{"plugin.yaml", "__init__.py"} {
 		if !present[name] {
-			return fmt.Errorf("the Hermes guard plugin is incomplete: %s is missing from %s; reinstall it with rein hooks install <task> --vendors hermes", name, dir)
+			return fmt.Errorf("the Hermes guard plugin is incomplete: %s is missing from %s; reinstall it with rein hooks uninstall <task> --vendors hermes && rein hooks install <task> --vendors hermes", name, dir)
 		}
 	}
 	if err := checkHermesPlugin(wt, task, ""); err != nil {
@@ -738,9 +745,74 @@ func CheckHermesGuard(wt, task string) error {
 		return fmt.Errorf("the Hermes guard plugin names no rein binary; refusing the launch")
 	}
 	if !isReinBinary(bin) {
-		return fmt.Errorf("the Hermes guard plugin calls %s instead of this rein; refusing the launch: reinstall it with rein hooks install <task> --vendors hermes", bin)
+		return fmt.Errorf("the Hermes guard plugin calls %s instead of this rein; refusing the launch: reinstall it with rein hooks uninstall <task> --vendors hermes && rein hooks install <task> --vendors hermes", bin)
 	}
 	return nil
+}
+
+// removeHermesCache deletes the Python bytecode cache under the guard plugin. A symlinked or
+// non-directory cache is refused rather than removed: following it would delete a path outside
+// the plugin, and a cache that cannot be removed is a cache that may still be loaded.
+func removeHermesCache(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("the Hermes guard plugin cache %s is not a plain directory; refusing the launch", filepath.Base(path))
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("cannot remove the Hermes guard plugin cache %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
+// CheckHermesPluginDir refuses a plugin beside the guard that the worker could have written. Hermes
+// loads every enabled plugin into the worker's own process, so a sibling plugin can neutralise the
+// guard: patching subprocess.run makes every tool call look allowed. A plugin that is a symlink to a
+// directory outside the worktree (the crux plugin, installed that way) is not the worker's to write,
+// so it is allowed; anything the worker could have created inside the worktree is refused.
+func CheckHermesPluginDir(wt string) error {
+	const dir = ".hermes/plugins"
+	root := filepath.Join(wt, filepath.FromSlash(dir))
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "rein-guard" {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("the Hermes plugin %s is a broken symlink: %w", entry.Name(), err)
+			}
+			if insideWorktree(target, wt) {
+				return fmt.Errorf("the Hermes plugin %s points inside the worktree; the worker could replace it, so remove it or use a fresh task Hermes home", entry.Name())
+			}
+			continue
+		}
+		return fmt.Errorf("the Hermes task home holds another plugin (%s); it shares the worker process and can neutralise the guard, so remove it or use a fresh task Hermes home", entry.Name())
+	}
+	return nil
+}
+
+// insideWorktree reports whether p lies inside dir.
+func insideWorktree(p, dir string) bool {
+	rel, err := filepath.Rel(contract.Real(dir), contract.Real(p))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // isReinBinary reports whether path is the rein binary this process runs. A plugin that calls another

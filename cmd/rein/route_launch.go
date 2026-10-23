@@ -27,10 +27,29 @@ import (
 
 var stopGraphQuotaProcess = stopGraphProcess
 
-// reportClockSkew is how far a file timestamp may sit in the future before it stops being
-// evidence that the worker wrote the file during this attempt. Filesystems that round
-// timestamps up need a little room.
-const reportClockSkew = 2 * time.Second
+// moveAsideStaleReport renames the report of an earlier attempt so this attempt has to write its
+// own. A timestamp cannot tell the two apart: an earlier attempt can set the file's time to the
+// future, and a touch during a later attempt makes an old report look fresh.
+func moveAsideStaleReport(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("the report path %s is not a regular file; refusing the launch", path)
+	}
+	stale := path + ".stale"
+	if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(path, stale); err != nil {
+		return fmt.Errorf("cannot move the earlier report aside: %w", err)
+	}
+	return nil
+}
 
 // cmdRouteLaunch runs an argv, never shell text, after validating its prepared routing decision.
 func cmdRouteLaunch(args []string) int { return routeLaunch(context.Background(), args, nil, nil, nil) }
@@ -148,6 +167,17 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 			return 1
 		}
 		if err := hooks.CheckHermesGuard(contract.Real(c.Worktree), c.Name); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		if err := hooks.CheckHermesPluginDir(contract.Real(c.Worktree)); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		// The report must be this attempt's. A report left by an earlier attempt is moved aside
+		// before the worker starts, so it cannot pass as this attempt's evidence: neither its
+		// timestamp nor a touch can make it fresh again.
+		if err := moveAsideStaleReport(c.ReportPath); err != nil {
 			fmt.Fprintln(os.Stderr, "[route]", err)
 			return 1
 		}
@@ -347,17 +377,12 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	}
 	// Recheck the report in Rein itself: a missing/old plugin must not turn a
 	// zero-exit Hermes process into successful task completion. The report must be this
-	// attempt's: a file left by an earlier attempt is not evidence of this one. A
-	// timestamp in the future is not evidence either: an earlier attempt could have set
-	// it so that this attempt's freshness check passes without the worker writing one.
+	// attempt's: the earlier attempt's report was moved aside before the launch, so any
+	// file at the path now was written during this attempt.
 	if err == nil && d.Agent == "hermes" && !isOrcaLaunch(argv) {
 		info, reportErr := os.Lstat(c.ReportPath)
 		if reportErr != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			err = fmt.Errorf("Hermes completion requires a nonempty regular report at %s", c.ReportPath)
-		} else if !info.ModTime().After(started) {
-			err = fmt.Errorf("Hermes completion requires a report written by this attempt at %s", c.ReportPath)
-		} else if info.ModTime().After(time.Now().Add(reportClockSkew)) {
-			err = fmt.Errorf("Hermes completion requires a report written by this attempt at %s: its timestamp is in the future", c.ReportPath)
 		}
 	}
 	code := 0
