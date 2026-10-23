@@ -8,10 +8,32 @@ Hermes Agent โหลด plugin จาก `~/.hermes/plugins/<ชื่อ>/` (
 
 ```sh
 ln -s "<crux-root>/adapters/hermes" ~/.hermes/plugins/crux
-hermes config set plugins.enabled '["crux"]'
+hermes plugins enable crux
 ```
 
-ค่า `plugins.enabled` เป็น allow-list: ต้องมี `crux` อยู่ในนั้น Hermes ถึงจะโหลด plugin (เหมือนกับ guard ของ rein ที่ task ต้อง allow เอง)
+ค่า `plugins.enabled` เป็น allow-list: ต้องมี `crux` อยู่ในนั้น Hermes ถึงจะโหลด plugin ใช้ `hermes plugins enable crux` เพื่อเพิ่มชื่อโดยรักษา plugin เดิม สำหรับ task ที่ใช้ rein ให้เตรียมตามวิธีด้านล่างก่อนเริ่ม worker
+
+### ใช้ Crux กับ rein ใน task เดียวกัน
+
+ผู้ประสานงานต้องติดตั้ง Crux ใน Hermes home ของ task เพราะเมื่อกำหนด `HERMES_HOME` แล้ว Hermes จะไม่ค้น plugin จาก home หลัก:
+
+```sh
+mkdir -p "<worktree>/.hermes/plugins"
+ln -s "<crux-root>/adapters/hermes" "<worktree>/.hermes/plugins/crux"
+```
+
+ก่อน `rein hooks install <task> --vendors hermes` ให้เตรียม `<worktree>/.hermes/config.yaml` เป็น template นี้ โดยใช้เฉพาะ task home ใหม่ที่ยังไม่มี config หรือแทนที่ config ที่ rein สร้างไว้เองจากผู้ประสานงาน:
+
+```yaml
+plugins:
+  enabled:
+    - rein-guard
+    - crux
+```
+
+installer รองรับ template นี้แบบตรงตัว รวมถึง template ที่มีเฉพาะ `crux` โดยเพิ่ม `rein-guard` ให้ รองรับการติดตั้งซ้ำโดยรักษา config เดิม และเมื่อถอน guard จะเหลือเฉพาะ `crux` ไม่แก้ plugin หรือ state ของ Crux ส่วน config ที่มีค่าอื่นจะถูกปฏิเสธโดยเก็บไฟล์เดิมไว้ ห้ามเขียนทับ config ของผู้ใช้เพื่อให้ผ่านการตรวจ
+
+เริ่ม Hermes จาก `<worktree>` ด้วย `HERMES_HOME=<worktree>/.hermes` และ `HERMES_ENABLE_PROJECT_PLUGINS=1` ตาม launch line ของ rein ห้ามให้ worker แก้ config นี้หรือเรียก `hermes config set plugins.enabled` เพื่อแทนที่ allow-list เพราะ config เป็นส่วนหนึ่งของ guard ที่ป้องกันการแก้ไข
 
 ในแชต เรียก `/crux:crux-mode` เพื่อเปิดโหมดสำหรับ session นั้น หรือ `/crux:crux-mode off` / `/crux-off` เพื่อปิด สถานะจำแยกตาม `session_id` เก็บใน `adapters/hermes/state/` (หรือ `CRUX_STATE_DIR`) ไม่อ่านหรือเขียนสถานะของ harness อื่น
 

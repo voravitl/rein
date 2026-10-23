@@ -55,8 +55,13 @@ func ParseOrcaQuota(raw []byte, now time.Time, maxAge time.Duration) ([]QuotaSna
 		return nil, errors.New("Orca account-list did not return rate limits")
 	}
 	out := []QuotaSnapshot{}
-	for _, provider := range []string{"claude", "codex", "antigravity", "opencode2"} {
+	for _, provider := range []string{"claude", "codex", "antigravity", "opencode2", "hermes"} {
 		s := QuotaSnapshot{Provider: provider, Source: "orca account list", Scope: "Orca runtime snapshot; launch account/model/pool binding unverified", AccountEvidence: "unverified", Status: "unknown", Windows: []QuotaWindow{}}
+		if provider == "hermes" {
+			s.Status, s.Scope = "unsupported", "No verified Orca Hermes quota schema; launch account/model/pool binding unknown"
+			out = append(out, s)
+			continue
+		}
 		rawQuota, ok := envelope.Result.RateLimits[provider]
 		if !ok {
 			out = append(out, s)

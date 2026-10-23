@@ -119,3 +119,34 @@ test('the adapter works when the plugin is relocated and does not touch another 
     rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test('relocated complete package resolves resources and uses adapter-local state', () => {
+  const temp = mkdtempSync(join(tmpdir(), 'crux-hermes-paths-'));
+  try {
+    const packageRoot = join(temp, 'complete package');
+    cpSync(root, packageRoot, { recursive: true, filter: (source) => !source.endsWith('/state') });
+    const relocated = join(packageRoot, 'adapters', 'hermes');
+    const result = loadPlugin(relocated, {
+      env: { CRUX_STATE_DIR: '', PLUGIN_DATA: '' },
+      payload: { session_id: 'paths', user_message: '/crux:crux-mode' }
+    });
+    for (const resource of ['skills/thai-communication/SKILL.md', 'references/communication.md', 'references/runtime.md', 'skills/crux-mode/SKILL.md']) {
+      assert.ok(result.context.includes(join(packageRoot, resource)), result.context);
+      assert.ok(existsSync(join(packageRoot, resource)));
+    }
+    assert.ok(existsSync(join(relocated, 'state')), 'state belongs to Hermes adapter');
+    assert.ok(!existsSync(join(packageRoot, 'adapters', 'state')));
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+
+test('Hermes setup preserves plugin allow-lists and documents the guarded task home', () => {
+  const runtime = readFileSync(join(adapter, 'runtime.md'), 'utf8');
+  assert.ok(runtime.includes('hermes plugins enable crux'));
+  assert.ok(!runtime.includes(`hermes config set plugins.enabled '["crux"]'`));
+  assert.ok(runtime.includes('    - rein-guard\n    - crux'));
+  assert.ok(runtime.includes('HERMES_HOME=<worktree>/.hermes'));
+  assert.ok(runtime.includes('<worktree>/.hermes/plugins/crux'));
+});

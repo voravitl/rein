@@ -1,6 +1,6 @@
 #!/bin/sh
 # Register native Rein plugins. Task-bound hooks belong in contracted worktrees.
-# Usage: sh scripts/install-harness.sh [uninstall] [claude|agy|codex|opencode|kiro|all]
+# Usage: sh scripts/install-harness.sh [uninstall] [claude|agy|codex|opencode|kiro|hermes|all]
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -63,6 +63,12 @@ uninstall_codex() {
 }
 install_opencode() { worktree_only opencode; }
 install_kiro() { worktree_only kiro; }
+install_hermes() { worktree_only hermes; }
+uninstall_hermes() {
+  say "Hermes hooks are task-bound; no global registration changed." >&2
+  say "In the contracted worktree, run: rein hooks uninstall <task> --vendors hermes" >&2
+  return 1
+}
 uninstall_opencode() {
   remove_owned_link "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugins/rein" "$ROOT/.opencode/plugins/rein" || return $?
   # Previous releases incorrectly omitted the application directory under XDG.
@@ -77,11 +83,11 @@ uninstall_kiro() {
 }
 
 case "$TARGET" in
-  claude|agy|codex|opencode|kiro) "${ACTION}_${TARGET}" ;;
+  claude|agy|codex|opencode|kiro|hermes) "${ACTION}_${TARGET}" ;;
   all)
     # All attempts run, but any unsupported/failed harness makes the result fail.
     failed=0
-    for harness in claude agy codex opencode kiro; do
+    for harness in claude agy codex opencode kiro hermes; do
       if (set -e; "${ACTION}_${harness}"); then :; else failed=1; fi
     done
     exit "$failed"

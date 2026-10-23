@@ -20,7 +20,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 _MODE_MARKER = "crux persistent mode"
-_PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+_ADAPTER_ROOT = Path(__file__).resolve().parent
+_PLUGIN_ROOT = _ADAPTER_ROOT.parent.parent
 
 # Crux commands: `$crux:crux-mode` (Codex) and `/crux:crux-mode` (Claude).
 _ON = re.compile(r"^(?:\$crux:crux-mode|/(?:crux:)?crux-mode)(?=\s|$)", re.IGNORECASE)
@@ -33,7 +34,7 @@ def _state_root() -> Path:
         value = os.environ.get(env)
         if value:
             return Path(value)
-    return _PLUGIN_ROOT / "state"
+    return _ADAPTER_ROOT / "state"
 
 
 def _state_path(session_id: str) -> Optional[Path]:

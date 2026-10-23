@@ -107,8 +107,9 @@ func TestHermesHomeIsNotOverwritten(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(existing), 0644); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := Install(c, filepath.Join(root, "rein"), []string{"hermes"}); err != nil {
-		t.Fatal(err)
+	res, _, err := Install(c, filepath.Join(root, "rein"), []string{"hermes"})
+	if err != nil || res[0].Err == nil {
+		t.Fatalf("unverified existing config must fail closed: %v %+v", err, res)
 	}
 	b, err := os.ReadFile(filepath.Join(home, "config.yaml"))
 	if err != nil {
@@ -144,7 +145,7 @@ func TestHermesHomeIsExcludedFromGitStatus(t *testing.T) {
 }
 
 // TestHermesReportGateIsRegistered checks that the generated plugin registers the
-// round-end gate: Hermes fires pre_verify only for plugins that registered it, so a
+// completion gate: Hermes requires an explicit decision from every registered callback, so a
 // manifest that declares it while register() skips it leaves the report unchecked.
 func TestHermesReportGateIsRegistered(t *testing.T) {
 	root, wt, c := setup(t)
@@ -157,7 +158,7 @@ func TestHermesReportGateIsRegistered(t *testing.T) {
 		t.Fatal(err)
 	}
 	plugin := string(src)
-	if !strings.Contains(plugin, `ctx.register_hook("pre_verify"`) {
+	if !strings.Contains(plugin, `ctx.register_hook("completion_check"`) {
 		t.Error("the report gate must be registered")
 	}
 	if !strings.Contains(plugin, `"hook_event_name": "pre_verify"`) {
@@ -168,7 +169,7 @@ func TestHermesReportGateIsRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, hook := range []string{"pre_tool_call", "pre_verify"} {
+	for _, hook := range []string{"pre_tool_call", "completion_check"} {
 		if !strings.Contains(string(manifest), hook) {
 			t.Errorf("the manifest must declare %s", hook)
 		}
@@ -221,7 +222,7 @@ class Ctx:
 
 ctx = Ctx()
 plugin.register(ctx)
-print(json.dumps(ctx.hooks["pre_verify"](session_id="s", final_response="done", changed_paths=[])))
+print(json.dumps(ctx.hooks["completion_check"](session_id="s", final_response="done", changed_paths=[])))
 `
 	if err := os.WriteFile(script, []byte(wrapper), 0644); err != nil {
 		t.Fatal(err)
@@ -260,5 +261,87 @@ func TestHermesPluginIsBoundToItsTask(t *testing.T) {
 	}
 	if _, err := contract.Load("other-task"); err == nil {
 		t.Error("an unrelated task must not resolve to this contract")
+	}
+}
+
+func TestHermesCompletionGateRejectsInvalidGuardResponses(t *testing.T) {
+	root, wt, c := setup(t)
+	if _, _, err := Install(c, filepath.Join(root, "rein"), []string{"hermes"}); err != nil {
+		t.Fatal(err)
+	}
+	script := `import importlib.util, json, subprocess, sys
+from types import SimpleNamespace
+spec = importlib.util.spec_from_file_location("guard", sys.argv[1])
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+for stdout, stderr, code, expected in [
+    ("", "", 0, "allow"),
+    ('{"action":"continue","message":"write report"}', "", 0, "continue"),
+    ('{}', "", 0, "block"),
+    ('[]', "", 0, "block"),
+    ('{"action":"allow"}', "", 0, "block"),
+    ('{"action":"continue","message":""}', "", 0, "block"),
+    ("not-json", "", 0, "block"),
+    ("", "guard crash", 0, "block"),
+    ("", "", 1, "block"),
+]:
+    plugin.subprocess.run = lambda *a, **kw: SimpleNamespace(stdout=stdout, stderr=stderr, returncode=code)
+    result = plugin._report_gate()
+    assert result["action"] == expected, (stdout, stderr, code, result)
+for error in [OSError("missing"), subprocess.TimeoutExpired("rein", 10)]:
+    def fail(*a, **kw): raise error
+    plugin.subprocess.run = fail
+    assert plugin._report_gate()["action"] == "block"
+print("all completion directives verified")
+`
+	path := filepath.Join(root, "completion.py")
+	if err := os.WriteFile(path, []byte(script), 0600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("python3", path, filepath.Join(wt, ".hermes/plugins/rein-guard/__init__.py")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("completion contract: %v\n%s", err, out)
+	}
+}
+
+// An explicit local Hermes checkout enables cross-project compatibility coverage without
+// adding a Python dependency to Rein's ordinary test suite.
+func TestHermesCompletionPublicContextCompatibility(t *testing.T) {
+	source, python := os.Getenv("REIN_TEST_HERMES_SOURCE"), os.Getenv("REIN_TEST_HERMES_PYTHON")
+	if source == "" || python == "" {
+		t.Skip("set local Hermes source and interpreter for cross-project compatibility")
+	}
+	root, wt, c := setup(t)
+	if _, _, err := Install(c, filepath.Join(root, "rein"), []string{"hermes"}); err != nil {
+		t.Fatal(err)
+	}
+	script := `import importlib.util, sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[2])
+from hermes_cli.plugins import PluginContext, PluginManager, PluginManifest, VALID_HOOKS
+spec=importlib.util.spec_from_file_location("guard",sys.argv[1])
+plugin=importlib.util.module_from_spec(spec); spec.loader.exec_module(plugin)
+manager=PluginManager(); manager.discover_and_load()
+assert manager.has_hook("pre_tool_call")
+assert manager.has_hook("pre_verify")
+assert manager.has_hook("completion_check")
+plugin.subprocess.run=lambda *a,**kw: SimpleNamespace(stdout='',stderr='',returncode=0)
+assert manager.invoke_hook("pre_tool_call",tool_name="read_file",args={}) == []
+assert manager.invoke_hook("completion_check") == [{"action":"allow"}]
+plugin.subprocess.run=lambda *a,**kw: SimpleNamespace(stdout='{"action":"continue","message":"write report"}',stderr='',returncode=0)
+assert manager.invoke_hook("pre_verify")[0]["action"] == "continue"
+import os
+os.environ["HERMES_SAFE_MODE"] = "1"
+suppressed = PluginManager(); suppressed.discover_and_load()
+assert not suppressed.has_hook("pre_tool_call"), "safe mode must demonstrate the rejected guard bypass"
+print("completion_check supported:","completion_check" in VALID_HOOKS)
+`
+	cmd := exec.Command(python, "-B", "-c", script, filepath.Join(wt, ".hermes/plugins/rein-guard/__init__.py"), source)
+	cmd.Dir = wt
+	cmd.Env = append(os.Environ(), "HERMES_HOME="+filepath.Join(wt, ".hermes"), "HERMES_ENABLE_PROJECT_PLUGINS=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("public context compatibility: %v\n%s", err, out)
+	} else {
+		t.Log(string(out))
 	}
 }

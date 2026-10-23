@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,6 +62,43 @@ func TestHermesPluginIsProtected(t *testing.T) {
 	for _, rel := range []string{".hermes/plugins/rein-guard/__init__.py", ".hermes/plugins/rein-guard/plugin.yaml"} {
 		if !protectedHook(wt, rel) {
 			t.Errorf("%s must be protected", rel)
+		}
+	}
+}
+
+func TestHermesConfigCannotDisableGuard(t *testing.T) {
+	wt, c := setup(t)
+	c.Allow = []string{"**"}
+	if _, err := c.Save(); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(wt, ".hermes", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("plugins:\n  enabled: [rein-guard]\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plugin := filepath.Join(wt, ".hermes/plugins/rein-guard/__init__.py")
+	if err := os.MkdirAll(filepath.Dir(plugin), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(plugin, []byte("guard"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	events := []map[string]any{
+		{"tool": "write_file", "input": map[string]string{"path": ".hermes/config.yaml", "content": "plugins: {}"}},
+		{"tool": "patch", "input": map[string]string{"path": ".hermes/config.yaml", "old_string": "rein-guard", "new_string": "crux"}},
+	}
+	for _, cmd := range []string{"echo disabled > .hermes/config.yaml", "echo disabled >> .hermes/config.yaml", "rm .hermes/config.yaml", "mv .hermes/config.yaml backend/Routing/config.yaml", "mv backend/Routing/A.cs .hermes/config.yaml", "rm -rf .hermes", "mv .hermes backend/Routing/home", "rm -rf .hermes*", "rm -rf .*", "rm -rf .hermes/config.*", "rm -rf .hermes/plugins/*", "rm -rf .hermes/plugins/rein-*", "mv .hermes/plugins .hermes/disabled"} {
+		events = append(events, map[string]any{"tool": "terminal", "input": map[string]string{"command": cmd}})
+	}
+	for _, event := range events {
+		event["cwd"] = "@WT@"
+		payload, _ := json.Marshal(event)
+		out, errb, code := call(t, "hermes", string(payload), wt)
+		if code != 0 || !strings.Contains(out, `"action":"block"`) {
+			t.Errorf("guard config bypass: %s => %q %q exit %d", payload, out, errb, code)
 		}
 	}
 }

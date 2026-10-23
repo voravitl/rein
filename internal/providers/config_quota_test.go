@@ -14,7 +14,7 @@ func TestOrcaQuotaWindowsPrivacyAndUnknown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshots) != 4 {
+	if len(snapshots) != 5 {
 		t.Fatal(snapshots)
 	}
 	if *snapshots[0].Windows[0].Remaining != 0 || *snapshots[1].Windows[0].Remaining != 32 {

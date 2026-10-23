@@ -19,6 +19,9 @@ func graphPromptSlot(argv []string) (int, error) {
 		return 0, fmt.Errorf("graph requires a provider argv")
 	}
 	name := filepath.Base(argv[0])
+	if name == "hermes" {
+		return hermesPromptSlot(argv)
+	}
 	start, printMode := 1, false
 	standalone := false
 	switch name {
@@ -157,4 +160,61 @@ func graphLaunchInput(control *run.Controller, p supervisor.Plan, t supervisor.T
 	out := append([]string(nil), argv...)
 	out[slot] = input
 	return out, graphHash([]byte(input)), nil
+}
+
+// Keep Hermes on its classic one-query path; other flags can re-home the runtime or bypass its plugin.
+func hermesPromptSlot(argv []string) (int, error) {
+	if len(argv) < 3 || argv[1] != "--cli" || argv[2] != "chat" {
+		return 0, fmt.Errorf("Hermes launch requires --cli chat --query PROMPT --oneshot")
+	}
+	slot, oneshot := -1, false
+	seen := map[string]bool{}
+	for i := 3; i < len(argv); i++ {
+		arg := argv[i]
+		key := arg
+		switch arg {
+		case "-m":
+			key = "--model"
+		case "-q":
+			key = "--query"
+		case "-Q":
+			key = "--quiet"
+		}
+		if seen[key] {
+			return 0, fmt.Errorf("duplicate Hermes option %s", key)
+		}
+		seen[key] = true
+		switch key {
+		case "--oneshot":
+			oneshot = true
+		case "--quiet":
+		case "--model", "--reasoning", "--query":
+			if i+1 >= len(argv) || strings.TrimSpace(argv[i+1]) == "" || strings.HasPrefix(argv[i+1], "-") || strings.ContainsRune(argv[i+1], 0) {
+				return 0, fmt.Errorf("missing or invalid Hermes option value %s", key)
+			}
+			i++
+			if key == "--model" {
+				provider, model, qualified := strings.Cut(argv[i], ":")
+				if !qualified || strings.TrimSpace(provider) != provider || provider == "" || strings.TrimSpace(model) != model || model == "" {
+					return 0, fmt.Errorf("Hermes launch requires a provider-qualified model")
+				}
+			}
+			if key == "--query" {
+				slot = i
+			}
+			if key == "--reasoning" {
+				switch strings.ToLower(argv[i]) {
+				case "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra":
+				default:
+					return 0, fmt.Errorf("invalid Hermes reasoning effort %q", argv[i])
+				}
+			}
+		default:
+			return 0, fmt.Errorf("unsupported Hermes launch option %q", arg)
+		}
+	}
+	if !oneshot || slot < 0 || !seen["--model"] {
+		return 0, fmt.Errorf("Hermes launch requires one model and noninteractive literal query")
+	}
+	return slot, nil
 }

@@ -229,9 +229,10 @@ rein approve --mr <N> [--sha <HEAD_SHA>] --reason "<APPROVAL_REASON>"
 
 Dispatches a secondary model to inspect claims, trace errors, or audit blast radius:
 ```sh
-rein advise --run <RUN> --task <CONTRACT> --provider codex|kiro|claude --model <M> <ROLE> <CONTRACT_WORKTREE> <TASK_FILE> <OUT_FILE>
+rein advise --run <RUN> --task <CONTRACT> --provider codex|kiro|claude|hermes --model <M> <ROLE> <CONTRACT_WORKTREE> <TASK_FILE> <OUT_FILE>
 ```
 - Available roles: `code-reviewer`, `claim-auditor`, `blast-radius`, `tracer`.
+- `--provider hermes` requires patched Hermes `chat --read-only-root DIR`; an older CLI or inherited worker `HERMES_HOME=<WORKTREE>/.hermes` is refused before consuming the receipt or replacing prior output. Advice runs from a disposable directory with the selected authenticated profile and fixed, bounded `read_file`/literal `search_files` tools rooted at the worktree. Shell, writes, network tools, plugins and delegation are denied; symlinks and nonregular files are refused. The explicit provider-qualified model is pinned before startup normalization; provider/model changes, configured fallbacks, smart routing and auxiliary model calls are refused or disabled. Provider discovery uses bundled implementations only. `--effort` maps to Hermes `--reasoning`. This is a tool permission mode, not an OS sandbox: inference and runtime profile writes remain possible. Credentials are never copied. The coordinator collects stdout as the report; task-bound writing workers use `rein hooks install <TASK_ID> --vendors hermes` separately and require patched `completion_check` lifecycle support.
 
 ---
 
