@@ -24,7 +24,9 @@ import (
 )
 
 // Default vendors: Claude workers are covered by the plugin's global hook, so "claude" is opt-in.
-var Default = []string{"codex", "agy", "kiro", "opencode", "hermes"}
+// "hermes" is opt-in too: its plugin lives in the task's Hermes home, and installing it by default
+// would hide a worker's own .hermes files from git status and drift on every other vendor.
+var Default = []string{"codex", "agy", "kiro", "opencode"}
 
 // All is every vendor `rein hooks install` knows.
 var All = []string{"codex", "agy", "kiro", "opencode", "claude", "hermes"}
@@ -686,6 +688,12 @@ func hermesInit(bin, task, wt string) string {
 }
 
 // Validate the whole plugin before any write or removal; never traverse a linked parent.
+// CheckHermesPlugin verifies that the installed guard plugin is still the one rein wrote.
+// A replaced plugin file means the worker would run a different judge.
+func CheckHermesPlugin(wt, task string) error {
+	return checkHermesPlugin(wt, task, "")
+}
+
 func checkHermesPlugin(wt, task, expectedBin string) error {
 	const dir = ".hermes/plugins/rein-guard"
 	if _, err := prepare(wt, dir); err != nil {

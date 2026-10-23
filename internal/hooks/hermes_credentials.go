@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -35,6 +36,21 @@ func hermesCredentialsConfig(base, home string) string {
 	}
 	encoded, _ := json.Marshal(home)
 	return base + hermesCredentialsPrefix + string(encoded) + "\n"
+}
+
+// CheckHermesTaskHome refuses a task home that could switch the guard off.
+// Hermes loads the task home's dotenv files with override, so a .env there can set
+// HERMES_SAFE_MODE or HERMES_IGNORE_USER_CONFIG and skip the plugin entirely.
+func CheckHermesTaskHome(wt string) error {
+	for _, name := range []string{".env", ".op.env"} {
+		path := filepath.Join(wt, ".hermes", name)
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("Hermes task home has %s; it can disable the guard plugin, so remove it or use a fresh task Hermes home", name)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 // BindHermesCredentials records the authenticated source before the worker's home is isolated.

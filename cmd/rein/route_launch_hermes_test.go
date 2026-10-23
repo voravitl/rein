@@ -101,7 +101,9 @@ func TestHermesPreparedLaunchPinsEnvironment(t *testing.T) {
 	}
 	cli, log := filepath.Join(root, "hermes"), filepath.Join(root, "actual")
 	t.Setenv("TEST_LAUNCH_LOG", log)
-	if err := os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\000' \"$PWD\" \"$HERMES_HOME\" \"$HERMES_ENABLE_PROJECT_PLUGINS\" \"$ADVISE_TASK\" \"$ADVISE_RUN\" \"$@\" > \"$TEST_LAUNCH_LOG\"\n"), 0700); err != nil {
+	t.Setenv("TEST_REPORT_PATH", c.ReportPath)
+	t.Setenv("TEST_WRITE_REPORT", "1")
+	if err := os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\000' \"$PWD\" \"$HERMES_HOME\" \"$HERMES_ENABLE_PROJECT_PLUGINS\" \"$ADVISE_TASK\" \"$ADVISE_RUN\" \"$@\" > \"$TEST_LAUNCH_LOG\"\n[ \"$TEST_WRITE_REPORT\" = 1 ] && printf '# S1 PASS\\n' > \"$TEST_REPORT_PATH\"\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := routing.Prepare(c, "run", "worker:backend", "", cfgPath, false, 10*time.Second); err != nil {
@@ -129,12 +131,18 @@ func TestHermesPreparedLaunchPinsEnvironment(t *testing.T) {
 		t.Setenv(key, "")
 	}
 	// A zero-exit provider without the required report cannot complete the task.
+	t.Setenv("TEST_WRITE_REPORT", "")
 	if code := cmdRouteLaunch(args); code == 0 {
 		t.Fatal("missing report accepted after provider exited zero")
 	}
+	// A report left by an earlier attempt is not evidence of this one.
 	if err := os.WriteFile(c.ReportPath, []byte("# S1 PASS\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if code := cmdRouteLaunch(args); code == 0 {
+		t.Fatal("stale report accepted as this attempt's report")
+	}
+	t.Setenv("TEST_WRITE_REPORT", "1")
 	if code := cmdRouteLaunch(args); code != 0 {
 		t.Fatalf("launch=%d", code)
 	}

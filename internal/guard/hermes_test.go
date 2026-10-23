@@ -66,6 +66,20 @@ func TestHermesPluginIsProtected(t *testing.T) {
 	}
 }
 
+// TestHermesDotenvIsProtected checks that a worker cannot write the task home dotenv files:
+// Hermes loads them with override, so one of them can switch the guard plugin off.
+func TestHermesDotenvIsProtected(t *testing.T) {
+	wt, _ := setup(t)
+	if err := os.MkdirAll(filepath.Join(wt, ".hermes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{".hermes/.env", ".hermes/.op.env"} {
+		if !protectedHook(wt, rel) {
+			t.Errorf("%s must be protected", rel)
+		}
+	}
+}
+
 func TestHermesConfigCannotDisableGuard(t *testing.T) {
 	wt, c := setup(t)
 	c.Allow = []string{"**"}

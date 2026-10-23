@@ -69,6 +69,11 @@ Installs vendor hook configuration into the worker's worktree so tool calls are 
 ```sh
 rein hooks install <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude]
 ```
+Without `--vendors`, the guard is installed for codex, agy, kiro and opencode. A Hermes worker needs
+`--vendors hermes`: its plugin lives in the task's Hermes home, and installing it by default would hide the
+worker's own `.hermes` files from git status and drift. Claude is opt-in for the same reason: its hook is the
+plugin's global one.
+```
 
 ### `rein hooks uninstall`
 

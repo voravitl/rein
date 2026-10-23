@@ -190,7 +190,9 @@ ownership check: if its target cannot be read from the event, the call is denied
 finalization. A missing report requests another turn; malformed replies, exceptions and hook errors fail the turn.
 A successful report explicitly allows completion. Optional upstream `pre_verify` alone cannot enforce this contract:
 read-only turns and exhausted runs can bypass that optional gate. Rein's routed direct launch also rejects a zero-exit
-worker whose report is missing, empty or not a regular file. These checks require the patched Hermes runtime;
+worker whose report is missing, empty, not a regular file, or not written by that attempt. A task home that carries a
+`.env` or `.op.env` is refused at launch, because Hermes loads those files with override and one of them can switch the
+plugin off; both files are protected from worker writes. These checks require the patched Hermes runtime;
 installing a project plugin into an older Hermes does not add the lifecycle capability.
 
 Hermes advice pins the explicit provider-qualified model before startup resolution, rejects identity
@@ -242,7 +244,7 @@ canonical worktree path). A bound hook judges that task's contract and worktree 
 - Remaining known gaps (the guard is a seatbelt; drift and the OS sandbox are the backstops): python/node/other REPLs and
   `-e`/`-c` interpreter writes, `script`, `tmux`/`screen`, a patch applied after a `cd` in the same command (judged
   against the starting cwd), commands run by a tool the guard does not see (codex `mcp__*` runtimes, opencode `execute`,
-  kiro `use_subagent`).
+  kiro `use_subagent`, hermes `execute_code`, whose own file writes bypass the plugin).
 
 `rein hooks install` also refuses to write through a symlink (file or parent), keeps sibling hooks of a shared group,
 calls `${CLAUDE_PLUGIN_DATA}/bin/rein` when it exists (else the running binary, with a warning if that is under a temp

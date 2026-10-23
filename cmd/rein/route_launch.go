@@ -110,7 +110,7 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	if err == nil && isOrcaLaunch(argv) && d.Launch != "orca" {
 		err = fmt.Errorf("selected provider requires the shell route; Orca does not forward its model/guard flags")
 	}
-	if err == nil && isOrcaLaunch(argv) && (agent == "codex" || agent == "kiro" || agent == "opencode" || agent == "opencode2") {
+	if err == nil && isOrcaLaunch(argv) && (agent == "codex" || agent == "kiro" || agent == "opencode" || agent == "opencode2" || agent == "hermes") {
 		err = fmt.Errorf("this harness requires the direct shell route for model and hook flags")
 	}
 	if err == nil {
@@ -133,6 +133,16 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	}
 	if agent == "hermes" && !isOrcaLaunch(argv) {
 		if err := hooks.BindHermesCredentials(c.Worktree); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		// A task home that can switch the plugin off, or a plugin file that was replaced, must not
+		// reach exec: the worker would run without the guard that judged its contract.
+		if err := hooks.CheckHermesTaskHome(c.Worktree); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		if err := hooks.CheckHermesPlugin(contract.Real(c.Worktree), c.Name); err != nil {
 			fmt.Fprintln(os.Stderr, "[route]", err)
 			return 1
 		}
@@ -331,11 +341,14 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		err = errors.New("Antigravity print completion unverified (partial timeout or stderr capture overflow)")
 	}
 	// Recheck the report in Rein itself: a missing/old plugin must not turn a
-	// zero-exit Hermes process into successful task completion.
+	// zero-exit Hermes process into successful task completion. The report must be this
+	// attempt's: a file left by an earlier attempt is not evidence of this one.
 	if err == nil && d.Agent == "hermes" && !isOrcaLaunch(argv) {
-		info, reportErr := os.Stat(c.ReportPath)
+		info, reportErr := os.Lstat(c.ReportPath)
 		if reportErr != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			err = fmt.Errorf("Hermes completion requires a nonempty regular report at %s", c.ReportPath)
+		} else if !info.ModTime().After(started) {
+			err = fmt.Errorf("Hermes completion requires a report written by this attempt at %s", c.ReportPath)
 		}
 	}
 	code := 0
