@@ -31,7 +31,7 @@ func TestRouteOrcaRejectsAmbiguousEndpointBeforeLaunch(t *testing.T) {
 }
 
 func TestRouteOrcaObservationKeepsRecordedFence(t *testing.T) {
-	const ready = `{"ok":true,"result":{"dispatch":{"id":"actual-dispatch","taskId":"actual-task","runId":"run","assigneeHandle":"worker"},"worker":{"dispatchId":"actual-dispatch","state":"ready","agentTerminalHandle":"worker","startOptions":{"launch":{"effective":{"agent":"antigravity","model":"gemini-w-high","effort":"high"}}}},"observation":{"exactWorker":true,"status":"live"},"terminal":null}}`
+	const ready = `{"ok":true,"result":{"dispatch":{"id":"actual-dispatch","taskId":"actual-task","runId":"run","assigneeHandle":"worker"},"worker":{"dispatchId":"actual-dispatch","state":"ready","agentTerminalHandle":"worker","startOptions":{"launch":{"effective":{"agent":"claude","model":"gemini-w-high","effort":"high"}}}},"observation":{"exactWorker":true,"status":"live"},"terminal":null}}`
 	for _, tc := range []struct {
 		name, observation string
 		ok                bool
@@ -43,7 +43,7 @@ func TestRouteOrcaObservationKeepsRecordedFence(t *testing.T) {
 		{"wrong-dispatch", strings.Replace(ready, `"id":"actual-dispatch"`, `"id":"foreign"`, 1), false},
 		{"wrong-worker-handle", strings.Replace(ready, `"agentTerminalHandle":"worker"`, `"agentTerminalHandle":"foreign"`, 1), false},
 		{"effective-model-mismatch", strings.Replace(ready, `"gemini-w-high"`, `"other-model"`, 1), false},
-		{"effective-agent-mismatch", strings.Replace(ready, `"antigravity"`, `"claude"`, 1), false},
+		{"effective-agent-mismatch", strings.Replace(ready, `"agent":"claude"`, `"agent":"codex"`, 1), false},
 		{"effective-effort-mismatch", strings.Replace(ready, `"effort":"high"`, `"effort":"low"`, 1), false},
 		{"requested-only", strings.Replace(ready, `"effective"`, `"requested"`, 1), false},
 		{"inexact", strings.Replace(ready, `"exactWorker":true`, `"exactWorker":false`, 1), false},
@@ -53,7 +53,7 @@ func TestRouteOrcaObservationKeepsRecordedFence(t *testing.T) {
 		{"timeout", "", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			e := newE2E(t, "orca")
+			e := newE2EAgent(t, "orca", "claude")
 			if out, code := capture(t, func() int {
 				return cmdRoute([]string{"auto", "--task", "task", "--run", "run", "--profile-file", e.profile, "--config", e.cfgPath, "--timeout", "30s"})
 			}); code != 0 {
@@ -96,7 +96,7 @@ esac
 			if err := os.WriteFile(cli, []byte(body), 0700); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"--task", "task", "--run", "run", "--", cli, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high", "--environment=home", "--pairing-code", "fixture-secret", "--on", "execution-host"}
+			args := []string{"--task", "task", "--run", "run", "--", cli, "orchestration", "worker-start", "--agent", "claude", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high", "--environment=home", "--pairing-code", "fixture-secret", "--on", "execution-host"}
 			ctx := context.Background()
 			var cancel context.CancelFunc
 			var watchDone chan struct{}
