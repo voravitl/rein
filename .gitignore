@@ -8,3 +8,5 @@ __pycache__/
 .omc/
 .agents/
 .rein/
+# crux adapter per-session runtime state (plugins/crux/adapters/hermes/__init__.py) — never commit
+plugins/crux/adapters/state/
