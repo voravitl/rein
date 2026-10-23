@@ -27,7 +27,7 @@ This skill provides AI models (coordinators, workers, reviewers, advisors) with 
 | Generate Review Report scaffold | `rein verdict template` | `--mr`, `--sha`, `--reviewer`, `--worker` | `0` = printed |
 | Record code review verdict | `rein verdict record` | `--mr`, `--sha`, `--verdict`, `--reviewer` | `0` = recorded |
 | Verify MR merge readiness | `rein verdict check` | `--mr`, `--sha`, `--tier` | `0` = pass, `1` = fail |
-| Render human approval prompt | `rein approve prompt` | `--mr`, `--sha` | `0` = printed JSON |
+| Render terminal-only approval preview | `rein approve prompt` | `--mr`, `--sha` | `0` = JSON preview and terminal command; interactive approval disabled |
 | Run secondary advisor model | `rein advise <role>` | `<role>`, `<dir>`, `<task>`, `<out>` | `0` = finished |
 | Run E2E test via Orca browser | `rein e2e test` or `run` | `<url-or-spec>`, `--out`, `--json` | `0` = pass, `1` = fail |
 | Lint task spec before launch | `rein spec check` | `<spec>`, `<contract>` | `0` = pass, `1` = lint fail |

@@ -313,6 +313,10 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 // match, or a matching combined revision identity (ADR B2.2) where differing
 // patch IDs are accepted only for a proven unchanged rebase.
 func revisionMatches(recordSHA, recordPatchID, currentSHA, currentPatchID, repoPath string) bool {
+	// Legacy symbolic refs are not evidence of the commit reviewed at record time.
+	if repoPath != "" && (!immutableCommitID(recordSHA) || !immutableCommitID(currentSHA)) {
+		return false
+	}
 	// Exact SHA match
 	if recordSHA == currentSHA {
 		return true

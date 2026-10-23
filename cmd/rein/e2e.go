@@ -68,6 +68,7 @@ func cmdE2ETest(args []string) int {
 	outDir := fs.String("out", "", "evidence output directory (default: ./report/e2e)")
 	timeoutSec := fs.Int("timeout", 30, "timeout in seconds")
 	asJSON := fs.Bool("json", false, "emit json test report")
+	requirePDF := fs.Bool("require-pdf", false, "fail if PDF evidence cannot be produced")
 	if err := fs.Parse(reorderFlagsFirst(args)); err != nil {
 		return 2
 	}
@@ -117,6 +118,7 @@ func cmdE2ETest(args []string) int {
 		}
 	}
 
+	spec.RequirePDF = spec.RequirePDF || *requirePDF
 	return runSpec(spec, evidenceDir, *asJSON)
 }
 
@@ -126,6 +128,7 @@ func cmdE2ERun(args []string) int {
 	baseURL := fs.String("base-url", "", "override base URL")
 	timeoutSec := fs.Int("timeout", 0, "override timeout in seconds")
 	asJSON := fs.Bool("json", false, "emit json test report")
+	requirePDF := fs.Bool("require-pdf", false, "fail if PDF evidence cannot be produced")
 	if err := fs.Parse(reorderFlagsFirst(args)); err != nil {
 		return 2
 	}
@@ -155,6 +158,7 @@ func cmdE2ERun(args []string) int {
 		evidenceDir = filepath.Join(filepath.Dir(specPath), "evidence")
 	}
 
+	spec.RequirePDF = spec.RequirePDF || *requirePDF
 	return runSpec(spec, evidenceDir, *asJSON)
 }
 
@@ -181,6 +185,9 @@ func runSpec(spec *e2e.Spec, evidenceDir string, asJSON bool) int {
 		if report.EvidenceDir != "" {
 			fmt.Printf("Evidence directory: %s\n", report.EvidenceDir)
 		}
+		for _, warning := range report.EvidenceWarnings {
+			fmt.Fprintln(os.Stderr, "Evidence warning:", warning)
+		}
 		if report.PDFPath != "" {
 			fmt.Printf("Board PDF report:   %s\n", report.PDFPath)
 		}
@@ -203,7 +210,7 @@ func reorderFlagsFirst(args []string) []string {
 		arg := args[i]
 		if strings.HasPrefix(arg, "-") {
 			flags = append(flags, arg)
-			if arg != "-json" && arg != "--json" && !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+			if arg != "-json" && arg != "--json" && arg != "-require-pdf" && arg != "--require-pdf" && !strings.Contains(arg, "=") && i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
 				i++
 				flags = append(flags, args[i])
 			}

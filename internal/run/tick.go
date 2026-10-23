@@ -27,10 +27,11 @@ type TickState struct {
 
 // Worker holds sampled CPU and other metrics for a task.
 type Worker struct {
-	Task       string  `json:"task"`
-	PID        int     `json:"pid,omitempty"`
-	CPUPercent float64 `json:"cpu_percent,omitempty"`
-	LastSeen   string  `json:"last_seen,omitempty"` // RFC3339
+	Observation string  `json:"observation,omitempty"` // alive, gone, unknown; never infer death from absence
+	Task        string  `json:"task"`
+	PID         int     `json:"pid,omitempty"`
+	CPUPercent  float64 `json:"cpu_percent,omitempty"`
+	LastSeen    string  `json:"last_seen,omitempty"` // RFC3339
 }
 
 // Tick runs a single-flight tick under flock, writing the tick state.
@@ -71,7 +72,7 @@ func Tick(repo string) error {
 	}
 	defer unlockFile(lockFile)
 
-	// Sample workers (placeholder for now - will be enhanced)
+	// Observe only process identities associated with this repository.
 	workers := sampleWorkers(common)
 
 	// Write tick state
@@ -137,14 +138,4 @@ func IsTickStale(state *TickState) bool {
 	}
 
 	return time.Since(ts) > TickStaleThreshold
-}
-
-// sampleWorkers samples worker CPU and status (placeholder - will be enhanced with real sampling).
-func sampleWorkers(common string) map[string]Worker {
-	// Placeholder: in a real implementation, this would:
-	// 1. Read contract index to find active tasks
-	// 2. Sample CPU for each worker process
-	// 3. Check seen logs for recent activity
-	workers := make(map[string]Worker)
-	return workers
 }

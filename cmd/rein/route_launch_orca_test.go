@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,12 +62,14 @@ func TestRouteOrcaObservationKeepsRecordedFence(t *testing.T) {
 			cli := filepath.Join(e.root, "orca")
 			observation := filepath.Join(e.root, "observation.json")
 			argvLog, envLog, calls := filepath.Join(e.root, "show-argv"), filepath.Join(e.root, "show-env"), filepath.Join(e.root, "calls")
+			showReady := filepath.Join(e.root, "show-ready")
 			leasePath := filepath.Join(contract.IndexDir(), "routes", "leases", "task.json")
 			t.Setenv("TEST_ORCA_OBSERVATION", observation)
 			t.Setenv("TEST_ORCA_LEASE", leasePath)
 			t.Setenv("TEST_ORCA_ARGV", argvLog)
 			t.Setenv("TEST_ORCA_ENV", envLog)
 			t.Setenv("TEST_ORCA_CALLS", calls)
+			t.Setenv("TEST_ORCA_SHOW_READY", showReady)
 			if err := os.WriteFile(observation, []byte(tc.observation), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -82,7 +85,10 @@ worker-show)
  printf '%s\000' "$@" > "$TEST_ORCA_ARGV"
  printf '%s\n' "$PWD" "$ADVISE_TASK" "$ADVISE_RUN" > "$TEST_ORCA_ENV"
  printf 'codesign diagnostic on stderr only\n' >&2
- if [ ! -s "$TEST_ORCA_OBSERVATION" ]; then exec sleep 30; fi
+ if [ ! -s "$TEST_ORCA_OBSERVATION" ]; then
+  : > "$TEST_ORCA_SHOW_READY"
+  exec sleep 30
+ fi
  cat "$TEST_ORCA_OBSERVATION";;
 *) exit 2;;
 esac
@@ -92,12 +98,50 @@ esac
 			}
 			args := []string{"--task", "task", "--run", "run", "--", cli, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high", "--environment=home", "--pairing-code", "fixture-secret", "--on", "execution-host"}
 			ctx := context.Background()
+			var cancel context.CancelFunc
+			var watchDone chan struct{}
+			var watchErr error
 			if tc.name == "timeout" {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+				ctx, cancel = context.WithCancel(ctx)
 				defer cancel()
+				watchDone = make(chan struct{})
+				go func() {
+					defer close(watchDone)
+					watchdog := time.NewTimer(30 * time.Second)
+					defer watchdog.Stop()
+					poll := time.NewTicker(10 * time.Millisecond)
+					defer poll.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							watchErr = fmt.Errorf("launch ended before worker-show readiness: %w", ctx.Err())
+							return
+						case <-watchdog.C:
+							watchErr = fmt.Errorf("worker-show readiness marker not reached within 30s")
+							cancel()
+							return
+						case <-poll.C:
+							if _, err := os.Stat(showReady); err == nil {
+								cancel()
+								return
+							} else if !os.IsNotExist(err) {
+								watchErr = fmt.Errorf("read worker-show readiness marker: %w", err)
+								cancel()
+								return
+							}
+						}
+					}
+				}()
 			}
-			if code := routeLaunch(ctx, args, nil, nil, nil); (code == 0) != tc.ok {
+			code := routeLaunch(ctx, args, nil, nil, nil)
+			if watchDone != nil {
+				cancel()
+				<-watchDone
+				if watchErr != nil {
+					t.Fatal(watchErr)
+				}
+			}
+			if (code == 0) != tc.ok {
 				t.Errorf("observation launch exit=%d want success=%t", code, tc.ok)
 			}
 			raw, err := os.ReadFile(leasePath)
