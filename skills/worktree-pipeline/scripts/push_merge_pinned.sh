@@ -28,16 +28,16 @@ if [ -n "$OLD" ] && [ "$OLD" != "$NEW" ]; then
 elif [ -z "$OLD" ]; then timeout 120 git push origin "$NEW:refs/heads/$RB" 2>&1 | tail -1 || exit 1; fi
 [ "$NOMERGE" = "--no-merge" ] && { echo "[push] pushed ${NEW:0:7}; not merging"; exit 0; }
 for _ in $(seq 1 24); do
-  ST=$(timeout 30 glab api "projects/:id/merge_requests/$MR" 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['sha'],d.get('detailed_merge_status'),d['state'],d['target_branch'])")
+  ST=$(timeout 30 glab api "projects/:id/merge_requests/$MR" 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['sha'],d.get('detailed_merge_status'),d['state'],d['target_branch'])") || ST=""
   set -- $ST; [ "${1:-}" = "$NEW" ] && [ "${2:-}" = "mergeable" ] && break; sleep 5
 done
 [ "${1:-}" = "$NEW" ] && [ "${2:-}" = "mergeable" ] || { echo "[merge] MR !$MR not mergeable at ${NEW:0:7}: $ST"; exit 4; }
 [ "${3:-}" = "opened" ] && [ "${4:-}" = "$TARGET" ] || { echo "[merge] REFUSED before merging: MR !$MR is '${3:-?}' targeting '${4:-?}', expected opened → $TARGET"; exit 8; }
 check_gates || exit $?
-timeout 120 glab mr merge "$MR" --sha "$NEW" -y 2>&1 | tail -1
+timeout 120 glab mr merge "$MR" --sha "$NEW" -y 2>&1 | tail -1 || echo "[merge] merge command failed; checking MR state" >&2
 # Trust the MR state, not glab's exit code: verify it is merged at the pinned head.
 for _ in $(seq 1 12); do
-  ST=$(timeout 30 glab api "projects/:id/merge_requests/$MR" 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['state'],d.get('merge_commit_sha') or d.get('squash_commit_sha') or '-',d['sha'],d['target_branch'])")
+  ST=$(timeout 30 glab api "projects/:id/merge_requests/$MR" 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['state'],d.get('merge_commit_sha') or d.get('squash_commit_sha') or '-',d['sha'],d['target_branch'])") || ST=""
   set -- $ST; [ "${1:-}" = "merged" ] && break; sleep 5
 done
 [ "${1:-}" = "merged" ] || { echo "[merge] MR !$MR is NOT merged (state: ${ST:-unknown}); stop the train"; exit 7; }

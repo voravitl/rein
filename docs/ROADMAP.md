@@ -11,7 +11,7 @@ safety property lives in code that decides (hook, drift, script exit code), not 
 | 0.2.0 | One contract guards codex, agy, kiro and opencode workers too (`rein hook --vendor`, `rein hooks install`); per-task seen log and `drift --expect-guard` (`GUARD_INACTIVE`); drift pins the HEAD sha it judged |
 | 0.3.0 | B0: Coordinator guard (`rein run start/end/resume/allow/audit`, run marker under git common dir, process liveness, tool/write/agent allowlists, subagent binding, `COORDINATOR_DRIFT` audit) |
 | 0.4.0 | B1: Budget and tick waiter (per-pool cost caps, timebox, `max_review_rounds`, single-flight tick under flock, tick staleness guard, model ledger effective costs) |
-| 0.5.0 | B2, B3, B4: Revision-bound verdicts and approvals (`git patch-id --verbatim`, multi-model review, AskUserQuestion approval prompt & PostToolUse recording), B3 spec lint (`rein spec check`, pre-start tier, coordinator spawn enforcement), B4 standing orders & decision trail (`<run>/decisions.tsv` with secret scan, user-only `standing.md` write denial, SessionStart injection, scope ruling approval), Orca IDE task/model display, and universal subagent collaboration & anti-drift engine (`rein advise`, depth limit cap = 1, default readonly whitelist) |
+| 0.5.0 | B2, B3, B4: Revision-bound verdicts and approvals (`git patch-id --verbatim`, multi-model review, terminal-only human approval), B3 spec lint (`rein spec check`, pre-start tier, coordinator spawn enforcement), B4 standing orders & decision trail (`<run>/decisions.tsv` with secret scan, user-only `standing.md` write denial, SessionStart injection, scope ruling approval), Orca IDE task/model display, and universal subagent collaboration & anti-drift engine (`rein advise`, depth limit cap = 1, default readonly whitelist) |
 | 0.6.0 | Orca Browser E2E test engine (`rein e2e test/run/check`), Board-PDF executive reporting matching `/board-pdf` design system, skill `rein:orca-e2e`, mandatory AI code review & MR report policy (`AGENTS.md`, `templates/review-policy.md`, Head SHA bound), and `rein verdict template` |
 | 0.7.0 | Multi-Harness Plugin Bundle across 5 AI coding harnesses (Claude Code, Antigravity/AGY, OpenCode, OpenAI Codex, AWS Kiro), universal manifest (`plugin.json`), native CLI integration (`agy plugin install`, `codex plugin add`), all-in-one setup & uninstall script (`scripts/install-harness.sh`), and high-resolution architecture infographic |
 | 0.8.0 | Automatic task/model selection (`rein route auto`), enforced routing and guarded Orca launches, canonical quota cooldowns, completion cleanup, and the release pipeline with checksum-verified assets |
@@ -89,11 +89,11 @@ by `drift` from the real diff. `rein verdict record` / `rein verdict check --mr 
 `push_merge_pinned.sh`: pass only with verdicts from two model makers for T3 (one otherwise), no reviewer equal to
 the worker's model after normalisation, and a human approval for that sha or an equal combined `git patch-id --verbatim`
 (three-dot diff with explicit flags; the approval proves the delta, the merged-main re-gate proves the result).
-Approvals: an `Approve` button in an `AskUserQuestion` whose text rein renders (`rein approve prompt`; any other
-text, pre-filled `answers` or a subagent asker are denied; recorded by `PostToolUse`), fallback `rein approve` in
-the user's own terminal. A human-attention gate, not forgery-proof. No time
-expiry. Gate files are read whole and fail closed. **Starts with a real-session spike of six cases; if any fails,
-only the terminal path ships.**
+Approvals are terminal-only: `rein approve prompt` renders a preview with `approval_mode: terminal_only`
+and a shell-quoted command for the user to run as `rein approve` in their own terminal.
+`AskUserQuestion` responses cannot create approval records. The interactive path remains disabled until real
+fixtures prove canonical request identity and single-use tool/session pairing. Approvals have no time expiry;
+gate files are read whole and fail closed.
 
 ### B3. Spec lint
 `rein spec check <spec> <contract>`, enforced on spawn, refuses to start a worker when a scope id lacks a section or
