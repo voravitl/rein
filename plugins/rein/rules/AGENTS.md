@@ -28,4 +28,4 @@ Every AI agent performing code reviews on an MR or PR MUST strictly adhere to th
 
 ## 3. Complete CLI Reference
 
-See [`docs/CLI_REFERENCE.md`](file:///Users/voravit.l/dev/rein/docs/CLI_REFERENCE.md) for full syntax and examples.
+See [`docs/CLI_REFERENCE.md`](https://github.com/voravitl/rein/blob/main/docs/CLI_REFERENCE.md) for full syntax and examples.
