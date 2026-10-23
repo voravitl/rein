@@ -97,7 +97,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <config|hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|verdict|approve|advise|orca|checkpoint|hunter|supervisor|e2e|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <config|hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|route|verdict|approve|advise|orca|checkpoint|hunter|supervisor|e2e|version> [args]
   rein supervisor validate|run --plan FILE             bounded authorized monitor (no auto dispatch/settle)
   rein supervisor invocation <plan> ...                native Crux/Claude/Codex/Agy launch-argument validation
   rein checkpoint finalize|verify|restore              durable local snapshot and restore into a new directory
