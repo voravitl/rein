@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// Appending n charge rows must not cost O(n^2). The old path re-read and re-validated the whole ledger on every cost
-// append, so a run of n charges paid n reads of a growing file. The test counts the strict loads: with the cache, one
-// load per distinct ledger state.
+// Appending n charge rows must not cost O(n^2): the test counts the strict loads, and with the charge index the ledger
+// is loaded once, not once per append.
 func TestAppendDoesNotReloadTheLedgerPerCharge(t *testing.T) {
 	t.Setenv("PIPELINE_LEDGER", filepath.Join(t.TempDir(), "ledger.jsonl"))
 	loads := 0

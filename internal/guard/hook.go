@@ -340,9 +340,7 @@ func checkEdit(fp string, c *contract.Contract, top, cwd string) string {
 	if protectedHook(top, rel) {
 		return fmt.Sprintf("%s belongs to the rein guard installed for task %s; workers never change it", rel, c.Name)
 	}
-	// The report path is the worker's own file: the guard's Stop hook orders it written there, so it stays
-	// writable even when the ownership globs do not cover it.
-	if c.Writable(p) {
+	if c.Writable(p) { // the worker's own file; the never-edit list and the guard files won above
 		return ""
 	}
 	if !glob.Match(rel, c.Allow) {

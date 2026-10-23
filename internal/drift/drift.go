@@ -40,43 +40,48 @@ func withChildren(gs []string) []string {
 	return out
 }
 
-// reportDirRelOf is the worker's own report directory relative to the worktree, in slash form; "" when the report
-// has no report directory (outside the worktree, or sitting at the worktree root). The guard allows a worker to
-// write a sibling of its report there, so drift must not judge that directory as work either.
-func reportDirRelOf(c *contract.Contract, wt string) string {
+// workerOwned is the set of worktree-relative paths the worker owns: the report, the report's own directory, and the
+// explicitly allowed files. The guard lets the worker write exactly these, so drift must not judge any of them as the
+// worker's uncommitted work. It asks the contract for the same answer the guard gets, so the two cannot disagree.
+type workerOwned struct {
+	files map[string]bool // exact paths
+	dirs  []string        // directory prefixes, slash-separated
+}
+
+func newWorkerOwned(c *contract.Contract, wt string) workerOwned {
+	o := workerOwned{files: map[string]bool{}}
+	root := contract.Real(wt)
 	area := c.ReportArea()
-	if area == "" {
-		return ""
-	}
-	rel, err := filepath.Rel(contract.Real(wt), area)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return ""
-	}
-	return filepath.ToSlash(rel)
-}
-
-// workerOwnedRel is every worktree-relative path the guard lets the worker write: the report, the report's own
-// directory, and the explicitly allowed files. Drift must not judge any of them as the worker's uncommitted work,
-// or the guard and the drift check would disagree about the same file.
-func workerOwnedRel(c *contract.Contract, wt string) map[string]bool {
-	out := map[string]bool{}
-	add := func(p string) {
-		rel, err := filepath.Rel(contract.Real(wt), contract.Real(p))
-		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return
+	for _, p := range c.OwnedPaths() {
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(root, abs)
 		}
-		out[filepath.ToSlash(rel)] = true
+		rel, err := filepath.Rel(root, contract.Real(abs))
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		if area != "" && contract.SamePath(abs, area) {
+			o.dirs = append(o.dirs, rel)
+			continue
+		}
+		o.files[rel] = true
 	}
-	add(c.ReportPath)
-	for _, w := range c.WorkerWritable {
-		add(w)
-	}
-	return out
+	return o
 }
 
-// inReportArea reports whether rel (a worktree-relative, slash-separated path) is the report directory or inside it.
-func inReportArea(rel, dir string) bool {
-	return dir != "" && (rel == dir || strings.HasPrefix(rel, dir+"/"))
+// has reports whether rel (a worktree-relative, slash-separated path) is one the worker owns.
+func (o workerOwned) has(rel string) bool {
+	if o.files[rel] {
+		return true
+	}
+	for _, dir := range o.dirs {
+		if strings.HasPrefix(rel, dir+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 var (
@@ -220,8 +225,7 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 	// The contract's report path is the worker's own file, not part of the work: the guard tells the worker to
 	// write it, so it is never out of scope and never counted as an uncommitted change. The same holds for a
 	// sibling of the report in its own directory: the guard allows the worker to write it.
-	reportDir := reportDirRelOf(c, wt)
-	owned := workerOwnedRel(c, wt)
+	owned := newWorkerOwned(c, wt)
 
 	// Compute tier from allow globs, then escalate from actual changed files (ADR B2.1)
 	baseTier := tier.EvaluateFromAllowGlobs(c.Allow, c.Profile.SensitivePaths)
@@ -265,7 +269,7 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 			continue
 		}
 		p := strings.TrimSuffix(l[3:], "/")
-		if owned[p] || inReportArea(p, reportDir) { // the worker's own files: the guard lets it write them, drift does not judge them as work
+		if owned.has(p) { // the worker's own files: the guard lets it write them, drift does not judge them as work
 			continue
 		}
 		arts := c.Profile.LocalArtifacts
@@ -282,7 +286,7 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 		switch {
 		case glob.Match(f, c.Deny):
 			d("DENIED_PATH", "%s", f)
-		case owned[f] || inReportArea(f, reportDir):
+		case owned.has(f):
 			// the worker's own files: the guard lets it write them, so they are not out of scope
 		case !glob.Match(f, c.Allow):
 			d("OUT_OF_SCOPE", "%s", f)

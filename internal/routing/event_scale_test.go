@@ -9,9 +9,8 @@ import (
 	"time"
 )
 
-// Appending n events must not cost O(n^2). The old dedupe path re-read and re-scanned the whole log on every append,
-// so a run of n events paid n reads of a growing file. The test counts how often the log is read: with the index, one
-// read per distinct log state, not one per append.
+// Appending n events must not cost O(n^2): the test counts how often the log is read, and with the dedupe index it is
+// read once, not once per append.
 func TestRecordDoesNotRescanTheLogPerAppend(t *testing.T) {
 	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(t.TempDir(), "contracts"))
 	reads := 0

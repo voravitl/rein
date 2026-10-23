@@ -840,9 +840,7 @@ func (x *ctx) write(target string) string {
 	if protectedHook(x.top, rel) {
 		return fmt.Sprintf("%s belongs to the rein guard installed for task %s; workers never change it", rel, x.c.Name)
 	}
-	// The report path is the worker's own file: the guard's Stop hook orders it written there, so it stays writable
-	// even when the ownership globs do not cover it. The never-edit list and the guard files still win above.
-	if x.c.Writable(p) {
+	if x.c.Writable(p) { // the worker's own file; the never-edit list and the guard files won above
 		return ""
 	}
 	owned := glob.Match(rel, x.c.Allow)

@@ -111,7 +111,7 @@ func TestReportInsideWorktreeIsNotDrift(t *testing.T) {
 	sh(t, wt, "git", "add", "backend/Routing/A.cs")
 	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
 
-	// untracked report: not an uncommitted file
+	// an untracked report is not an uncommitted file
 	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +120,7 @@ func TestReportInsideWorktreeIsNotDrift(t *testing.T) {
 		t.Errorf("the worker's report counted as uncommitted: %s", kinds(r.Drift))
 	}
 
-	// committed report: not out of scope
+	// a committed report is not out of scope
 	sh(t, wt, "git", "add", "-A")
 	sh(t, wt, "git", "commit", "-qm", "report #169")
 	r, err = Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})

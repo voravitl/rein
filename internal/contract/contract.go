@@ -235,7 +235,8 @@ func LoadFile(path string) (*Contract, error) {
 }
 
 // Writable reports whether abs (an absolute, cleaned path) is a file the worker may write: the report path, a file in
-// the report's own directory (see ReportArea), or an explicitly allowed exact file.
+// the report's own directory (see ReportArea), or an explicitly allowed exact file. The guard's Stop hook orders the
+// worker to write its report, so those paths stay writable even when the ownership globs do not cover them.
 func (c *Contract) Writable(abs string) bool {
 	for _, p := range append([]string{c.ReportPath}, c.WorkerWritable...) {
 		if SamePath(abs, p) {
@@ -246,6 +247,17 @@ func (c *Contract) Writable(abs string) bool {
 		return true
 	}
 	return false
+}
+
+// OwnedPaths are the paths the worker owns: the report, the report's own directory, and the explicitly allowed
+// files. The guard and the drift check both ask this, so the two cannot disagree about the same file.
+func (c *Contract) OwnedPaths() []string {
+	out := []string{c.ReportPath}
+	out = append(out, c.WorkerWritable...)
+	if dir := c.ReportArea(); dir != "" {
+		out = append(out, dir)
+	}
+	return out
 }
 
 // ReportArea is the worker's own report directory: the directory holding the report path, when that directory is

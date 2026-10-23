@@ -2,12 +2,10 @@ package providers
 
 // Remote catalog revalidation (docs/ROUTING_SELECTION_DESIGN.md, "Refresh before every selection").
 //
-// A local client query only ever proves what the client answered: it says nothing about whether the upstream catalog is
-// current. A policy that accepts only `remote_verified` needs evidence that the catalog itself was refreshed against its
-// provider. This file supplies that evidence with the provider's own cache validator: an ETag sent back as
-// If-None-Match. The provider answers 304 ("your snapshot is still current") or 200 (a fresh body), and either answer
-// proves the catalog current. Anything else is a failed refresh, and a failed refresh must not silently reuse the prior
-// snapshot: the caller excludes the harness.
+// A local client query only proves what the client answered. A policy that accepts only `remote_verified` needs
+// evidence that the catalog itself was refreshed against its provider, which the provider's own cache validator gives:
+// an ETag sent back as If-None-Match. A 304 means the stored snapshot is still current; a 200 with a new ETag is a
+// fresh body. Anything else is a failed refresh, and a failed refresh must not silently reuse the prior snapshot.
 
 import (
 	"context"
@@ -79,8 +77,7 @@ func writeCatalogCache(url string, c CatalogCache) error {
 
 // revalidateCatalog asks the provider's catalog endpoint whether the stored snapshot is still current. It returns the
 // time the catalog body was last fetched fresh (a 304 keeps the stored time: the body is unchanged), or an error when
-// the provider did not confirm currency. A 304 reuses the stored ETag only because the provider itself confirmed it is
-// still valid; that is a cache validator, not a silent fallback.
+// the provider did not confirm currency.
 func revalidateCatalog(ctx context.Context, url string) (time.Time, error) {
 	stored, err := readCatalogCache(url)
 	if err != nil {
