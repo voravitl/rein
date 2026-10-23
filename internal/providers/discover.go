@@ -236,8 +236,7 @@ func discoverOne(ctx context.Context, cfg *Config, harness, dir string, timeout 
 	}
 	inv.Freshness = ClientCatalog // every adapter: the local client answered; none proves the upstream catalog is current
 	hint := ""
-	// A harness that names its own remote catalog endpoint can prove currency with the provider's cache validator.
-	// The revalidation runs after the local query: the local list is the catalog, the validator says it is current.
+	// Verify the local list against the remote catalog body bound to the provider's cache validator.
 	catalogURL := cfg.Discovery[harness].CatalogURL
 	switch harness {
 	case "claude":
@@ -252,7 +251,7 @@ func discoverOne(ctx context.Context, cfg *Config, harness, dir string, timeout 
 		collectOpencode(ctx, argv, dir, &inv)
 	}
 	if catalogURL != "" && inv.Status == InvComplete {
-		at, err := revalidateCatalog(ctx, catalogURL)
+		at, err := revalidateCatalog(ctx, catalogURL, inv.Models)
 		if err != nil {
 			// A failed refresh must not silently reuse the prior snapshot: the harness is excluded.
 			inv.fail(InvFailed, "remote catalog revalidation failed: "+err.Error())

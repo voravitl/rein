@@ -16,14 +16,22 @@ import (
 func TestRevalidateCatalogProvesRemoteFreshness(t *testing.T) {
 	t.Setenv("PIPELINE_CATALOGS", filepath.Join(t.TempDir(), "catalogs"))
 	var seenETag string
+	servedNotModified := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenETag = r.Header.Get("If-None-Match")
 		w.Header().Set("ETag", `"v1"`)
-		_, _ = w.Write([]byte(`{"providers":{}}`))
+		w.Header().Set("Date", "Thu, 01 Jan 2026 00:00:00 GMT")
+		if seenETag == `"v1"` {
+			servedNotModified = true
+			w.Header().Set("Date", "Thu, 01 Jan 2026 00:00:02 GMT")
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
 
-	at, err := revalidateCatalog(context.Background(), srv.URL)
+	at, err := revalidateCatalog(context.Background(), srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,12 +42,15 @@ func TestRevalidateCatalogProvesRemoteFreshness(t *testing.T) {
 		t.Errorf("the first revalidation sent a validator it never had: %q", seenETag)
 	}
 	// The second call revalidates conditionally: the provider answers 304 and the stored time is kept.
-	second, err := revalidateCatalog(context.Background(), srv.URL)
+	second, err := revalidateCatalog(context.Background(), srv.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if seenETag != `"v1"` {
 		t.Errorf("the second revalidation sent %q, want the stored validator", seenETag)
+	}
+	if !servedNotModified {
+		t.Fatal("the conditional request did not receive 304")
 	}
 	if !second.Equal(at) {
 		t.Errorf("a confirmed snapshot changed its evidence time: %v vs %v", second, at)
@@ -53,7 +64,7 @@ func TestRevalidateCatalogRefusesAnUnknownValidator(t *testing.T) {
 		w.WriteHeader(http.StatusNotModified)
 	}))
 	defer srv.Close()
-	if _, err := revalidateCatalog(context.Background(), srv.URL); err == nil {
+	if _, err := revalidateCatalog(context.Background(), srv.URL, nil); err == nil {
 		t.Fatal("a 304 for an unknown validator was accepted")
 	}
 }
@@ -65,7 +76,7 @@ func TestRevalidateCatalogFailsWhenTheProviderDoesNotConfirm(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if _, err := revalidateCatalog(context.Background(), srv.URL); err == nil {
+	if _, err := revalidateCatalog(context.Background(), srv.URL, nil); err == nil {
 		t.Fatal("a failed revalidation was accepted")
 	}
 }
@@ -74,21 +85,23 @@ func TestRevalidateCatalogFailsWhenTheProviderDoesNotConfirm(t *testing.T) {
 func TestRevalidateCatalogRefusesAFreshBodyWithoutAValidator(t *testing.T) {
 	t.Setenv("PIPELINE_CATALOGS", filepath.Join(t.TempDir(), "catalogs"))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"providers":{}}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
-	if _, err := revalidateCatalog(context.Background(), srv.URL); err == nil {
+	if _, err := revalidateCatalog(context.Background(), srv.URL, nil); err == nil {
 		t.Fatal("a fresh body without a validator was accepted")
 	}
 }
 
 // The inventory reports remote_verified only when the provider confirmed the catalog; the evidence time is the
 // provider's own, not the moment of the query.
+const remoteTestCatalog = `{"ollama-cloud":{"models":{"deepseek-v4-flash:0731":{}}},"opencode-go":{"models":{"glm-5.3-flash":{}}},"openrouter":{"models":{"google/gemini-3.5-flash":{}}}}`
+
 func TestDiscoverReportsRemoteVerifiedOnlyAfterConfirmation(t *testing.T) {
 	t.Setenv("PIPELINE_CATALOGS", filepath.Join(t.TempDir(), "catalogs"))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", `"v1"`)
-		_, _ = w.Write([]byte(`{"providers":{}}`))
+		_, _ = w.Write([]byte(remoteTestCatalog))
 	}))
 	defer srv.Close()
 
@@ -141,5 +154,92 @@ func TestCatalogCacheIsKeyedByURL(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Errorf("the cache directory is missing: %v", err)
+	}
+}
+
+func TestReviewChangedRemoteCatalogMustNotVerifyStaleLocalModels(t *testing.T) {
+	t.Setenv("PIPELINE_CATALOGS", filepath.Join(t.TempDir(), "catalogs"))
+	etag := `"v1"`
+	body := remoteTestCatalog
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("ETag", etag)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	cfg := fake(t, "opencode", "ok", "opencode v2.0.20")
+	spec := cfg.Discovery["opencode"]
+	spec.CatalogURL = srv.URL
+	cfg.Discovery["opencode"] = spec
+	initial := one(t, cfg, "opencode")
+	if initial.Status != InvComplete {
+		t.Fatal(initial.Status, initial.Reason)
+	}
+	etag = `"v2"`
+	body = `{}`
+	changed := one(t, cfg, "opencode")
+	t.Logf("initial models=%v; changed models=%v; status=%s freshness=%s", initial.Models, changed.Models, changed.Status, changed.Freshness)
+	if changed.Status == InvComplete && changed.Freshness == RemoteVerified && len(changed.Models) > 0 {
+		t.Fatal("local models still verified despite provider returning new ETag and no models")
+	}
+}
+
+func TestRevalidateCatalogBindsConditionalSnapshot(t *testing.T) {
+	t.Setenv("PIPELINE_CATALOGS", t.TempDir())
+	conditional := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") == `"v1"` {
+			conditional = true
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+		w.Header().Set("ETag", `"v1"`)
+		_, _ = w.Write([]byte(`{"provider-a":{"models":{"shared":{}}}}`))
+	}))
+	defer srv.Close()
+	local := []ModelEntry{{ID: "provider-a/shared"}}
+	if _, err := revalidateCatalog(context.Background(), srv.URL, local); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := revalidateCatalog(context.Background(), srv.URL, local); err != nil {
+		t.Fatal(err)
+	}
+	if !conditional {
+		t.Fatal("bound snapshot was not revalidated conditionally")
+	}
+	if _, err := revalidateCatalog(context.Background(), srv.URL, []ModelEntry{{ID: "provider-b/shared"}}); err == nil {
+		t.Fatal("304 verified a model from another provider")
+	}
+}
+
+func TestRevalidateCatalogRefusesUnboundCachedValidator(t *testing.T) {
+	t.Setenv("PIPELINE_CATALOGS", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("If-None-Match") != "" {
+			t.Error("sent an unbound validator")
+		}
+		w.WriteHeader(http.StatusNotModified)
+	}))
+	defer srv.Close()
+	if err := writeCatalogCache(srv.URL, CatalogCache{ETag: `"legacy"`, At: time.Now().UTC().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := revalidateCatalog(context.Background(), srv.URL, []ModelEntry{{ID: "provider/model"}}); err == nil {
+		t.Fatal("304 accepted a cached validator without model snapshot")
+	}
+}
+
+func TestRevalidateCatalogRejectsMalformedCatalogs(t *testing.T) {
+	for _, body := range []string{`null`, `[]`, `{`, `{"providers":{}}`, `{"provider":{"models":null}}`, `{"provider":{"models":{"bad id":{}}}}`, `{"provider":{"models":{"model":null}}}`, `{"provider":{"models":{"":{}}}}`} {
+		t.Run(body, func(t *testing.T) {
+			t.Setenv("PIPELINE_CATALOGS", t.TempDir())
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("ETag", `"v1"`)
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			if _, err := revalidateCatalog(context.Background(), srv.URL, []ModelEntry{{ID: "provider/model"}}); err == nil {
+				t.Fatal("malformed catalog was accepted")
+			}
+		})
 	}
 }

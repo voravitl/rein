@@ -178,24 +178,17 @@ func chargeIndex() (map[[2]string]Row, error) {
 }
 
 // cacheCharge records one appended row in the process-local index, so the next Append need not re-read the file.
-func cacheCharge(r Row) {
-	size := int64(0)
-	path := Path()
-	if abs, err := filepath.Abs(path); err == nil {
-		path = abs
-		if fi, err := os.Stat(abs); err == nil {
-			size = fi.Size()
-		}
-	}
+func cacheCharge(r Row, path string, before, written int64) {
 	ledgerCache.mu.Lock()
 	defer ledgerCache.mu.Unlock()
-	if ledgerCache.charges == nil {
-		ledgerCache.charges = make(map[[2]string]Row)
+	if ledgerCache.charges == nil || ledgerCache.path != path || ledgerCache.size != before {
+		ledgerCache.charges = nil
+		return
 	}
 	if r.Kind == "cost" && r.ChargeID != "" {
 		ledgerCache.charges[[2]string{r.Attempt, r.ChargeID}] = r
 	}
-	ledgerCache.path, ledgerCache.size = path, size
+	ledgerCache.size = before + written
 }
 
 func Append(r Row) error {
@@ -230,13 +223,17 @@ func Append(r Row) error {
 	if err != nil {
 		return err
 	}
+	before, err := f.Stat()
+	if err != nil {
+		return errors.Join(err, f.Close())
+	}
 	if _, err := f.Write(append(b, '\n')); err != nil {
 		return errors.Join(err, f.Close())
 	}
 	if err := syncAndCloseLedger(f); err != nil {
 		return err
 	}
-	cacheCharge(r)
+	cacheCharge(r, path, before.Size(), int64(len(b)+1))
 	return syncLedgerDirectories(path)
 }
 

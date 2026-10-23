@@ -21,6 +21,9 @@ func TestAppendDoesNotReloadTheLedgerPerCharge(t *testing.T) {
 
 	const n = 30
 	for i := 0; i < n; i++ {
+		if err := Append(Row{Kind: "routing_launch", Attempt: "attempt"}); err != nil {
+			t.Fatal(err)
+		}
 		id := "charge-" + string(rune('a'+i%26)) + string(rune('a'+i/26))
 		row, err := NewChargeRow("attempt", id, "worker", "pool", "usd", "w", "m", float64(i+1))
 		if err != nil {
@@ -84,5 +87,50 @@ func TestAppendRefusesALedgerWithAPreExistingConflict(t *testing.T) {
 	c, _ := NewChargeRow("attempt", "other", "worker", "pool", "usd", "w", "m", 3)
 	if err := Append(c); err == nil {
 		t.Fatal("an append to a ledger with a pre-existing conflict was accepted")
+	}
+}
+
+func TestReviewNonCostAppendMustNotHideExistingCharges(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ledger.jsonl")
+	t.Setenv("PIPELINE_LEDGER", p)
+	a, _ := NewChargeRow("attempt", "duplicate", "worker", "pool", "usd", "w", "m", 1)
+	line, _ := json.Marshal(a)
+	if err := os.WriteFile(p, append(line, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ledgerCache.mu.Lock()
+	ledgerCache.charges = nil
+	ledgerCache.mu.Unlock()
+	if err := Append(Row{Kind: "routing_launch", Attempt: "new-attempt"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := NewChargeRow("attempt", "duplicate", "worker", "pool", "usd", "w", "m", 99)
+	if err := Append(b); err == nil {
+		t.Fatal("conflicting duplicate charge accepted after non-cost append into pre-existing ledger")
+	}
+}
+func TestReviewNonCostAppendMustNotHideExternalAppend(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "ledger.jsonl")
+	t.Setenv("PIPELINE_LEDGER", p)
+	a, _ := NewChargeRow("attempt", "first", "worker", "pool", "usd", "w", "m", 1)
+	if err := Append(a); err != nil {
+		t.Fatal(err)
+	}
+	outside, _ := NewChargeRow("attempt", "external", "worker", "pool", "usd", "w", "m", 2)
+	line, _ := json.Marshal(outside)
+	f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(append(line, '\n')); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if err := Append(Row{Kind: "routing_launch", Attempt: "new-attempt"}); err != nil {
+		t.Fatal(err)
+	}
+	conflict, _ := NewChargeRow("attempt", "external", "worker", "pool", "usd", "w", "m", 99)
+	if err := Append(conflict); err == nil {
+		t.Fatal("conflicting externally appended charge accepted after intervening non-cost append")
 	}
 }

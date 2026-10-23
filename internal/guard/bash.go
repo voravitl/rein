@@ -164,6 +164,7 @@ func (x *ctx) script(src string) string {
 				x.pipeRHS[n.Y] = true
 			}
 		case *syntax.DeclClause: // export / declare / local / readonly X=literal
+			x.other = true
 			for _, a := range n.Args {
 				if r := x.coordAssign(a); r != "" {
 					reason = r
@@ -172,6 +173,9 @@ func (x *ctx) script(src string) string {
 				x.assign(a)
 			}
 		case *syntax.CallExpr:
+			if len(n.Assigns) > 0 {
+				x.other = true // assignments can enable startup code outside a literal shell body
+			}
 			for _, a := range n.Assigns {
 				if r := x.coordAssign(a); r != "" {
 					reason = r

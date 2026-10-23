@@ -1,5 +1,10 @@
 package guard
 
+import (
+	"os"
+	"strings"
+)
+
 // orcaIPCSubs are the `orca orchestration` subcommands that only exchange messages and state with the Orca
 // server. The Antigravity terminal sandbox blocks them: they read Orca's runtime metadata, which lives outside
 // the workspace, and reach the local server, so a worker's `orca orchestration send` fails and no worker_done is
@@ -27,16 +32,27 @@ func orcaIPC(args []string) bool {
 }
 
 // classify records what the command does, so the hook can tell an IPC-only line from a line that also runs
-// something else. A wrapper or a shell is transparent: the guard judges the command it wraps, and so does this.
-// A navigation command changes the directory and nothing else. `sh worker.sh` reads a body the guard cannot see,
-// so it can never be IPC-only: no orca call is found inside it.
+// something else. Only a plain shell -c invocation is transparent: script files and startup options can
+// execute code outside the inspected body, even when another command on the line is IPC.
 func (x *ctx) classify(name string, args []string) {
 	switch {
 	case orcaIPC(args):
 		x.ipc = true
 	case name == "cd" || name == "pushd" || name == "popd":
+	case name == "env":
+		for _, arg := range args[1:] {
+			key, _, assigned := strings.Cut(arg, "=")
+			if assigned && (key == "BASH_ENV" || key == "ENV" || key == "ZDOTDIR") {
+				x.other = true
+			}
+		}
+	case name == "sudo" || name == "exec":
+		x.other = true // these wrappers can start login shells beyond the inspected command
 	case wrappers[name] || name == "xargs":
 	case name == "bash" || name == "sh" || name == "zsh" || name == "dash" || name == "ksh":
+		if name == "zsh" || len(args) < 3 || args[1] != "-c" || os.Getenv("BASH_ENV") != "" || os.Getenv("ENV") != "" {
+			x.other = true
+		}
 	case name == "eval":
 	default:
 		x.other = true

@@ -57,8 +57,9 @@ type Bound struct {
 type DiscoverySpec struct {
 	Command []string `json:"command"`
 	// CatalogURL is the harness's own remote catalog endpoint. When set, the adapter revalidates it with the
-	// provider's cache validator (ETag) and the inventory reports `remote_verified` freshness: the provider itself
-	// confirmed the catalog is current. An endpoint that does not confirm currency fails the refresh; the prior
+	// provider's cache validator (ETag), and verifies every local model against the provider-qualified model IDs
+	// in that catalog body before reporting `remote_verified`. The body must be a provider-keyed object whose
+	// entries have a models map (the models.opencode.ai schema). An endpoint that does not confirm currency fails the refresh; the prior
 	// snapshot is never reused silently.
 	CatalogURL string `json:"catalog_url,omitempty"`
 }
