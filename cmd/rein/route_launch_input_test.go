@@ -49,9 +49,10 @@ func TestGraphPromptSlotCanonicalAndRejectAmbiguity(t *testing.T) {
 
 func TestGraphPromptSlotNativeCruxSelection(t *testing.T) {
 	prompt := "approved task\n'\" $(touch must-not-run)"
+	pluginRoot := filepath.Join(t.TempDir(), "crux plugin")
 	for _, argv := range [][]string{
-		{"claude", "--plugin-dir", "/absolute/crux plugin", "--agent", "crux:crux-agent", "--model", "m", "-p", prompt},
-		{"claude", "-p", prompt, "--agent", "crux:crux-comment-reviewer", "--plugin-dir", "/absolute/crux"},
+		{"claude", "--plugin-dir", pluginRoot, "--agent", "crux:crux-agent", "--model", "m", "-p", prompt},
+		{"claude", "-p", prompt, "--agent", "crux:crux-comment-reviewer", "--plugin-dir", pluginRoot},
 		{"agy", "--agent", "crux", "--model", "m", "--effort", "low", "--print", prompt},
 	} {
 		slot, err := graphPromptSlot(argv)
@@ -90,11 +91,12 @@ func TestGraphLaunchInputFourHarnessSubprocesses(t *testing.T) {
 	}
 	defer control.Close()
 	d := &routing.Decision{Run: p.Run, Task: "task", Attempt: "current", Worktree: e.wt, ContractHash: e.hash}
+	pluginRoot := filepath.Join(t.TempDir(), "crux plugin")
 	original := "งานที่อนุมัติ\n'\" $(touch should-not-exist) `echo bad`"
 	t.Setenv("REIN_HANDOFF_PATH", "untrusted-env-receipt")
 	for _, argv := range [][]string{
 		{"claude", "-p", original, "--model", "m"},
-		{"claude", "--plugin-dir", "/absolute/crux plugin", "--agent", "crux:crux-agent", "-p", original, "--model", "m"},
+		{"claude", "--plugin-dir", pluginRoot, "--agent", "crux:crux-agent", "-p", original, "--model", "m"},
 		{"codex", "exec", "-m", "m", original},
 		{"agy", "--print", original, "--model", "m"},
 		{"agy", "--agent", "crux", "--print", original, "--model", "m"},

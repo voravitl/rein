@@ -6,7 +6,8 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 SPEC = importlib.util.spec_from_file_location('sdk_readiness', Path(__file__).resolve().parents[1] / 'scripts/sdk-readiness.py')
 SDK = importlib.util.module_from_spec(SPEC)
@@ -101,11 +102,36 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as directory:
             marker = Path(directory) / 'pid'
             script = 'import os,time,pathlib; pathlib.Path("pid").write_text(str(os.getpid())); time.sleep(20)'
-            with self.assertRaises(asyncio.TimeoutError):
-                await asyncio.wait_for(SDK.command([sys.executable, '-c', script], directory), .3)
+            processes = []
+            spawn = asyncio.create_subprocess_exec
+
+            async def capture(*args, **kwargs):
+                process = await spawn(*args, **kwargs)
+                processes.append(process)
+                return process
+
+            with patch.object(SDK.asyncio, "create_subprocess_exec", capture):
+                with self.assertRaises(asyncio.TimeoutError):
+                    await asyncio.wait_for(SDK.command([sys.executable, '-c', script], directory), .3)
+            self.assertEqual(len(processes), 1)
+            self.assertIsNotNone(processes[0].returncode)
             self.assertTrue(marker.exists())
-            with self.assertRaises(ProcessLookupError):
-                os.kill(int(marker.read_text()), 0)
+            if os.name == "posix":
+                with self.assertRaises(ProcessLookupError):
+                    os.kill(int(marker.read_text()), 0)
+
+    async def test_windows_output_limit_kills_and_reaps_owned_process(self):
+        process = SimpleNamespace(
+            stdin=Mock(drain=AsyncMock()), stdout=Mock(read=AsyncMock(return_value=b"x" * (SDK.LIMIT + 1))),
+            returncode=None, pid=123, kill=Mock(), wait=AsyncMock(return_value=1))
+        with patch.object(SDK.asyncio, "create_subprocess_exec", AsyncMock(return_value=process)), \
+                patch.object(SDK.os, "name", "nt"), \
+                patch.object(SDK.os, "killpg", create=True) as killpg:
+            with self.assertRaisesRegex(SDK.InspectionError, "output_limit"):
+                await SDK.command(["fixture"], ".")
+        process.kill.assert_called_once_with()
+        process.wait.assert_awaited_once_with()
+        killpg.assert_not_called()
 
     async def test_missing_cli_is_bounded_error(self):
         with patch.object(SDK.shutil, 'which', return_value=None):

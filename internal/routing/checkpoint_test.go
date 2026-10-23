@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -184,6 +185,9 @@ func TestCheckpointRefusesUnrepresentableStates(t *testing.T) {
 func TestVerifyCheckpointDetectsIndexAndModeDrift(t *testing.T) {
 	for _, scenario := range []string{"index", "executable"} {
 		t.Run(scenario, func(t *testing.T) {
+			if scenario == "executable" && runtime.GOOS == "windows" {
+				t.Skip("Windows chmod does not set POSIX execute mode bits")
+			}
 			wt := cpRepo(t)
 			if _, err := FinalizeCheckpoint("t", "a1", "r", wt, "origin/main", []string{"blob.bin", "link.txt"}, "ch"); err != nil {
 				t.Fatal(err)
@@ -421,10 +425,15 @@ func TestProductionCheckpointRestoresExecutableAndChangedSource(t *testing.T) {
 	if err := verifyCheckpointAt(cp, dest, cp.BaseSHA); err != nil {
 		t.Fatal(err)
 	}
-	fi, err := os.Stat(filepath.Join(dest, "staged.txt"))
-	if err != nil || fi.Mode().Perm()&0o111 == 0 {
-		t.Fatalf("executable mode lost: %v %v", fi, err)
-	}
+	t.Run("executable mode", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Windows chmod does not set POSIX execute mode bits")
+		}
+		fi, err := os.Stat(filepath.Join(dest, "staged.txt"))
+		if err != nil || fi.Mode().Perm()&0o111 == 0 {
+			t.Fatalf("executable mode lost: %v %v", fi, err)
+		}
+	})
 }
 
 func TestCheckpointRefusesHiddenIndexChanges(t *testing.T) {

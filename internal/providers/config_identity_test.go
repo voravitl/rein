@@ -80,11 +80,7 @@ func TestCodexMetadataMismatchVetoDoesNotInvokeModel(t *testing.T) {
 	if err := os.WriteFile(response, []byte(raw), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "orca"), []byte("#!/bin/sh\ncat \"$REIN_TEST_ORCA_RESPONSE\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("REIN_TEST_ORCA_RESPONSE", response)
+	orca := installTestOrca(t, response)
 	writeAuth := func(id string) {
 		t.Helper()
 		data := fmt.Sprintf(`{"auth_mode":"chatgpt","tokens":{"account_id":%q,"access_token":"private-token"}}`, id)
@@ -92,7 +88,7 @@ func TestCodexMetadataMismatchVetoDoesNotInvokeModel(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := Config{RequireOrcaQuota: true, Providers: map[string]Provider{"p": {Agent: "codex", Model: "test", QuotaWindows: []string{"weekly"}, Probe: []string{"sh", "-c", `printf x >> "$1"; printf OK`, "probe", marker}}}}
+	cfg := Config{RequireOrcaQuota: true, Providers: map[string]Provider{"p": {Agent: "codex", Model: "test", QuotaWindows: []string{"weekly"}, Probe: []string{orca, "probe", marker}}}}
 	writeAuth("source-account")
 	snapshots, err := ReadOrcaQuota()
 	if err != nil {

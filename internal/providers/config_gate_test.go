@@ -14,7 +14,8 @@ func TestOrcaQuotaGuardStopsEveryProbeSurface(t *testing.T) {
 	for _, surface := range []string{"single", "retry", "parallel"} {
 		t.Run(surface, func(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "called")
-			raw, _ := json.Marshal(map[string]any{"require_orca_quota": true, "providers": map[string]Provider{"p": {Agent: "codex", Model: "test", Probe: []string{"sh", "-c", `printf called > "$1"; printf OK`, "probe", marker}}}})
+			orca := installTestOrca(t, filepath.Join(t.TempDir(), "response"))
+			raw, _ := json.Marshal(map[string]any{"require_orca_quota": true, "providers": map[string]Provider{"p": {Agent: "codex", Model: "test", Probe: []string{orca, "probe", marker}}}})
 			var cfg Config
 			if err := json.Unmarshal(raw, &cfg); err != nil {
 				t.Fatal(err)
@@ -95,12 +96,7 @@ func TestQuotaGateReadsOrcaAndRechecksBetweenCalls(t *testing.T) {
 	d := t.TempDir()
 	response := filepath.Join(d, "response.json")
 	marker := filepath.Join(d, "probe")
-	script := filepath.Join(d, "orca")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat \"$REIN_TEST_ORCA_RESPONSE\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", d+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("REIN_TEST_ORCA_RESPONSE", response)
+	orca := installTestOrca(t, response)
 	write := func(used int) {
 		t.Helper()
 		data := fmt.Sprintf(`{"ok":true,"result":{"rateLimits":{"codex":{"status":"ok","updatedAt":%d,"weekly":{"usedPercent":%d}}}}}`, time.Now().UnixMilli(), used)
@@ -108,7 +104,7 @@ func TestQuotaGateReadsOrcaAndRechecksBetweenCalls(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := Config{RequireOrcaQuota: true, Providers: map[string]Provider{"p": {Agent: "codex", Model: "test", QuotaWindows: []string{"weekly"}, Probe: []string{"sh", "-c", `printf x >> "$1"; printf OK`, "probe", marker}}}}
+	cfg := Config{RequireOrcaQuota: true, Providers: map[string]Provider{"p": {Agent: "codex", Model: "test", QuotaWindows: []string{"weekly"}, Probe: []string{orca, "probe", marker}}}}
 	write(20)
 	if r := Probe(&cfg, "p", time.Second); r.State != "up" {
 		t.Fatal(r)
@@ -153,11 +149,7 @@ func TestQuotaRetryRechecksAfterTimeoutWithoutSecondModelCall(t *testing.T) {
 	dir := t.TempDir()
 	response := filepath.Join(dir, "response")
 	marker := filepath.Join(dir, "calls")
-	if err := os.WriteFile(filepath.Join(dir, "orca"), []byte("#!/bin/sh\ncat \"$REIN_TEST_ORCA_RESPONSE\"\n"), 0700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Setenv("REIN_TEST_ORCA_RESPONSE", response)
+	orca := installTestOrca(t, response)
 	raw := func(used int) string {
 		return fmt.Sprintf(`{"ok":true,"result":{"rateLimits":{"codex":{"status":"ok","updatedAt":%d,"weekly":{"usedPercent":%d}}}}}`, time.Now().UnixMilli(), used)
 	}
@@ -165,8 +157,8 @@ func TestQuotaRetryRechecksAfterTimeoutWithoutSecondModelCall(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("REIN_TEST_EXHAUSTED_JSON", raw(100))
-	cfg := Config{RequireOrcaQuota: true, Providers: map[string]Provider{"p": {Agent: "codex", Model: "test", QuotaWindows: []string{"weekly"}, Probe: []string{"sh", "-c", `printf x >> "$1"; printf '%s' "$REIN_TEST_EXHAUSTED_JSON" > "$REIN_TEST_ORCA_RESPONSE"; sleep 5`, "probe", marker}}}}
-	r := ProbeWithRetry(&cfg, "p", 100*time.Millisecond)
+	cfg := Config{RequireOrcaQuota: true, Providers: map[string]Provider{"p": {Agent: "codex", Model: "test", QuotaWindows: []string{"weekly"}, Probe: []string{orca, "probe", marker}}}}
+	r := ProbeWithRetry(&cfg, "p", time.Second)
 	b, _ := os.ReadFile(marker)
 	if string(b) != "x" || r.State != "down" || !strings.Contains(r.Detail, "quota precheck") {
 		t.Fatalf("retry spent despite exhausted quota: %+v calls=%q", r, b)

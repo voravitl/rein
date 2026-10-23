@@ -97,6 +97,7 @@ class CodexReadinessTests(unittest.TestCase):
         with self.assertRaisesRegex(module.InspectionError, "unexpected_server_request"):
             asyncio.run(check())
 
+    @unittest.skipUnless(os.name == "posix", "fixture requires POSIX shebang execution and PID probing")
     def test_actual_process_exact_metadata_methods_large_response_and_reaping(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -123,6 +124,7 @@ class CodexReadinessTests(unittest.TestCase):
             with self.assertRaises(ProcessLookupError):
                 os.kill(int((root / "pid").read_text()), 0)
 
+    @unittest.skipUnless(os.name == "posix", "fixture requires POSIX shebang execution and PID probing")
     def test_timeout_kills_and_reaps_only_owned_process(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

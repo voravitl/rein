@@ -7,12 +7,30 @@ import (
 	"github.com/voravitl/rein/internal/providers"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/voravitl/rein/internal/budget"
 )
+
+// The quota CLI is the native test binary, so Windows does not need shebang support.
+func TestMain(m *testing.M) {
+	if filepath.Base(os.Args[0]) == "orca" || filepath.Base(os.Args[0]) == "orca.exe" {
+		if !slices.Equal(os.Args[1:], []string{"account", "list", "--json"}) {
+			os.Exit(2)
+		}
+		data, err := os.ReadFile(os.Getenv("REIN_TEST_ORCA_RESPONSE"))
+		if err != nil {
+			os.Exit(1)
+		}
+		fmt.Print(string(data))
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func TestQuotaPrecheckExcludesBeforeReservationAndInjectedProbe(t *testing.T) {
 	w := newWorld(t)
@@ -47,11 +65,25 @@ func TestQuotaLaunchValidationRechecksExhaustedQuota(t *testing.T) {
 	c, path, log := fixture(t)
 	dir := t.TempDir()
 	response := filepath.Join(dir, "response")
-	if err := os.WriteFile(filepath.Join(dir, "orca"), []byte("#!/bin/sh\ncat \"$REIN_TEST_ORCA_RESPONSE\"\n"), 0700); err != nil {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "orca"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0700); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("REIN_TEST_ORCA_RESPONSE", response)
+	t.Setenv("ORCA_ENVIRONMENT", "")
+	t.Setenv("ORCA_PAIRING_CODE", "")
 	writeQuota := func(used int) {
 		t.Helper()
 		data := fmt.Sprintf(`{"ok":true,"result":{"rateLimits":{"codex":{"status":"ok","updatedAt":%d,"weekly":{"usedPercent":%d}}}}}`, time.Now().UnixMilli(), used)

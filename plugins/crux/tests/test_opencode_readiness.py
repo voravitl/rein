@@ -125,6 +125,7 @@ class ReadinessTests(unittest.TestCase):
                     with self.assertRaises(ProcessLookupError):
                         os.kill(int(marker.read_text()), 0)
 
+    @unittest.skipUnless(os.name == "posix", "fixture requires POSIX shebang execution and PID probing")
     def test_private_server_metadata_success_and_eof_cleanup(self):
         report = self.run_fake('ready')
         self.assertEqual(report['status'], 'METADATA_READY')
@@ -133,14 +134,17 @@ class ReadinessTests(unittest.TestCase):
         self.assertEqual(report['cleanup'], {'method': 'stdin_eof', 'exit_code': 0, 'reaped': True})
         self.assertTrue(report['temporary_root_removed'])
 
+    @unittest.skipUnless(os.name == "posix", "fixture requires POSIX shebang execution and PID probing")
     def test_private_server_inactive_is_not_ready(self):
         self.assertEqual(self.run_fake('inactive')['status'], 'NOT_READY')
 
+    @unittest.skipUnless(os.name == "posix", "fixture requires POSIX shebang execution and PID probing")
     def test_private_server_schema_and_isolation_fail_closed(self):
         for mode in ['schema', 'escape']:
             with self.subTest(mode=mode), self.assertRaises(module.InspectionError):
                 self.run_fake(mode)
 
+    @unittest.skipUnless(os.name == "posix", "fixture requires POSIX shebang execution and PID probing")
     def test_private_server_startup_timeout_is_bounded_and_reaped(self):
         with self.assertRaises(asyncio.TimeoutError):
             self.run_fake('hang', timeout=1)

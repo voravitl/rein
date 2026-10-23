@@ -43,7 +43,10 @@ async def command(argv, cwd, payload=b''):
     finally:
         if process.returncode is None:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
             except ProcessLookupError:
                 pass
             await process.wait()

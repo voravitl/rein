@@ -6,6 +6,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "live-routing-smoke.py"
 spec = importlib.util.spec_from_file_location("live_routing_smoke", SCRIPT)
@@ -141,6 +142,20 @@ class LiveRoutingSmokeTests(unittest.TestCase):
         self.assertEqual(commands[-2:], [("route", "settle", "--attempt", "review-attempt"),
                                          ("route", "settle", "--attempt", "worker-attempt")])
         self.assertTrue(any(c[:2] == ("route", "check") and "review" in c for c in commands))
+
+    def test_full_auto_preserves_source_bytes_with_windows_text_newlines(self):
+        runner, _, _ = self.run_mock_full_auto()
+        original = Path.write_text
+
+        def windows_write(path, text, *args, **kwargs):
+            if path.name == "quota_math.py":
+                with path.open("w", encoding="utf-8", newline="\r\n") as output:
+                    return output.write(text)
+            return original(path, text, *args, **kwargs)
+
+        with patch.object(Path, "write_text", windows_write):
+            runner.full_auto({"attempt": "worker-attempt"})
+        self.assertEqual((runner.wt / "src/quota_math.py").read_bytes(), smoke.GOOD.encode())
 
     def test_corrupt_review_handoff_does_not_record_success_or_release_holds(self):
         runner, commands, charges = self.run_mock_full_auto(corrupt_nonce=True)

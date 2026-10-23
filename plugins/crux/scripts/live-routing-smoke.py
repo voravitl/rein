@@ -473,7 +473,7 @@ print('17 objective cases PASS')
         if impl.get("nonce") != nonce:
             raise ValueError("automatic worker handoff nonce mismatch")
         source = validate_source(impl["source"])
-        (self.wt / "src/quota_math.py").write_text(source)
+        (self.wt / "src/quota_math.py").write_bytes(source.encode("utf-8"))
         check = """import runpy
 f=runpy.run_path('src/quota_math.py')['remaining_percent']
 for x,y in [(0,100),(100,0),(73,27),(12.5,87.5)]: assert f(x)==y
