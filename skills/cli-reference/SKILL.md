@@ -1,6 +1,6 @@
 ---
 name: cli-reference
-description: "Complete CLI command reference and operational guide for rein. Use whenever you need to know how to invoke rein commands (contract, drift, hook, hooks, run, budget, task, ledger, providers, route, verdict, approve, advise, orca, e2e, spec, sandbox, checkpoint, hunter, supervisor, version), understand CLI flags, interpret exit codes, or find copy-paste operational recipes."
+description: "Complete CLI command reference and operational guide for rein. Use whenever you need to know how to invoke rein commands (config, contract, drift, hook, hooks, run, budget, task, ledger, providers, route, verdict, approve, advise, orca, e2e, spec, sandbox, checkpoint, hunter, supervisor, version), understand CLI flags, interpret exit codes, or find copy-paste operational recipes."
 ---
 
 # `rein` CLI Command Reference & AI Guide
@@ -14,6 +14,7 @@ This skill provides AI models (coordinators, workers, reviewers, advisors) with 
 | When you need to... | Run this command | Key flags | Exit code |
 |---|---|---|---|
 | Set task boundary for worker | `rein contract new` | `--name`, `--allow`, `--scope`, `--run-dir` | `0` = ok |
+| Write/inspect Crux provider config | `rein config init/check --dir DIR` | `--model`, `--quota` | `0` = ok, `1` = error, `2` = invalid flag |
 | Inspect active task allowlist | `rein contract show <name>` | `<name>` | `0` = ok |
 | Guard worker worktree | `rein hooks install <name>` / `rein hooks uninstall <name>` | `--vendors` | `0` = installed, `2` = refused |
 | Inspect a PreToolUse hook event | `rein hook` | `--vendor` | `0` = allow, `1` = bad flag (deny via stderr) |
