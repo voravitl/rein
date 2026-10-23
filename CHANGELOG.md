@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The guard refuses a command name that expands at run time (`$ORCA`, `$(which rm)`). Such a name could be any
+  command, so the rules keyed by name (worker spawn, route admission, write targets) no longer apply to it, and a
+  worker could write or launch outside the contract. A literal basename with a dynamic directory is still judged by
+  its name, and an in-command assignment still resolves.
+
 ## 0.9.1 — 2026-10-20
 
 ### Changed
