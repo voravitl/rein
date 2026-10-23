@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/voravitl/rein/internal/contract"
@@ -48,8 +49,8 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 		return nil, fmt.Errorf("load tick: %w", err)
 	}
 
-	if tick == nil {
-		result.Message = "no tick data available"
+	if tick == nil || IsTickStale(tick) {
+		result.Message = "no fresh tick data available"
 		return result, nil
 	}
 
@@ -64,11 +65,20 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 		}
 
 		// Task exists but not in tick - could be DEAD or just not started
-		result.Status = StatusDead
-		result.Message = "worker not found in tick"
+		result.Status = StatusUnknown
+		result.Message = "worker has no process observation; it may not have started"
 		return result, nil
 	}
 
+	if worker.Observation == "unknown" {
+		result.Message = "worker process identity or telemetry unavailable"
+		return result, nil
+	}
+	if worker.Observation == "gone" {
+		result.Status = StatusDead
+		result.Message = "recorded worker process is gone"
+		return result, nil
+	}
 	result.CPUPercent = worker.CPUPercent
 
 	// Parse last seen
@@ -80,7 +90,11 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 
 	// Check seen log for recent activity using contract.SeenPath
 	seenPath := contract.SeenPath(task)
-	seenAge, inFlight := checkSeenLog(seenPath)
+	generation := ""
+	if c, err := contract.Load(task); err == nil {
+		generation = c.HooksGeneration
+	}
+	seenAge, inFlight := checkSeenLogGeneration(seenPath, generation)
 
 	// Determine status based on signals
 	now := time.Now()
@@ -109,7 +123,7 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 	}
 
 	// STUCK: no recent activity and flat CPU
-	if seenAge > 15*time.Minute && result.CPUPercent < 1.0 {
+	if result.LastSeenAt != nil && seenAge > 15*time.Minute && result.CPUPercent < 1.0 {
 		result.Status = StatusStuck
 		result.Message = "no progress, flat CPU"
 		return result, nil
@@ -133,6 +147,10 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 // checkSeenLog checks the seen log for recent activity and in-flight status.
 // Returns age of last event and whether a tool call is in-flight.
 func checkSeenLog(path string) (time.Duration, bool) {
+	return checkSeenLogGeneration(path, "")
+}
+
+func checkSeenLogGeneration(path, generation string) (time.Duration, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 24 * time.Hour, false // Assume old if can't read
@@ -146,6 +164,9 @@ func checkSeenLog(path string) (time.Duration, bool) {
 	// Parse last line for timestamp and event type
 	lastLine := lines[len(lines)-1]
 	parts := splitFields(lastLine)
+	if generation != "" && !strings.Contains(" "+lastLine+" ", " gen="+generation+" ") {
+		return 24 * time.Hour, false
+	}
 	if len(parts) < 3 {
 		return 24 * time.Hour, false
 	}
@@ -155,14 +176,14 @@ func checkSeenLog(path string) (time.Duration, bool) {
 	ts, err := time.Parse(time.RFC3339, parts[0])
 	if err != nil {
 		// Try the format without timezone (guard/hook.go:60 format)
-		ts, err = time.Parse("2006-01-02T15:04:05", parts[0])
+		ts, err = time.ParseInLocation("2006-01-02T15:04:05", parts[0], time.Local)
 		if err != nil {
 			return 24 * time.Hour, false
 		}
 	}
 
 	age := time.Since(ts)
-	inFlight := parts[2] == "PreToolUse" // PostToolUse clears in-flight
+	inFlight := (parts[2] == "PreToolUse" || parts[2] == "pretool") // PostToolUse clears in-flight
 
 	return age, inFlight
 }
@@ -198,7 +219,7 @@ func countDenials(common, task string, since time.Duration) int {
 			// Support both RFC3339 and 2006-01-02T15:04:05 formats
 			ts, err := time.Parse(time.RFC3339, parts[0])
 			if err != nil {
-				ts, err = time.Parse("2006-01-02T15:04:05", parts[0])
+				ts, err = time.ParseInLocation("2006-01-02T15:04:05", parts[0], time.Local)
 			}
 			if err == nil && ts.After(cutoff) {
 				count++

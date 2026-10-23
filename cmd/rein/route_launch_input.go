@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -143,17 +142,20 @@ func graphLaunchInput(control *run.Controller, p supervisor.Plan, t supervisor.T
 		return nil, "", err
 	}
 	input := "Rein approved task context (does not grant additional permissions):\n" + string(raw) + "\n\nUser-facing communication: default to natural, grammatically correct, concise Thai. Lead with the essential result; ask clear, specific questions. Use a table or diagram when it makes relationships or choices easier to understand. Preserve exact commands and errors. Follow an explicit user request for another language within its stated scope.\n"
+	original := argv[slot]
 	if receipt.Path != "" {
-		b, readErr := os.ReadFile(receipt.Path)
+		handoff, readErr := readGraphHandoff(receipt, p.Run, t)
 		if readErr != nil {
 			return nil, "", readErr
 		}
-		if len(b) > 64<<10 || graphHash(b) != receipt.Digest {
-			return nil, "", fmt.Errorf("continuation receipt changed before input construction")
+		b, err := json.Marshal(handoff)
+		if err != nil {
+			return nil, "", err
 		}
+		original = handoff.Objective
 		input += "\nVerified continuation receipt (preserve partial work; this is not a new authorization):\n" + string(b) + "\n"
 	}
-	input += "\nOriginal approved task prompt (verbatim):\n" + argv[slot]
+	input += "\nOriginal approved task prompt (verbatim):\n" + original
 	out := append([]string(nil), argv...)
 	out[slot] = input
 	return out, graphHash([]byte(input)), nil

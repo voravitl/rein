@@ -17,9 +17,12 @@ Run `sh scripts/doctor.sh` in a clone (or `/rein:setup` after installing) to che
 | Tool | Why | Install | Tested |
 |---|---|---|---|
 | Claude Code | plugin, hooks (exec form), `CLAUDE_PLUGIN_DATA` | https://code.claude.com | 2.1.293 |
-| git | worktrees, drift check (`diff`, `status -z`, `range-diff`) | system package | 2.50 |
+| git 2.24+ | revision resolution (`rev-parse --end-of-options`), worktrees, drift check (`diff`, `status -z`, `range-diff`) | system package | 2.50 |
 | POSIX `sh` | the SessionStart installer | built in; on Windows, Git for Windows (Git Bash) | macOS sh |
 | Go 1.26+ (`go.mod`) **or** curl | build the binary on first session, or download the release binary for the plugin version (checked against `SHA256SUMS`) | https://go.dev/dl/ or `brew install go` | go 1.27.1 |
+
+Git 2.24 introduced `--end-of-options`, required by revision-bound verdicts and approvals; see the
+[Git 2.24 release notes](https://github.com/git/git/blob/v2.24.0/Documentation/RelNotes/2.24.0.txt).
 
 ### Pipeline (multi-agent runs)
 | Tool | Why | Install | Tested |

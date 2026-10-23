@@ -20,6 +20,10 @@ import (
 )
 
 func quotaGraphFixture(t *testing.T, override ...string) (*e2eEnv, string, supervisor.Plan) {
+	return quotaGraphFixtureForHarness(t, "", override...)
+}
+
+func quotaGraphFixtureForHarness(t *testing.T, harness string, override ...string) (*e2eEnv, string, supervisor.Plan) {
 	t.Helper()
 	worker := `if [ -z "$REIN_HANDOFF_PATH" ]; then
  printf 'partial\n' > src/a.go
@@ -51,6 +55,36 @@ printf 'fixed\n' > src/a.go`
 		backup.Billing = &billing
 		backup.Pool = "backup-quota"
 		backup.Capabilities = append(append([]string(nil), backup.Capabilities...), "continuation")
+		backupArgv := p.Tasks[0].Launches["w"]
+		if harness == "opencode2" {
+			backup.Agent, backup.Model = harness, "openai/gpt-test"
+			billing.Mode, billing.Unit = "subscription", "subscription_percent"
+			e.c.HooksInstalled = append(e.c.HooksInstalled, "opencode")
+			cli := filepath.Join(e.root, harness)
+			body := `#!/bin/sh
+case "$1" in
+--version) echo 2.0.32; exit;;
+models) echo openai/gpt-test; exit;;
+run) ;;
+*) exit 2;;
+esac
+cat > "$GRAPH_INPUT_CAPTURE"
+test -n "$REIN_HANDOFF_PATH" || exit 3
+test -n "$REIN_HANDOFF_SHA256" || exit 4
+grep '"previous_attempt"' "$GRAPH_INPUT_CAPTURE" >/dev/null || exit 5
+grep '"allow"' "$GRAPH_INPUT_CAPTURE" >/dev/null || exit 6
+grep '"verify"' "$GRAPH_INPUT_CAPTURE" >/dev/null || exit 7
+test "$(tail -1 "$GRAPH_INPUT_CAPTURE")" = 'approved task' || exit 8
+test "$(cat src/a.go)" = partial || exit 9
+printf 'fixed\n' > src/a.go
+`
+			if err := os.WriteFile(cli, []byte(body), 0700); err != nil {
+				t.Fatal(err)
+			}
+			cfg.Discovery[harness] = providers.DiscoverySpec{Command: []string{cli}}
+			// A different fallback prompt must not silently replace the original objective.
+			backupArgv = []string{cli, "run", "--standalone", "-m", "{model}#{effort}", "provider-specific fallback wording"}
+		}
 		for i := 0; i < 5; i++ {
 			id := fmt.Sprintf("backup-seed-%d", i)
 			launch := ledger.Row{Kind: "routing_launch", Attempt: id, Run: "old", Task: "old", Worker: &ledger.AgentModel{Agent: backup.Agent, Model: backup.Model}, Type: "backend", Effort: backup.Effort, Config: routing.ProviderFingerprint(backup), Suite: "s1", Tier: "T1"}
@@ -77,7 +111,7 @@ printf 'fixed\n' > src/a.go`
 			t.Fatal(err)
 		}
 		p.Pools = append(p.Pools, "backup-quota")
-		p.Tasks[0].Launches["zbackup"] = p.Tasks[0].Launches["w"]
+		p.Tasks[0].Launches["zbackup"] = backupArgv
 	})
 }
 
@@ -316,5 +350,67 @@ func TestGraphRetryChecksCheckpointAfterPrepareAndOnRestart(t *testing.T) {
 	}
 	if routing.ReceiptUsed(d.Attempt) {
 		t.Fatal("restart consumed rejected fallback receipt")
+	}
+}
+
+// These are two protocol-faithful local CLI fixtures, not paid model calls.
+// They exercise discovery, argv->stdin transport, checkpoint, quota, leases,
+// settlement, verification and restart through the production supervisor CLI.
+func TestCrossProviderHandoffAgyToOpenCode(t *testing.T) {
+	e, path, _ := quotaGraphFixtureForHarness(t, "opencode2")
+	capturePath := filepath.Join(e.root, "received-input")
+	t.Setenv("GRAPH_INPUT_CAPTURE", capturePath)
+	if out, code := capture(t, func() int { return cmdSupervisor([]string{"run", "--plan", path}) }); code != 0 {
+		t.Fatalf("cross-provider execution failed: %d %s", code, out)
+	}
+	raw, err := os.ReadFile(filepath.Join(e.root, "contracts", "routes", "decisions", "task.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var d routing.Decision
+	if err := json.Unmarshal(raw, &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.Provider != "zbackup" || d.Agent != "opencode2" {
+		t.Fatalf("not a cross-harness fallback: %+v", d)
+	}
+	b, err := os.ReadFile(graphEvidencePath(d.Attempt, "execution"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var execution graphExecution
+	if err := json.Unmarshal(b, &execution); err != nil {
+		t.Fatal(err)
+	}
+	input, err := os.ReadFile(capturePath)
+	if err != nil || execution.InputDigest != graphHash(input) {
+		t.Fatalf("delivered input digest mismatch: %v", err)
+	}
+	handoffBytes, err := os.ReadFile(execution.HandoffPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt graphHandoffPayload
+	if err := json.Unmarshal(handoffBytes, &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.SourceProvider != "w" || receipt.SourceHarness != "agy" || receipt.Objective != "approved task" || receipt.ContractHash != e.hash {
+		t.Fatalf("lost original context: %+v", receipt)
+	}
+	if err := routing.VerifyCheckpoint("task", d.Attempt); err != nil {
+		t.Fatal(err)
+	}
+	if busy := routing.TaskBusy("task"); busy != "" {
+		t.Fatal(busy)
+	}
+	if _, err := os.Stat(graphEvidencePath(d.Attempt, "verification")); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := capture(t, func() int { return cmdSupervisor([]string{"run", "--plan", path}) }); code != 0 {
+		t.Fatalf("restart: %d %s", code, out)
+	}
+	after, _ := os.ReadFile(filepath.Join(e.root, "contracts", "routes", "decisions", "task.json"))
+	if string(after) != string(raw) {
+		t.Fatal("restart dispatched duplicate writer")
 	}
 }

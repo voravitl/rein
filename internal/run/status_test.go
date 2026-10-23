@@ -131,7 +131,7 @@ func TestGetTaskStatusStuck(t *testing.T) {
 	}
 }
 
-func TestGetTaskStatusDead(t *testing.T) {
+func TestMissingWorkerIsUnknown(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", tmpDir)
 	t.Setenv("PIPELINE_CONTRACTS", tmpDir)
@@ -157,8 +157,8 @@ func TestGetTaskStatusDead(t *testing.T) {
 		t.Fatalf("GetTaskStatus failed: %v", err)
 	}
 
-	if result.Status != StatusDead {
-		t.Errorf("expected DEAD, got %s (message: %s)", result.Status, result.Message)
+	if result.Status != StatusUnknown {
+		t.Errorf("expected UNKNOWN, got %s (message: %s)", result.Status, result.Message)
 	}
 }
 

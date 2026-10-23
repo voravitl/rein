@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ func NewRunner(client OrcaClient, evidenceDir string) *Runner {
 
 // Run executes all steps in the Spec sequentially, capturing evidence and reporting results.
 func (r *Runner) Run(spec *Spec) (*TestReport, error) {
+	r.cachedSnapshot = nil
 	if r.evidenceDir != "" {
 		if err := os.MkdirAll(r.evidenceDir, 0o755); err != nil {
 			return nil, fmt.Errorf("create evidence directory: %w", err)
@@ -66,8 +68,7 @@ func (r *Runner) Run(spec *Spec) (*TestReport, error) {
 	if err != nil {
 		report.DurationMS = time.Since(startTime).Milliseconds()
 		report.FailureMessage = fmt.Sprintf("failed to create orca browser tab: %v", err)
-		r.writeReports(spec, report)
-		return report, fmt.Errorf("create browser tab: %w", err)
+		return report, errors.Join(fmt.Errorf("create browser tab: %w", err), r.writeReports(spec, report))
 	}
 
 	defer func() {
@@ -130,11 +131,11 @@ func (r *Runner) Run(spec *Spec) (*TestReport, error) {
 	report.Success = allPassed
 	report.DurationMS = time.Since(startTime).Milliseconds()
 
-	r.writeReports(spec, report)
-	return report, nil
+	return report, r.writeReports(spec, report)
 }
 
 func (r *Runner) executeStep(ctx context.Context, client OrcaClient, pageID, baseURL string, step Step, index int) error {
+	r.cachedSnapshot = nil
 	switch strings.ToLower(step.Action) {
 	case "goto":
 		url := r.resolveURL(baseURL, step.URL)
@@ -157,13 +158,14 @@ func (r *Runner) executeStep(ctx context.Context, client OrcaClient, pageID, bas
 		return nil
 
 	case "assert_text":
-		if r.cachedSnapshot == nil {
-			snap, err := client.Snapshot(pageID)
-			if err != nil {
-				return fmt.Errorf("snapshot before assert_text: %w", err)
-			}
-			r.cachedSnapshot = snap
+		snap, err := client.Snapshot(pageID)
+		if err != nil {
+			return fmt.Errorf("snapshot before assert_text: %w", err)
 		}
+		if snap == nil {
+			return fmt.Errorf("empty snapshot before assert_text")
+		}
+		r.cachedSnapshot = snap
 		if !strings.Contains(r.cachedSnapshot.Snapshot, step.Value) {
 			return fmt.Errorf("text %q not found in page snapshot", step.Value)
 		}
@@ -459,17 +461,39 @@ func (r *Runner) captureFailureDiagnostics(pageID string, stepIndex int) {
 	}
 }
 
-func (r *Runner) writeReports(spec *Spec, report *TestReport) {
+func (r *Runner) writeReports(spec *Spec, report *TestReport) error {
 	if r.evidenceDir == "" {
-		return
+		if spec.RequirePDF {
+			report.Success = false
+			return errors.New("required PDF needs an evidence directory")
+		}
+		return nil
 	}
 
+	// Validate destinations before generating or publishing successful evidence.
+	for _, name := range []string{"report.json", "report.md"} {
+		path, err := r.evidencePath(name)
+		if err == nil {
+			if info, statErr := os.Stat(path); statErr == nil && !info.Mode().IsRegular() {
+				err = fmt.Errorf("%s is not a regular file", name)
+			} else if statErr != nil && !os.IsNotExist(statErr) {
+				err = statErr
+			}
+		}
+		if err != nil {
+			return r.reportFailure(report, err)
+		}
+	}
 	if pdfPath, err := BuildBoardPDF(spec, report, r.evidenceDir); err == nil && pdfPath != "" {
 		report.PDFPath = pdfPath
-	}
-
-	if data, err := json.MarshalIndent(report, "", "  "); err == nil {
-		_ = os.WriteFile(filepath.Join(r.evidenceDir, "report.json"), data, 0o644)
+	} else {
+		if err == nil {
+			err = errors.New("renderer returned no PDF")
+		}
+		if spec.RequirePDF {
+			return r.reportFailure(report, fmt.Errorf("required PDF: %w", err))
+		}
+		report.EvidenceWarnings = append(report.EvidenceWarnings, "optional PDF: "+err.Error())
 	}
 
 	var sb strings.Builder
@@ -487,6 +511,9 @@ func (r *Runner) writeReports(spec *Spec, report *TestReport) {
 	if report.FailureMessage != "" {
 		sb.WriteString(fmt.Sprintf("- **Failure**: `%s`\n", report.FailureMessage))
 	}
+	for _, warning := range report.EvidenceWarnings {
+		sb.WriteString("- **Evidence warning**: " + warning + "\n")
+	}
 	sb.WriteString("\n## Step Execution Summary\n\n")
 	sb.WriteString("| # | Action | Description | Result | Duration |\n")
 	sb.WriteString("|---|---|---|---|---|\n")
@@ -501,5 +528,55 @@ func (r *Runner) writeReports(spec *Spec, report *TestReport) {
 		}
 		sb.WriteString(fmt.Sprintf("| %d | `%s` | %s | %s | %d ms |\n", st.Index, st.Action, desc, res, st.DurationMS))
 	}
-	_ = os.WriteFile(filepath.Join(r.evidenceDir, "report.md"), []byte(sb.String()), 0o644)
+	if err := r.writeReportFile("report.md", []byte(sb.String())); err != nil {
+		return r.reportFailure(report, err)
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
+	if err == nil {
+		err = r.writeReportFile("report.json", data)
+	}
+	if err != nil {
+		return r.reportFailure(report, err)
+	}
+	return nil
+}
+
+func (r *Runner) writeReportFile(name string, data []byte) error {
+	path, err := r.evidencePath(name)
+	if err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(r.evidenceDir, ".report-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err = f.Write(data); err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path)
+	}
+	return err
+}
+
+func (r *Runner) reportFailure(report *TestReport, cause error) error {
+	report.Success = false
+	report.FailureMessage = "persist required evidence: " + cause.Error()
+	// Remove stale successful artifacts from this output directory. Never remove
+	// directories or follow symlinks. Best-effort failure JSON remains useful.
+	for _, name := range []string{"report.json", "report.md", "report.pdf"} {
+		path := filepath.Join(r.evidenceDir, name)
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+			_ = os.Remove(path)
+		}
+	}
+	report.PDFPath = ""
+	if b, err := json.MarshalIndent(report, "", "  "); err == nil {
+		_ = r.writeReportFile("report.json", b)
+	}
+	return errors.New(report.FailureMessage)
 }
