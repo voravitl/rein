@@ -190,34 +190,26 @@ Each item records what the first draft assumed and what was found:
    to ensure the user has visible proof of review and approval before merge.
 
    Approvals have no time expiry. Gate files are read whole and fail closed.
-4. **Approval, primary path.** This is a human-attention gate, not forgery-proof.
-   - `rein approve prompt --mr <n>` prints the exact `AskUserQuestion` input: rein's own wording with the MR
-     title, sha, tier, verdict summary and a fixed "Approve" option.
-   - `PreToolUse` denies an approval question in these cases:
-     - it is not byte-equal to the current template output;
-     - `answers` is pre-filled;
-     - `agent_id` is present;
-     - it does not come from the owner session.
-   - `PostToolUse` (paired by `tool_use_id`, which both events carry) records the approval only when the answer
-     is the fixed label.
-   - Residual, documented: Claude Code lets any `PreToolUse` hook answer `AskUserQuestion` programmatically
-     (`permissionDecision: allow` + `updatedInput.answers`). `PostToolUse` cannot tell such an answer from a
-     click, so another installed hook that auto-answers questions would defeat this path. The model itself does
-     not set `answers`, and rein denies it when present at its own `PreToolUse`.
-5. **Approval, fallback path.** `rein approve` run by the user in their own terminal.
+4. **Approval, terminal-only path.** `rein approve prompt --mr <n>` prints a preview marked
+   `approval_mode: terminal_only`, including the MR, immutable sha, tier, verdict summary and a shell-quoted
+   terminal command. The user runs `rein approve` in their own terminal.
+5. **Interactive approval disabled.** `AskUserQuestion` responses do not create approval records.
+   The hook denies interactive merge approval because canonical request identity and single-use tool/session
+   pairing have not been established with real fixtures. `PostToolUse` does not record these responses.
 6. **Denies.** Every deny names what is missing and the exact next step. Every rejected-approval case gets a
    golden test, because a previous implementation rejected genuine human approvals.
-7. **Gate before coding B2.** A real interactive spike captures payloads as golden fixtures for six cases:
+7. **Gate before re-enabling interactive approval.** A real interactive spike must capture payloads as golden
+   fixtures for seven cases:
    - (a) a real click;
    - (b) `answers` pre-filled by the model;
    - (c) Other or decline;
    - (d) multiSelect across MRs;
    - (e) `bypassPermissions`;
    - (f) a subagent asking;
-   - (g) another `PreToolUse` hook answering through `updatedInput` (expected to pass unnoticed; this measures the
-     residual and decides whether the button path is acceptable on a machine with such hooks).
+   - (g) another `PreToolUse` hook answering through `updatedInput` (must not create an approval).
 
-   If any of (a)–(f) fails, B2 ships with the terminal path only and this ADR is amended.
+   Interactive approval stays disabled unless all seven cases establish the required request identity and
+   single-use tool/session pairing.
 
 ### B3. Spec lint (later)
 `rein spec check`, enforced on spawn, refuses to start a worker when:

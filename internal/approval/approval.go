@@ -55,7 +55,7 @@ func CheckPreToolUse(toolInput string, agentID string, sessionID string, ownerSe
 		return "APPROVAL_DENIED: approval question must have 'Approve' as an option. Use 'rein approve prompt --mr N' to generate the correct template."
 	}
 
-	// Rule 4b: Validate template (byte-equal check against canonical template, if metadata present)
+	// Rule 4b: Validate the preview structure (not canonical request authentication)
 	if reason := validateTemplate(&payload); reason != "" {
 		return reason
 	}
@@ -70,11 +70,11 @@ func CheckPreToolUse(toolInput string, agentID string, sessionID string, ownerSe
 		return "APPROVAL_DENIED: multiSelect cannot be used for approvals (risk of approving multiple MRs at once). Use single-select with one MR per question."
 	}
 
-	return ""
+	return "APPROVAL_DENIED: interactive merge approval is disabled until canonical requests and tool-use/session pairing are verified. Use 'rein approve --mr N --sha FULL_SHA' in your own terminal."
 }
 
 // validateTemplate checks if the question matches the canonical template structure.
-// This implements byte-equal template validation (ADR B2.4 requirement #1).
+// Structural validation is advisory only; it cannot establish canonical request identity.
 // Strict validation without bypass - every approval question must match the canonical template.
 func validateTemplate(payload *AskUserQuestionPayload) string {
 	// Check if this is an approval question
@@ -131,22 +131,9 @@ func validateTemplate(payload *AskUserQuestionPayload) string {
 // ProcessPostToolUse handles approval recording after user interaction (PostToolUse hook).
 // Returns true if approval was recorded.
 func ProcessPostToolUse(toolUseID string, response string, storageDir string) (bool, error) {
-	var resp AskUserQuestionResponse
-	if err := json.Unmarshal([]byte(response), &resp); err != nil {
-		return false, nil
-	}
-
-	// Check if user clicked "Approve"
-	if len(resp.Answers) == 0 {
-		return false, nil
-	}
-
-	for _, answer := range resp.Answers {
-		if strings.TrimSpace(answer) == "Approve" {
-			return true, nil
-		}
-	}
-
+	// A caller-supplied answer (even with a tool id) is not proof of a human click.
+	// ADR 0002 B2 requires terminal fallback until real hook fixtures and authenticated
+	// single-use request pairing are implemented. Never mint authority from this input.
 	return false, nil
 }
 

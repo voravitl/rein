@@ -65,7 +65,7 @@ func appendLine(path, line string) {
 	fmt.Fprintln(f, line)
 }
 
-func stamp() string { return time.Now().Format("2006-01-02T15:04:05") }
+func stamp() string { return time.Now().Format(time.RFC3339) }
 
 func logDenial(name, reason string) {
 	appendLine(filepath.Join(contract.LogDir(), "guard.log"),
