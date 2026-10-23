@@ -76,6 +76,7 @@ func TestLiveWorkerWithoutActivityEvidenceIsUnknown(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("REIN_RUN_DIR", dir)
 	t.Setenv("PIPELINE_CONTRACTS", dir)
+	t.Setenv("PIPELINE_LOGDIR", filepath.Join(dir, "logs"))
 	b, _ := json.Marshal(TickState{Timestamp: time.Now().Format(time.RFC3339), Workers: map[string]Worker{"task": {Observation: "alive", CPUPercent: 0}}})
 	os.WriteFile(TickPath(dir), b, 0600)
 	result, err := GetTaskStatus(dir, "task")

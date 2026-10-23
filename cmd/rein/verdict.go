@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/voravitl/rein/internal/contract"
@@ -262,6 +263,18 @@ func cmdApprovePrompt(args []string) int {
 		return 2
 	}
 
+	for _, path := range []*string{repoPath, runDir} {
+		if path == runDir && *path == "" {
+			continue
+		}
+		absolute, err := filepath.Abs(*path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error resolving approval path: %v\n", err)
+			return 1
+		}
+		*path = absolute
+	}
+
 	ref := *sha
 	if ref == "" {
 		ref = "HEAD"
@@ -330,10 +343,15 @@ Verdicts: %s
 This preview does not authorize a merge. Review the verdicts and changes, then run the terminal command yourself.`,
 		mrTitle, actualSHA[:min(8, len(actualSHA))], taskTier, verdictSummary)
 
+	quote := func(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+	terminalCommand := fmt.Sprintf("rein approve --mr %d --sha %s --repo %s", *mr, actualSHA, quote(*repoPath))
+	if *runDir != "" {
+		terminalCommand += " --run-dir " + quote(*runDir)
+	}
 	payload := map[string]interface{}{
 		"question":         question,
 		"approval_mode":    "terminal_only",
-		"terminal_command": fmt.Sprintf("rein approve --mr %d --sha %s", *mr, actualSHA),
+		"terminal_command": terminalCommand,
 		"options":          []string{"Approve"},
 		"metadata": map[string]interface{}{
 			"mr":   *mr,
