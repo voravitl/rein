@@ -694,6 +694,82 @@ func CheckHermesPlugin(wt, task string) error {
 	return checkHermesPlugin(wt, task, "")
 }
 
+// CheckHermesGuard verifies, at launch, that the task's guard plugin is installed, complete and still
+// calls this rein. The install-time check cannot do this: it tolerates a missing plugin (it is about to
+// write one) and it accepts whatever binary the file names, because a self-consistent file can still
+// point somewhere else. A launch without this check runs the worker with no judge at all: a deleted
+// plugin directory, a partial plugin, or a plugin whose REIN names another program all look installed.
+func CheckHermesGuard(wt, task string) error {
+	const dir = ".hermes/plugins/rein-guard"
+	entries, err := os.ReadDir(filepath.Join(wt, filepath.FromSlash(dir)))
+	if err != nil {
+		return fmt.Errorf("the Hermes guard plugin is not installed at %s: %w", dir, err)
+	}
+	present := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "__pycache__" && entry.IsDir() {
+			continue // Python owns its cache; leave it untouched.
+		}
+		if name != "plugin.yaml" && name != "__init__.py" {
+			return fmt.Errorf("foreign Hermes plugin file %s; refusing the launch", name)
+		}
+		present[name] = true
+	}
+	for _, name := range []string{"plugin.yaml", "__init__.py"} {
+		if !present[name] {
+			return fmt.Errorf("the Hermes guard plugin is incomplete: %s is missing from %s; reinstall it with rein hooks install <task> --vendors hermes", name, dir)
+		}
+	}
+	if err := checkHermesPlugin(wt, task, ""); err != nil {
+		return err
+	}
+	body, err := os.ReadFile(filepath.Join(wt, filepath.FromSlash(dir+"/__init__.py")))
+	if err != nil {
+		return err
+	}
+	_, rest, found := strings.Cut(string(body), "\nREIN = ")
+	if !found {
+		return fmt.Errorf("the Hermes guard plugin names no rein binary; refusing the launch")
+	}
+	binLine, _, _ := strings.Cut(rest, "\n")
+	var bin string
+	if json.Unmarshal([]byte(binLine), &bin) != nil {
+		return fmt.Errorf("the Hermes guard plugin names no rein binary; refusing the launch")
+	}
+	if !isReinBinary(bin) {
+		return fmt.Errorf("the Hermes guard plugin calls %s instead of this rein; refusing the launch: reinstall it with rein hooks install <task> --vendors hermes", bin)
+	}
+	return nil
+}
+
+// isReinBinary reports whether path is the rein binary this process runs. A plugin that calls another
+// program is not a guard: it would answer every tool call with success and judge nothing.
+func isReinBinary(path string) bool {
+	if path == "" {
+		return false
+	}
+	if exe, err := os.Executable(); err == nil && sameFile(path, exe) {
+		return true
+	}
+	if bin, _, err := BinaryPath(); err == nil && bin != "" && sameFile(path, bin) {
+		return true
+	}
+	return false
+}
+
+func sameFile(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
+}
+
 func checkHermesPlugin(wt, task, expectedBin string) error {
 	const dir = ".hermes/plugins/rein-guard"
 	if _, err := prepare(wt, dir); err != nil {

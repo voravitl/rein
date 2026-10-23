@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -96,8 +97,16 @@ func TestHermesTaskHomeDotenvIsRefused(t *testing.T) {
 	}
 }
 
-// The launch must refuse the task home, not only the helper.
-func TestHermesLaunchRefusesTaskHomeDotenv(t *testing.T) {
+// hermesGuardEnv builds a contracted worktree with the Hermes guard installed and a prepared
+// routing receipt, and returns the launch arguments for a Hermes worker.
+type hermesGuardSetup struct {
+	wt, log string
+	c       *contract.Contract
+	args    []string
+}
+
+func hermesGuardEnv(t *testing.T) *hermesGuardSetup {
+	t.Helper()
 	root := t.TempDir()
 	wt := filepath.Join(root, "worktree")
 	if err := os.Mkdir(wt, 0700); err != nil {
@@ -124,25 +133,30 @@ func TestHermesLaunchRefusesTaskHomeDotenv(t *testing.T) {
 	}
 	cli, log := filepath.Join(root, "hermes"), filepath.Join(root, "actual")
 	t.Setenv("TEST_LAUNCH_LOG", log)
-	if err := os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$TEST_LAUNCH_LOG\"\n"), 0700); err != nil {
+	t.Setenv("TEST_REPORT_PATH", c.ReportPath)
+	if err := os.WriteFile(cli, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\" > \"$TEST_LAUNCH_LOG\"\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := routing.Prepare(c, "run", "worker:backend", "", cfgPath, false, 10*time.Second); err != nil {
 		t.Fatal(err)
 	}
 	argv := []string{cli, "--cli", "chat", "--model", "openrouter:model-id", "--query", "prompt", "--oneshot"}
-	args := append([]string{"--task", "task", "--run", "run", "--"}, argv...)
+	return &hermesGuardSetup{wt: wt, log: log, c: c, args: append([]string{"--task", "task", "--run", "run", "--"}, argv...)}
+}
 
-	if err := os.MkdirAll(filepath.Join(wt, ".hermes"), 0700); err != nil {
+// The launch must refuse the task home, not only the helper.
+func TestHermesLaunchRefusesTaskHomeDotenv(t *testing.T) {
+	env := hermesGuardEnv(t)
+	if err := os.MkdirAll(filepath.Join(env.wt, ".hermes"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(wt, ".hermes", ".env"), []byte("HERMES_SAFE_MODE=1\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(env.wt, ".hermes", ".env"), []byte("HERMES_SAFE_MODE=1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if code := cmdRouteLaunch(args); code == 0 {
+	if code := cmdRouteLaunch(env.args); code == 0 {
 		t.Fatal("launch accepted a task home whose dotenv can disable the guard")
 	}
-	if _, err := os.Stat(log); !os.IsNotExist(err) {
+	if _, err := os.Stat(env.log); !os.IsNotExist(err) {
 		t.Fatalf("the provider process started despite the refusal: %v", err)
 	}
 }
@@ -156,5 +170,64 @@ func TestHermesIsNotADefaultVendor(t *testing.T) {
 	}
 	if !slices.Contains(hooks.All, "hermes") {
 		t.Fatal("hermes must remain a known vendor")
+	}
+}
+
+// A worker must not be able to leave a plugin that calls something other than rein: such a plugin
+// answers every tool call with success and judges nothing. The file stays otherwise byte-identical
+// to what rein wrote, so only the binary it names can tell the two apart.
+func TestHermesLaunchRefusesForeignGuardBinary(t *testing.T) {
+	env := hermesGuardEnv(t)
+	plugin := filepath.Join(env.wt, ".hermes", "plugins", "rein-guard", "__init__.py")
+	body, err := os.ReadFile(plugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := regexp.MustCompile(`(?m)^REIN = .*$`)
+	foreign := line.ReplaceAllLiteralString(string(body), `REIN = "/usr/bin/true"`)
+	if foreign == string(body) {
+		t.Fatal("the plugin does not carry a REIN line to replace")
+	}
+	if err := os.WriteFile(plugin, []byte(foreign), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdRouteLaunch(env.args); code == 0 {
+		t.Fatal("launch accepted a guard plugin that calls another program")
+	}
+	if _, err := os.Stat(env.log); !os.IsNotExist(err) {
+		t.Fatalf("the provider process started despite the refusal: %v", err)
+	}
+}
+
+// A deleted or half-written plugin means the worker runs with no guard at all.
+func TestHermesLaunchRefusesIncompleteGuardPlugin(t *testing.T) {
+	for _, name := range []string{"__init__.py", "plugin.yaml"} {
+		env := hermesGuardEnv(t)
+		path := filepath.Join(env.wt, ".hermes", "plugins", "rein-guard", name)
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if code := cmdRouteLaunch(env.args); code == 0 {
+			t.Fatalf("launch accepted a guard plugin without %s", name)
+		}
+		if _, err := os.Stat(env.log); !os.IsNotExist(err) {
+			t.Fatalf("the provider process started despite the refusal: %v", err)
+		}
+	}
+}
+
+// A report whose timestamp sits in the future is not evidence of this attempt: an earlier attempt
+// could have set it so the freshness check passes without the worker writing one.
+func TestHermesLaunchRefusesFutureDatedReport(t *testing.T) {
+	env := hermesGuardEnv(t)
+	if err := os.WriteFile(env.c.ReportPath, []byte("# S1 PASS\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(env.c.ReportPath, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdRouteLaunch(env.args); code == 0 {
+		t.Fatal("launch accepted a report dated in the future")
 	}
 }

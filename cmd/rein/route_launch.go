@@ -27,6 +27,11 @@ import (
 
 var stopGraphQuotaProcess = stopGraphProcess
 
+// reportClockSkew is how far a file timestamp may sit in the future before it stops being
+// evidence that the worker wrote the file during this attempt. Filesystems that round
+// timestamps up need a little room.
+const reportClockSkew = 2 * time.Second
+
 // cmdRouteLaunch runs an argv, never shell text, after validating its prepared routing decision.
 func cmdRouteLaunch(args []string) int { return routeLaunch(context.Background(), args, nil, nil, nil) }
 
@@ -142,7 +147,7 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 			fmt.Fprintln(os.Stderr, "[route]", err)
 			return 1
 		}
-		if err := hooks.CheckHermesPlugin(contract.Real(c.Worktree), c.Name); err != nil {
+		if err := hooks.CheckHermesGuard(contract.Real(c.Worktree), c.Name); err != nil {
 			fmt.Fprintln(os.Stderr, "[route]", err)
 			return 1
 		}
@@ -342,13 +347,17 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	}
 	// Recheck the report in Rein itself: a missing/old plugin must not turn a
 	// zero-exit Hermes process into successful task completion. The report must be this
-	// attempt's: a file left by an earlier attempt is not evidence of this one.
+	// attempt's: a file left by an earlier attempt is not evidence of this one. A
+	// timestamp in the future is not evidence either: an earlier attempt could have set
+	// it so that this attempt's freshness check passes without the worker writing one.
 	if err == nil && d.Agent == "hermes" && !isOrcaLaunch(argv) {
 		info, reportErr := os.Lstat(c.ReportPath)
 		if reportErr != nil || !info.Mode().IsRegular() || info.Size() == 0 {
 			err = fmt.Errorf("Hermes completion requires a nonempty regular report at %s", c.ReportPath)
 		} else if !info.ModTime().After(started) {
 			err = fmt.Errorf("Hermes completion requires a report written by this attempt at %s", c.ReportPath)
+		} else if info.ModTime().After(time.Now().Add(reportClockSkew)) {
+			err = fmt.Errorf("Hermes completion requires a report written by this attempt at %s: its timestamp is in the future", c.ReportPath)
 		}
 	}
 	code := 0
