@@ -14,6 +14,8 @@ class MergeGates(unittest.TestCase):
             root = Path(tmp)
             log = root / 'calls'
             scripts = {
+                # All children are local fixtures; subprocess.run bounds the whole test.
+                'timeout': 'shift; exec "$@"',
                 'git': '''case "$1" in
 rev-parse) echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;;
 remote) echo https://example.test/repo;;

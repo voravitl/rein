@@ -3,7 +3,6 @@ package guard
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/voravitl/rein/internal/approval"
 	"github.com/voravitl/rein/internal/contract"
-	"github.com/voravitl/rein/internal/verdict"
 )
 
 // testProfile is a neutral project profile: a live stack of "app-*" containers on 8080/5432.
@@ -531,56 +529,18 @@ func TestAskUserQuestionHooks(t *testing.T) {
 	}
 }
 
-// TestPostToolUseRecordsApproval verifies that when a PostToolUse event with "Approve" answer
-// is processed, an approval file is actually written to disk.
-func TestPostToolUseRecordsApproval(t *testing.T) {
+// Caller-supplied response text cannot create approval authority, even on replay.
+func TestUnpairedPostToolUseNeverRecordsApproval(t *testing.T) {
 	storageDir := t.TempDir()
-	mr := 42
-	realSHA := "141b55db07abb71795bc22d7d661e9dbc0219cfd"
-	shortSHA := realSHA[:8]
-
-	// Build the payload matching canonical template
-	payload := map[string]any{
-		"question": "Approve merge for MR " + fmt.Sprintf("%d", mr) + "?\n\nSHA: " + shortSHA + "\nTier: T1\n\nVerdicts: No verdicts recorded yet\n\nThis approval gates the merge. Review the verdicts and changes before approving.",
-		"options":  []string{"Approve"},
-		"metadata": map[string]any{"mr": float64(mr), "sha": realSHA, "tier": "T1"},
+	for _, id := range []string{"", "tool-1", "tool-1"} {
+		recorded, err := approval.ProcessPostToolUse(id, `{"answers":["Approve"]}`, storageDir)
+		if err != nil || recorded {
+			t.Fatalf("unpaired answer accepted: %v %v", recorded, err)
+		}
 	}
-	_ = payload // payload used for documentation of what the canonical template looks like
-
-	// Build PostToolUse response
-	response := map[string]any{
-		"answers": []string{"Approve"},
-	}
-	responseJSON, _ := json.Marshal(response)
-
-	// Call ProcessPostToolUse directly
-	recorded, err := approval.ProcessPostToolUse("tool-1", string(responseJSON), storageDir)
-	if err != nil {
-		t.Fatalf("ProcessPostToolUse failed: %v", err)
-	}
-	if recorded {
-		t.Error("ProcessPostToolUse must reject unpaired Approve answer")
-	}
-
-	// Verify metadata extraction works by checking the stored approval
-	// (This tests the full pipeline: parse response -> extract from original payload -> record)
-	// We need to simulate having the metadata available - in real code it comes from tool_input
-	// For this test, we verify ProcessPostToolUse handles the response correctly
-
-	// Alternative: test the judgePost path through the guard Run() function with a run marker
-	// But that's more integration than unit - the key is that ProcessPostToolUse + RecordApproval work
-
-	// Verify the core recording function works
-	patchID := "abc123patch"
-	err2 := verdict.RecordApproval(storageDir, mr, realSHA, patchID, "test approval")
-	if err2 != nil {
-		t.Fatalf("RecordApproval failed: %v", err2)
-	}
-
-	// Verify approval file exists
-	approvalPath := filepath.Join(storageDir, fmt.Sprintf("mr-%d-approvals.json", mr))
-	if _, err := os.Stat(approvalPath); os.IsNotExist(err) {
-		t.Errorf("Approval file should be created at %s", approvalPath)
+	entries, err := os.ReadDir(storageDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("unpaired answer wrote approval: %v %v", entries, err)
 	}
 }
 

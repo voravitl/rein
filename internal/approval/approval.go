@@ -55,7 +55,7 @@ func CheckPreToolUse(toolInput string, agentID string, sessionID string, ownerSe
 		return "APPROVAL_DENIED: approval question must have 'Approve' as an option. Use 'rein approve prompt --mr N' to generate the correct template."
 	}
 
-	// Rule 4b: Validate template (byte-equal check against canonical template, if metadata present)
+	// Rule 4b: Validate the preview structure (not canonical request authentication)
 	if reason := validateTemplate(&payload); reason != "" {
 		return reason
 	}

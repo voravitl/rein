@@ -6,6 +6,7 @@ set -euo pipefail
 TARGET=${PIPELINE_TARGET_BRANCH:-main}
 W=${1:?worktree}; RB=${2:?remote branch}; MR=${3:?mr iid}; NOMERGE=${4:-}
 cd "$W" || exit 2
+W=$(pwd -P)
 case "$NOMERGE" in ""|--no-merge) ;; *) echo "unknown option: $NOMERGE" >&2; exit 2;; esac
 NEW=$(git rev-parse --verify HEAD)
 check_gates() {
@@ -23,8 +24,8 @@ REMOTE_HOST=$(git remote get-url origin | sed -E 's#^[a-z]+://##; s#^[^@]*@##; s
 timeout 10 curl -s -o /dev/null --max-time 8 "https://$REMOTE_HOST/" || { echo "[push] $REMOTE_HOST unreachable (VPN/DNS?); nothing pushed"; exit 5; }
 OLD=$(timeout 30 git ls-remote origin "refs/heads/$RB" | cut -f1)
 if [ -n "$OLD" ] && [ "$OLD" != "$NEW" ]; then
-  timeout 120 git push --force-with-lease="refs/heads/$RB:$OLD" origin "HEAD:refs/heads/$RB" 2>&1 | tail -1 || exit 1
-elif [ -z "$OLD" ]; then timeout 120 git push origin "HEAD:refs/heads/$RB" 2>&1 | tail -1 || exit 1; fi
+  timeout 120 git push --force-with-lease="refs/heads/$RB:$OLD" origin "$NEW:refs/heads/$RB" 2>&1 | tail -1 || exit 1
+elif [ -z "$OLD" ]; then timeout 120 git push origin "$NEW:refs/heads/$RB" 2>&1 | tail -1 || exit 1; fi
 [ "$NOMERGE" = "--no-merge" ] && { echo "[push] pushed ${NEW:0:7}; not merging"; exit 0; }
 for _ in $(seq 1 24); do
   ST=$(timeout 30 glab api "projects/:id/merge_requests/$MR" 2>/dev/null | python3 -c "import json,sys;d=json.load(sys.stdin);print(d['sha'],d.get('detailed_merge_status'),d['state'],d['target_branch'])")

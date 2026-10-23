@@ -71,3 +71,15 @@ func TestStaleTickNeverClaimsHealthyOrDead(t *testing.T) {
 		}
 	}
 }
+
+func TestLiveWorkerWithoutActivityEvidenceIsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("REIN_RUN_DIR", dir)
+	t.Setenv("PIPELINE_CONTRACTS", dir)
+	b, _ := json.Marshal(TickState{Timestamp: time.Now().Format(time.RFC3339), Workers: map[string]Worker{"task": {Observation: "alive", CPUPercent: 0}}})
+	os.WriteFile(TickPath(dir), b, 0600)
+	result, err := GetTaskStatus(dir, "task")
+	if err != nil || result.Status != StatusUnknown {
+		t.Fatalf("missing activity became stuck: %+v %v", result, err)
+	}
+}

@@ -123,7 +123,7 @@ func GetTaskStatus(common, task string) (*TaskStatusResult, error) {
 	}
 
 	// STUCK: no recent activity and flat CPU
-	if seenAge > 15*time.Minute && result.CPUPercent < 1.0 {
+	if result.LastSeenAt != nil && seenAge > 15*time.Minute && result.CPUPercent < 1.0 {
 		result.Status = StatusStuck
 		result.Message = "no progress, flat CPU"
 		return result, nil
