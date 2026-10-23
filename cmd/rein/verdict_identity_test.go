@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/voravitl/rein/internal/contract"
+	"github.com/voravitl/rein/internal/tier"
 	"github.com/voravitl/rein/internal/verdict"
 )
 
@@ -92,6 +96,134 @@ func TestCmdVerdictCheck_UsesCheckedSHAForRevisionIdentity(t *testing.T) {
 	})
 	if code != 1 {
 		t.Errorf("check for S must not accept a verdict recorded for B (exit %d; a HEAD-derived identity would bind B's patch to S)", code)
+	}
+}
+
+// TestGetVerdictSummary_MatchesCheckAfterUnchangedRebase pins the summary to
+// the same revision binding `verdict check` uses: a verdict recorded for A must
+// still be counted when the head is rebased to B with an unchanged patch body,
+// even when the stored and current patch IDs differ (e.g. one computed by git's
+// default patch-id mode instead of --verbatim). A SHA-or-patchID matcher would
+// miss that record; only the unchanged-patch-body proof binds it.
+func TestGetVerdictSummary_MatchesCheckAfterUnchangedRebase(t *testing.T) {
+	root := contract.Real(t.TempDir())
+	gitIn(t, root, "init", "-q", "-b", "main")
+	base := filepath.Join(root, "base.txt")
+	write := func(content string) {
+		t.Helper()
+		if err := os.WriteFile(base, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	revParse := func(ref string) string {
+		t.Helper()
+		out, err := execOutput(root, "git", "rev-parse", ref)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	// stablePatchID computes the revision's patch ID the way `git patch-id`
+	// does without --verbatim, i.e. what a record from a different patch-id
+	// mode carries for the very same patch.
+	stablePatchID := func(sha string) string {
+		t.Helper()
+		mbOut, err := execOutput(root, "git", "merge-base", "origin/main", sha)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mb := strings.TrimSpace(string(mbOut))
+		diffOut, err := execOutput(root, "git", "diff",
+			"--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", mb+"..."+sha)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("git", "patch-id", "--stable")
+		cmd.Dir = root
+		cmd.Stdin = bytes.NewReader(diffOut)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		fields := strings.Fields(string(out))
+		if len(fields) == 0 || fields[0] == "" {
+			t.Fatal("fixture error: no stable patch ID")
+		}
+		return fields[0]
+	}
+
+	write("line1\nline2\nline3\nline4\nline5\n")
+	gitIn(t, root, "add", ".")
+	gitIn(t, root, "commit", "-q", "-m", "base")
+	gitIn(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+	gitIn(t, root, "checkout", "-q", "-b", "feature")
+	write("line1\nline2\nline3\nline4\nline5 v1\n")
+	gitIn(t, root, "commit", "-qam", "feature A")
+	aSHA := revParse("HEAD")
+
+	storageDir := verdict.StorageDir("", root)
+	if err := verdict.RecordVerdict(storageDir, 78, aSHA, verdict.Approve, "claude-opus-4.8", "gpt-5.6", root); err != nil {
+		t.Fatal(err)
+	}
+
+	// Rebase A onto an advanced main: B rewrites the commit with an unchanged
+	// patch body (the insertion sits outside the change's context window).
+	gitIn(t, root, "checkout", "-q", "main")
+	write("inserted\nline1\nline2\nline3\nline4\nline5\n")
+	gitIn(t, root, "commit", "-qam", "main advances")
+	gitIn(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	gitIn(t, root, "checkout", "-q", "feature")
+	gitIn(t, root, "rebase", "main")
+	bSHA := revParse("HEAD")
+
+	patchB, err := verdict.ComputeRevisionID(root, "origin/main", bSHA)
+	if err != nil || patchB == "" {
+		t.Fatalf("ComputeRevisionID for B failed: %v (id %q)", err, patchB)
+	}
+	if aSHA == bSHA {
+		t.Fatal("fixture error: the rebase should rewrite the commit")
+	}
+
+	// Rewrite the stored record's patch ID to the stable-mode value: same
+	// patch, different ID, so neither the SHA nor the patch ID can bind it.
+	storedID := stablePatchID(aSHA)
+	if storedID == patchB {
+		t.Fatal("fixture error: stored and current patch IDs must differ")
+	}
+	verdictPath := verdict.VerdictPath(storageDir, 78)
+	data, err := os.ReadFile(verdictPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var records []verdict.VerdictRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		t.Fatal(err)
+	}
+	records[0].PatchID = storedID
+	data, err = json.Marshal(records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(verdictPath, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if !verdict.RevisionIdentitiesMatch(storedID, patchB, root, aSHA, bSHA) {
+		t.Fatal("fixture error: the unchanged patch rebase must be accepted by the identity proof")
+	}
+
+	summary := getVerdictSummary(storageDir, 78, bSHA, root)
+	if !strings.Contains(summary, "APPROVE: anthropic") {
+		t.Errorf("summary must count the rebased-but-unchanged approval the way verdict check does, got %q", summary)
+	}
+
+	result, err := verdict.CheckVerdicts(storageDir, 78, bSHA, patchB, tier.T1, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.MatchingVerdicts) != 1 || result.MakerCount != 1 {
+		t.Errorf("verdict check matched %d verdict(s) and %d maker(s); want 1 and 1", len(result.MatchingVerdicts), result.MakerCount)
 	}
 }
 

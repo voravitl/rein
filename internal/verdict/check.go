@@ -236,7 +236,7 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	var current []VerdictRecord
 	for _, v := range verdicts {
 		// Use RevisionIdentitiesMatch for comprehensive revision binding (ADR B2.2)
-		if revisionMatches(v.SHA, v.PatchID, sha, currentPatchID, repoPath) {
+		if RecordMatchesRevision(v.SHA, v.PatchID, sha, currentPatchID, repoPath) {
 			current = append(current, v)
 		}
 	}
@@ -294,7 +294,7 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	// Check for human approval bound to the current revision
 	var matchingApprovals []ApprovalRecord
 	for _, a := range approvals {
-		if revisionMatches(a.SHA, a.PatchID, sha, currentPatchID, repoPath) {
+		if RecordMatchesRevision(a.SHA, a.PatchID, sha, currentPatchID, repoPath) {
 			result.HasApproval = true
 			matchingApprovals = append(matchingApprovals, a)
 		}
@@ -309,10 +309,11 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	return result, nil
 }
 
-// revisionMatches binds a stored record to the current revision: an exact SHA
-// match, or a matching combined revision identity (ADR B2.2) where differing
-// patch IDs are accepted only for a proven unchanged rebase.
-func revisionMatches(recordSHA, recordPatchID, currentSHA, currentPatchID, repoPath string) bool {
+// RecordMatchesRevision binds a stored record to the current revision: an
+// exact SHA match, or a matching combined revision identity (ADR B2.2) where
+// differing patch IDs are accepted only for a proven unchanged rebase. It is
+// the single matcher shared by `verdict check` and the approve-prompt summary.
+func RecordMatchesRevision(recordSHA, recordPatchID, currentSHA, currentPatchID, repoPath string) bool {
 	// Legacy symbolic refs are not evidence of the commit reviewed at record time.
 	if repoPath != "" && (!immutableCommitID(recordSHA) || !immutableCommitID(currentSHA)) {
 		return false
