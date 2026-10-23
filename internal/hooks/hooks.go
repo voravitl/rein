@@ -36,7 +36,7 @@ var launch = map[string]string{
 	"agy":      "start agy inside the worktree (agy -p ... or interactive); no extra flag. Hooks load from <worktree>/.agents/hooks.json",
 	"kiro":     "kiro-cli chat --agent rein --trust-all-tools --model <model> ...   (--agent rein is required on EVERY launch; without it no hook runs)",
 	"opencode": "start opencode2 inside the worktree (opencode2 run --standalone --auto -m <model> ...); no extra flag. The plugin loads from <worktree>/.opencode/plugins/rein",
-	"hermes":   "start hermes inside the worktree with HERMES_ENABLE_PROJECT_PLUGINS=1 and the task's HERMES_HOME; the plugin loads from <worktree>/.hermes/plugins/rein-guard",
+	"hermes":   "start hermes inside the worktree with HERMES_ENABLE_PROJECT_PLUGINS=1 and the task's HERMES_HOME, through `rein route launch --task <t> --run <r> -- hermes --cli chat --model <provider:model> --query <prompt> --oneshot`; the plugin loads from <worktree>/.hermes/plugins/rein-guard. Do not use Orca worker-start --agent hermes: it starts Hermes with the user's own home, so the task's plugin never loads",
 	"claude":   "no flag; Claude Code reads <worktree>/.claude/settings.local.json. Do not combine with the rein plugin's global hook unless you accept two calls per tool use",
 }
 

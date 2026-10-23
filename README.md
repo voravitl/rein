@@ -163,7 +163,7 @@ Native Windows has no Claude Code sandbox (use WSL2).
 **2c. Guard the other vendors** (codex, agy, kiro, opencode, hermes; after the worktree exists):
 
 ```sh
-rein hooks install fix-login            # --vendors codex,agy,kiro,opencode,hermes (default) | claude
+rein hooks install fix-login            # --vendors codex,agy,kiro,opencode (default) | hermes,claude
 ```
 
 This writes each CLI's project hook file inside the worktree (`.codex/hooks.json`, `.agents/hooks.json`,
