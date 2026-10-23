@@ -268,6 +268,9 @@ func nonFlags(args []string) []string {
 	return out
 }
 
+// A command name that expands at run time could be any command, so no rule keyed by name can be applied to it.
+const dynamicNameReason = "command name %q expands at run time and cannot be checked; use a literal command name"
+
 func (x *ctx) call(args []string) string {
 	if len(args) == 0 {
 		return ""
@@ -301,6 +304,9 @@ func (x *ctx) call(args []string) string {
 		if r := x.deniedByProfile(name, rest); r != "" {
 			return r
 		}
+	}
+	if strings.Contains(name, "$?") {
+		return fmt.Sprintf(dynamicNameReason, args[0])
 	}
 	switch {
 	case name == "cd" || name == "pushd":

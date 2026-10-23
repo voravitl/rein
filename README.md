@@ -31,7 +31,9 @@ behaving well.
 
 The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](https://github.com/mvdan/sh)), so
 `bash -c "git -C . push"`, `env X=1 timeout 30 git push` and `echo $(git push)` are caught, while
-`git add . && git commit -m "explain why workers never git push"` is not blocked.
+`git add . && git commit -m "explain why workers never git push"` is not blocked. A command name that expands at
+run time (`$ORCA`, `$(which rm)`) is refused, because such a name could be any command and no rule can be applied
+to it.
 
 > **The guard is a seatbelt, not a wall.** It cannot see writes made through interpreters (`python -c`, `node -e`).
 > Pair it with an OS sandbox (Claude Code's Bash sandbox, `codex -s workspace-write`) and always run `rein drift`.
