@@ -86,6 +86,17 @@ func OrcaSubject(name, agent, model string) string {
 	return fmt.Sprintf("rein %s · %s:%s", name, agent, model)
 }
 
+// IsExecutableName reports whether name is one of the Orca CLI executables
+// (orca, orca-dev, orca-ide). It is the single source of that set.
+func IsExecutableName(name string) bool {
+	switch name {
+	case "orca", "orca-dev", "orca-ide":
+		return true
+	default:
+		return false
+	}
+}
+
 // Launch starts a worker or reviewer inside Orca on a new worktree.
 func Launch(ctx context.Context, opts LaunchOptions) (*LaunchResult, error) {
 	if opts.Name == "" {
