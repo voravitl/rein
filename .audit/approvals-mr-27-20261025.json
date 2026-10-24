@@ -1,0 +1,11 @@
+[
+  {
+    "mr": 27,
+    "sha": "2a78f9adfb6ad2207e5fb155accebc6087d51f20",
+    "patch_id": "cf73a84450daa836405150721d04c03bdf7d71eb",
+    "reason": "owner authorized merge in chat 2026-10-25 (conditional on passing; review+gates+CI green, live opencode evidence posted)",
+    "via": "zcode",
+    "session_id": "local-1",
+    "timestamp": "2026-10-25T06:12:58.508619+07:00"
+  }
+]

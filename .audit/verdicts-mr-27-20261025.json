@@ -1,0 +1,20 @@
+[
+  {
+    "mr": 27,
+    "sha": "59d3b6b0e56888dbbb0eb2e3347ccd70ce39780d",
+    "patch_id": "850d4328dc9347ecccd1eab515305537e023bbd0",
+    "verdict": "REQUEST_CHANGES",
+    "reviewer_model": "zai:GLM-5.3-Flash",
+    "worker_model": "zai:GLM-5.3",
+    "timestamp": "2026-10-24T15:45:32.149676+07:00"
+  },
+  {
+    "mr": 27,
+    "sha": "2a78f9adfb6ad2207e5fb155accebc6087d51f20",
+    "patch_id": "cf73a84450daa836405150721d04c03bdf7d71eb",
+    "verdict": "APPROVE",
+    "reviewer_model": "zai:GLM-5.3-Flash",
+    "worker_model": "zai:GLM-5.3",
+    "timestamp": "2026-10-24T15:51:27.804324+07:00"
+  }
+]

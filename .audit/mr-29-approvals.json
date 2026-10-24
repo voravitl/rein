@@ -1,0 +1,9 @@
+[
+  {
+    "mr": 29,
+    "sha": "6ef65dc98494e8599c776bf41e4406a75e2ae1bb",
+    "patch_id": "693ca13fea7e994ff001ae1bb18286d5d6c36753",
+    "reason": "owner authorized merge in chat 2026-10-25 (finish all, merge if passed); cross-mode APPROVE + suites green",
+    "timestamp": "2026-10-25T06:20:23.516604+07:00"
+  }
+]
