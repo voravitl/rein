@@ -87,7 +87,7 @@ func TestCmdVerdictCheck_UsesCheckedSHAForRevisionIdentity(t *testing.T) {
 	if err := verdict.RecordVerdict(storageDir, 77, bSHA, verdict.Approve, "claude-opus-4.8", "gpt-5.6", root); err != nil {
 		t.Fatal(err)
 	}
-	if err := verdict.RecordApproval(storageDir, 77, bSHA, patchB, "approved B"); err != nil {
+	if err := verdict.RecordApproval(storageDir, 77, bSHA, patchB, "approved B", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,8 +222,8 @@ func TestGetVerdictSummary_MatchesCheckAfterUnchangedRebase(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.MatchingVerdicts) != 1 || result.MakerCount != 1 {
-		t.Errorf("verdict check matched %d verdict(s) and %d maker(s); want 1 and 1", len(result.MatchingVerdicts), result.MakerCount)
+	if len(result.MatchingVerdicts) != 1 || result.ReviewerCount != 1 {
+		t.Errorf("verdict check matched %d verdict(s) and %d maker(s); want 1 and 1", len(result.MatchingVerdicts), result.ReviewerCount)
 	}
 }
 

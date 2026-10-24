@@ -205,12 +205,12 @@ rein verdict template --mr <N> --sha <HEAD_SHA> --base origin/main --reviewer <M
 # 2. Record review outcome
 rein verdict record --mr <N> --sha <HEAD_SHA> --verdict <APPROVE|REQUEST_CHANGES> --reviewer <MODEL> --worker <MODEL>
 
-# 3. Check if MR meets merge conditions (quorum, maker diversity, human approval)
+# 3. Check if MR meets merge conditions (cross-model review quorum, human approval)
 rein verdict check --mr <N> --sha <HEAD_SHA> [--tier T1|T2|T3] [--json]
 ```
 
 - **Exit 0:** PASS — all verdict criteria and human approval satisfied.
-- **Exit 1:** FAIL — missing approvals, worker reviewed itself, or not enough independent model makers.
+- **Exit 1:** FAIL — missing approvals, worker reviewed itself, or not enough distinct cross-model reviewers (the reviewer model must differ from the worker model; a different model from the same maker, e.g. GLM-5.3-Flash reviewing GLM-5.3, qualifies).
 
 ---
 
@@ -220,9 +220,11 @@ rein verdict check --mr <N> --sha <HEAD_SHA> [--tier T1|T2|T3] [--json]
 # Render a terminal-approval preview (interactive hook approvals are disabled)
 rein approve prompt --mr <N> [--sha <HEAD_SHA>]
 
-# Direct human approval (User-only; refused inside Claude Code)
-rein approve --mr <N> [--sha <HEAD_SHA>] --reason "<APPROVAL_REASON>"
+# Direct human approval (refused inside an AI session without --as-directed)
+rein approve --mr <N> [--sha <HEAD_SHA>] --reason "<APPROVAL_REASON>" [--as-directed]
 ```
+
+`--as-directed` records a human-directed approval from inside an AI session: the ledger stores the provenance (`via` = the session kind, `session_id`) so an audit can tell it from an approval typed directly in a terminal. An approval captured through an answered AskUserQuestion hook carries `via` = `ask-user-question` the same way.
 
 ---
 
@@ -325,7 +327,7 @@ rein route discover [--config F] [--timeout 60s] [--dir D] [--json]            #
 ```
 
 - `phase` is `worker` or `review`; `kind` is one of `backend`, `frontend`, `fullstack`, `docs`, `mechanical` (a review keeps the kind of the work it reviews). A review also needs `changed_files` and may list `exclude_makers` (makers whose verdict for this revision already exists; it only narrows). For a review rein also reads the checkout's real changes from git (`git diff <base>...HEAD` plus uncommitted and untracked files, base `--base`, default `origin/main`) and classifies on the union: a list that understates the change cannot lower the tier, and a review whose diff cannot be computed (or is empty) is `classification_required`. The union is stored as the profile of record.
-- Rein validates the profile against the contract: the hash must match, every planned file must be allowed and not denied, every rationale must explain a planned file, `docs` may touch documentation files only (`.md .mdx .rst .adoc`; a script or a `requirements.txt` under `docs/` is not documentation), and `mechanical` needs `bounded_operation` (`operation` + `acceptance_checks`) and a `max_changed_lines` bound on the contract. The owner's profile (or the contract's copy) must declare `sensitive_paths`: with none, rein cannot tell sensitive code from ordinary code and refuses to choose (`classification_required`). Sensitive paths and the risk flags `authentication authorization crypto payments pii production-data secrets security` force **T3**, whatever else is claimed; claims can only raise the tier. T3 is always the `high-risk` candidate policy, never `mechanical`, and needs two reviewer makers. A risk flag outside the vocabulary (`authentication ... security` above and the neutral `api concurrency config dependency migration performance schema ui`) is refused for every kind: restate the risk in the vocabulary. A worker always needs `repository-edit`.
+- Rein validates the profile against the contract: the hash must match, every planned file must be allowed and not denied, every rationale must explain a planned file, `docs` may touch documentation files only (`.md .mdx .rst .adoc`; a script or a `requirements.txt` under `docs/` is not documentation), and `mechanical` needs `bounded_operation` (`operation` + `acceptance_checks`) and a `max_changed_lines` bound on the contract. The owner's profile (or the contract's copy) must declare `sensitive_paths`: with none, rein cannot tell sensitive code from ordinary code and refuses to choose (`classification_required`). Sensitive paths and the risk flags `authentication authorization crypto payments pii production-data secrets security` force **T3**, whatever else is claimed; claims can only raise the tier. T3 is always the `high-risk` candidate policy, never `mechanical`, and needs two distinct reviewer models (cross-model). A risk flag outside the vocabulary (`authentication ... security` above and the neutral `api concurrency config dependency migration performance schema ui`) is refused for every kind: restate the risk in the vocabulary. A worker always needs `repository-edit`.
 - Candidate policy by kind: `backend`→`backend`, `frontend`→`frontend`, `docs`→`docs`, `mechanical`→`mechanical`, `fullstack`→`ordinary`, T3→`high-risk`. Each names a `worker_chains` key whose MEMBERS are the approved candidates (their order is ignored); approved reviewers are the union of `review_chains`.
 
 **Owner policy** (profile `selection`, from `REIN_PROFILE`, else the contract's copy; nothing is defaulted, a missing value is refused as `quality_policy_required` or `selection_policy_required`). The report says which one applied (`policy_source`: `owner` or `contract`). Set `REIN_PROFILE` in the environment the session starts from: the contract's copy is made by whoever ran `rein contract new --profile`, which is usually the coordinator, so only the owner's variable keeps the policy out of the coordinator's hands. See `examples/profile.example.json`:

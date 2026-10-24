@@ -311,7 +311,7 @@ func (c *Class) TierOf() tier.Tier {
 	return tier.T1
 }
 
-// RequiredMakers is how many distinct reviewer makers the tier needs (verdict check: two for T3, one otherwise).
+// RequiredMakers is how many distinct cross-model reviewers the tier needs (verdict check: two for T3, one otherwise).
 func (c *Class) RequiredMakers() int {
 	if c.TierOf() == tier.T3 {
 		return 2

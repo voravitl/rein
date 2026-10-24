@@ -49,7 +49,7 @@ func TestRecordVerdict_BindsToRecordedSHAWhenHeadMoves(t *testing.T) {
 	if len(records) != 1 || records[0].PatchID != bPatchID {
 		t.Fatalf("recorded patch IDs = %+v, want the recorded SHA's identity %s (HEAD is %s)", records, bPatchID, cPatchID)
 	}
-	if err := RecordApproval(storageDir, mr, bSHA, bPatchID, "approved B"); err != nil {
+	if err := RecordApproval(storageDir, mr, bSHA, bPatchID, "approved B", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -57,7 +57,7 @@ func TestRecordVerdict_BindsToRecordedSHAWhenHeadMoves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CheckVerdicts failed: %v", err)
 	}
-	if result.Passed || result.MakerCount != 0 || result.HasApproval {
-		t.Errorf("a verdict for B must not bind to C (passed=%v makers=%d approval=%v)", result.Passed, result.MakerCount, result.HasApproval)
+	if result.Passed || result.ReviewerCount != 0 || result.HasApproval {
+		t.Errorf("a verdict for B must not bind to C (passed=%v reviewers=%d approval=%v)", result.Passed, result.ReviewerCount, result.HasApproval)
 	}
 }

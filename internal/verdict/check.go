@@ -64,8 +64,10 @@ func RecordVerdict(storageDir string, mr int, sha string, verdict Verdict, revie
 	return nil
 }
 
-// RecordApproval saves a human approval record.
-func RecordApproval(storageDir string, mr int, sha, patchID, reason string) error {
+// RecordApproval saves a human approval record. via and sessionID carry the
+// provenance when the approval was human-directed from inside an AI session;
+// both are empty for a directly typed approval.
+func RecordApproval(storageDir string, mr int, sha, patchID, reason, via, sessionID string) error {
 	if err := EnsureDir(storageDir); err != nil {
 		return fmt.Errorf("failed to create storage dir: %w", err)
 	}
@@ -75,6 +77,8 @@ func RecordApproval(storageDir string, mr int, sha, patchID, reason string) erro
 		SHA:       sha,
 		PatchID:   patchID,
 		Reason:    reason,
+		Via:       via,
+		SessionID: sessionID,
 		Timestamp: time.Now(),
 	}
 
@@ -138,15 +142,16 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 type CheckResult struct {
 	Passed            bool             `json:"passed"`
 	Tier              tier.Tier        `json:"tier"`
-	MakerCount        int              `json:"maker_count"`
+	ReviewerCount     int              `json:"reviewer_count"`
 	HasApproval       bool             `json:"has_approval"`
 	MissingReasons    []string         `json:"missing_reasons,omitempty"`
 	MatchingVerdicts  []VerdictRecord  `json:"matching_verdicts,omitempty"`
 	MatchingApprovals []ApprovalRecord `json:"matching_approvals,omitempty"`
 }
 
-// RequiredMakers returns the number of distinct makers needed for the tier.
-func (r *CheckResult) RequiredMakers() int {
+// RequiredReviewers returns the number of distinct cross-model reviewers
+// needed for the tier.
+func (r *CheckResult) RequiredReviewers() int {
 	if r.Tier == tier.T3 {
 		return 2
 	}
@@ -161,7 +166,7 @@ func (r *CheckResult) FormatEvidence() string {
 	var sb strings.Builder
 	sb.WriteString("[APPROVAL & REVIEW EVIDENCE]\n")
 	sb.WriteString("  Status: PASSED (Verified Review & Approval Gate)\n")
-	sb.WriteString(fmt.Sprintf("  Tier:   %s | Required Makers: %d | Actual Makers: %d\n", r.Tier, r.RequiredMakers(), r.MakerCount))
+	sb.WriteString(fmt.Sprintf("  Tier:   %s | Required Reviewers: %d | Distinct Reviewers: %d\n", r.Tier, r.RequiredReviewers(), r.ReviewerCount))
 	sb.WriteString("  Reviewer Verdicts:\n")
 	if len(r.MatchingVerdicts) == 0 {
 		sb.WriteString("    (none)\n")
@@ -192,8 +197,12 @@ func (r *CheckResult) FormatEvidence() string {
 			if a.PatchID != "" {
 				patchInfo = fmt.Sprintf(" | Patch: %s", a.PatchID)
 			}
+			viaInfo := ""
+			if a.Via != "" {
+				viaInfo = fmt.Sprintf(" | Via: human-directed in %s session %s", a.Via, a.SessionID)
+			}
 			sb.WriteString(fmt.Sprintf("    ✓ Reason: %s\n", reason))
-			sb.WriteString(fmt.Sprintf("      SHA: %s | Time: %s%s\n", a.SHA, a.Timestamp.UTC().Format(time.RFC3339), patchInfo))
+			sb.WriteString(fmt.Sprintf("      SHA: %s | Time: %s%s%s\n", a.SHA, a.Timestamp.UTC().Format(time.RFC3339), patchInfo, viaInfo))
 		}
 	}
 	return sb.String()
@@ -248,9 +257,8 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 		}
 	}
 
-	// Check verdicts for maker diversity
-	makers := make(map[string]bool)
-	workerMaker := ""
+	// Check verdicts for cross-model review
+	reviewers := make(map[string]bool)
 	var matchingVerdicts []VerdictRecord
 
 	for i, v := range current {
@@ -261,34 +269,27 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 			continue
 		}
 
-		reviewerMaker := NormalizeModelMaker(v.ReviewerModel)
-		if workerMaker == "" {
-			workerMaker = NormalizeModelMaker(v.WorkerModel)
+		// Cross-mode review: only a reviewer model distinct from the worker
+		// model it reviewed counts as an independent review. The full model
+		// name is compared, so a different model from the same maker (e.g.
+		// GLM-5.3-Flash reviewing GLM-5.3 work) qualifies.
+		if NormalizeModelName(v.ReviewerModel) == NormalizeModelName(v.WorkerModel) {
+			continue
 		}
 
-		// Reviewer maker must not equal worker maker, except when an escalated model
-		// (e.g. Claude Opus) reviews a lower-tier worker (Claude Sonnet or Haiku).
-		if reviewerMaker == workerMaker {
-			if IsEscalatedReviewer(v.WorkerModel, v.ReviewerModel) {
-				reviewerMaker = reviewerMaker + ":escalated"
-			} else {
-				continue
-			}
-		}
-
-		makers[reviewerMaker] = true
+		reviewers[NormalizeModelName(v.ReviewerModel)] = true
 		matchingVerdicts = append(matchingVerdicts, v)
 	}
 
 	result.MatchingVerdicts = matchingVerdicts
-	result.MakerCount = len(makers)
+	result.ReviewerCount = len(reviewers)
 
-	// Check maker count requirement
-	requiredMakers := result.RequiredMakers()
+	// Check reviewer count requirement
+	requiredReviewers := result.RequiredReviewers()
 
-	if result.MakerCount < requiredMakers {
+	if result.ReviewerCount < requiredReviewers {
 		result.MissingReasons = append(result.MissingReasons,
-			fmt.Sprintf("need verdicts from %d distinct model maker(s), have %d", requiredMakers, result.MakerCount))
+			fmt.Sprintf("need cross-model review verdicts from %d distinct reviewer model(s), have %d", requiredReviewers, result.ReviewerCount))
 	}
 
 	// Check for human approval bound to the current revision

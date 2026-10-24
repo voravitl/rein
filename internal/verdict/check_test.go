@@ -64,7 +64,7 @@ func TestRecordAndLoadApproval(t *testing.T) {
 	patchID := "patch123"
 	reason := "LGTM"
 
-	err := RecordApproval(storageDir, mr, sha, patchID, reason)
+	err := RecordApproval(storageDir, mr, sha, patchID, reason, "", "")
 	if err != nil {
 		t.Fatalf("RecordApproval failed: %v", err)
 	}
@@ -102,14 +102,14 @@ func TestCheckVerdicts_T1_OneApprover(t *testing.T) {
 	sha := "abc123"
 	patchID := "patch123"
 
-	// Record verdict from one maker (different from worker)
+	// Record verdict from one reviewer model (different from worker)
 	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Record human approval
-	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,8 +122,8 @@ func TestCheckVerdicts_T1_OneApprover(t *testing.T) {
 	if !result.Passed {
 		t.Errorf("CheckVerdicts should pass for T1 with 1 maker, got reasons: %v", result.MissingReasons)
 	}
-	if result.MakerCount != 1 {
-		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	if result.ReviewerCount != 1 {
+		t.Errorf("ReviewerCount = %d, want 1", result.ReviewerCount)
 	}
 	if !result.HasApproval {
 		t.Error("HasApproval should be true")
@@ -138,14 +138,14 @@ func TestCheckVerdicts_T3_NeedsTwoMakers(t *testing.T) {
 	sha := "abc123"
 	patchID := "patch123"
 
-	// Record verdict from one maker only
+	// Record verdict from one reviewer model only
 	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Record human approval
-	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,8 +158,8 @@ func TestCheckVerdicts_T3_NeedsTwoMakers(t *testing.T) {
 	if result.Passed {
 		t.Error("CheckVerdicts should fail for T3 with only 1 maker")
 	}
-	if result.MakerCount != 1 {
-		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	if result.ReviewerCount != 1 {
+		t.Errorf("ReviewerCount = %d, want 1", result.ReviewerCount)
 	}
 }
 
@@ -171,7 +171,7 @@ func TestCheckVerdicts_T3_TwoMakers(t *testing.T) {
 	sha := "abc123"
 	patchID := "patch123"
 
-	// Record verdicts from two different makers (both different from worker)
+	// Record verdicts from two different reviewer models (both different from worker)
 	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "qwen3-coder-next", "")
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +182,7 @@ func TestCheckVerdicts_T3_TwoMakers(t *testing.T) {
 	}
 
 	// Record human approval
-	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,8 +195,8 @@ func TestCheckVerdicts_T3_TwoMakers(t *testing.T) {
 	if !result.Passed {
 		t.Errorf("CheckVerdicts should pass for T3 with 2 makers, got reasons: %v", result.MissingReasons)
 	}
-	if result.MakerCount != 2 {
-		t.Errorf("MakerCount = %d, want 2", result.MakerCount)
+	if result.ReviewerCount != 2 {
+		t.Errorf("ReviewerCount = %d, want 2", result.ReviewerCount)
 	}
 }
 
@@ -215,7 +215,7 @@ func TestCheckVerdicts_ReviewerSameAsWorker(t *testing.T) {
 	}
 
 	// Record human approval
-	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,8 +228,8 @@ func TestCheckVerdicts_ReviewerSameAsWorker(t *testing.T) {
 	if result.Passed {
 		t.Error("CheckVerdicts should fail when reviewer model equals worker model")
 	}
-	if result.MakerCount != 0 {
-		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
+	if result.ReviewerCount != 0 {
+		t.Errorf("ReviewerCount = %d, want 0", result.ReviewerCount)
 	}
 }
 
@@ -241,14 +241,14 @@ func TestCheckVerdicts_OpusReviewingSonnet(t *testing.T) {
 	sha := "abc123"
 	patchID := "patch123"
 
-	// Record verdict where reviewer is Opus and worker is Sonnet (escalated review: allowed)
+	// Record verdict where reviewer is Opus and worker is Sonnet (cross-model review: counts)
 	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "claude-sonnet-4.5", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Record human approval
-	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,8 +261,8 @@ func TestCheckVerdicts_OpusReviewingSonnet(t *testing.T) {
 	if !result.Passed {
 		t.Errorf("CheckVerdicts should pass when Opus reviews Sonnet, got missing reasons: %v", result.MissingReasons)
 	}
-	if result.MakerCount != 1 {
-		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	if result.ReviewerCount != 1 {
+		t.Errorf("ReviewerCount = %d, want 1", result.ReviewerCount)
 	}
 }
 
@@ -274,13 +274,13 @@ func TestCheckVerdicts_OpusReviewingHaiku(t *testing.T) {
 	sha := "def456"
 	patchID := "patch456"
 
-	// Record verdict where reviewer is Opus and worker is Haiku (escalated review: allowed)
+	// Record verdict where reviewer is Opus and worker is Haiku (cross-model review: counts)
 	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-3.7", "claude-haiku", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -295,7 +295,7 @@ func TestCheckVerdicts_OpusReviewingHaiku(t *testing.T) {
 	}
 }
 
-func TestCheckVerdicts_SonnetReviewingOpus(t *testing.T) {
+func TestCheckVerdicts_CrossModelEitherDirectionCounts(t *testing.T) {
 	tmpDir := t.TempDir()
 	storageDir := filepath.Join(tmpDir, "verdicts")
 
@@ -303,13 +303,14 @@ func TestCheckVerdicts_SonnetReviewingOpus(t *testing.T) {
 	sha := "ghi789"
 	patchID := "patch789"
 
-	// Record verdict where reviewer is Sonnet and worker is Opus (lower tier reviewing higher: disallowed)
+	// Record verdict where reviewer is Sonnet and worker is Opus: cross-mode
+	// review counts in either tier direction, only the model identity matters.
 	err := RecordVerdict(storageDir, mr, sha, Approve, "claude-sonnet-4.5", "claude-opus-4.8", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	err = RecordApproval(storageDir, mr, sha, patchID, "approved")
+	err = RecordApproval(storageDir, mr, sha, patchID, "approved", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,8 +320,11 @@ func TestCheckVerdicts_SonnetReviewingOpus(t *testing.T) {
 		t.Fatalf("CheckVerdicts failed: %v", err)
 	}
 
-	if result.Passed {
-		t.Error("CheckVerdicts should fail when Sonnet reviews Opus")
+	if !result.Passed {
+		t.Errorf("CheckVerdicts should pass when Sonnet reviews Opus (different models), got reasons: %v", result.MissingReasons)
+	}
+	if result.ReviewerCount != 1 {
+		t.Errorf("ReviewerCount = %d, want 1", result.ReviewerCount)
 	}
 }
 
@@ -495,7 +499,7 @@ func TestCheckVerdicts_PostRebase(t *testing.T) {
 	}
 
 	// Record approval with original SHA and patch-id
-	if err := RecordApproval(storageDir, mr, origSHA, origPatchID, "approved"); err != nil {
+	if err := RecordApproval(storageDir, mr, origSHA, origPatchID, "approved", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -701,7 +705,7 @@ func TestCheckVerdicts_ChangedFeatureCommitRejected(t *testing.T) {
 	if err := RecordVerdict(storageDir, mr, bSHA, Approve, "claude-opus-4.8", "gpt-5.6", repoDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordApproval(storageDir, mr, bSHA, bPatchID, "approved B"); err != nil {
+	if err := RecordApproval(storageDir, mr, bSHA, bPatchID, "approved B", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -731,8 +735,8 @@ func TestCheckVerdicts_ChangedFeatureCommitRejected(t *testing.T) {
 	if result.HasApproval {
 		t.Error("HasApproval must be false for a changed feature commit")
 	}
-	if result.MakerCount != 0 {
-		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
+	if result.ReviewerCount != 0 {
+		t.Errorf("ReviewerCount = %d, want 0", result.ReviewerCount)
 	}
 }
 
@@ -758,7 +762,7 @@ func TestCheckVerdicts_UnchangedRebaseKeepsVerdict(t *testing.T) {
 	}
 	stalePatchID := "recorded-against-another-base"
 	rewriteVerdictPatchID(t, storageDir, mr, stalePatchID)
-	if err := RecordApproval(storageDir, mr, bSHA, stalePatchID, "approved B"); err != nil {
+	if err := RecordApproval(storageDir, mr, bSHA, stalePatchID, "approved B", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -828,7 +832,7 @@ func TestCheckVerdicts_RequestChangesRevokesApprove(t *testing.T) {
 	if err := RecordVerdict(storageDir, mr, sha, RequestChanges, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -839,8 +843,8 @@ func TestCheckVerdicts_RequestChangesRevokesApprove(t *testing.T) {
 	if result.Passed {
 		t.Error("CheckVerdicts should fail after the same reviewer requested changes")
 	}
-	if result.MakerCount != 0 {
-		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
+	if result.ReviewerCount != 0 {
+		t.Errorf("ReviewerCount = %d, want 0", result.ReviewerCount)
 	}
 	if len(result.MatchingVerdicts) != 0 {
 		t.Errorf("MatchingVerdicts len = %d, want 0 (the retracted APPROVE must not be evidence)", len(result.MatchingVerdicts))
@@ -863,7 +867,7 @@ func TestCheckVerdicts_ApproveAfterRequestChanges(t *testing.T) {
 	if err := RecordVerdict(storageDir, mr, sha, Approve, "claude-opus-4.8", "gpt-5.6", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -874,8 +878,8 @@ func TestCheckVerdicts_ApproveAfterRequestChanges(t *testing.T) {
 	if !result.Passed {
 		t.Errorf("CheckVerdicts should pass on the reviewer's latest APPROVE; missing reasons: %v", result.MissingReasons)
 	}
-	if result.MakerCount != 1 {
-		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	if result.ReviewerCount != 1 {
+		t.Errorf("ReviewerCount = %d, want 1", result.ReviewerCount)
 	}
 }
 
@@ -894,7 +898,7 @@ func TestCheckVerdicts_StaleRequestChangesDoesNotRevoke(t *testing.T) {
 	if err := RecordVerdict(storageDir, mr, "stale-sha", RequestChanges, "claude-opus-4.8", "gpt-5.6", nonRepoDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -905,8 +909,8 @@ func TestCheckVerdicts_StaleRequestChangesDoesNotRevoke(t *testing.T) {
 	if !result.Passed {
 		t.Errorf("a stale REQUEST_CHANGES must not revoke the current APPROVE; missing reasons: %v", result.MissingReasons)
 	}
-	if result.MakerCount != 1 {
-		t.Errorf("MakerCount = %d, want 1", result.MakerCount)
+	if result.ReviewerCount != 1 {
+		t.Errorf("ReviewerCount = %d, want 1", result.ReviewerCount)
 	}
 }
 
@@ -921,7 +925,7 @@ func TestCheckVerdicts_StaleApproveDoesNotCount(t *testing.T) {
 	if err := RecordVerdict(storageDir, mr, "stale-sha", Approve, "claude-opus-4.8", "gpt-5.6", nonRepoDir); err != nil {
 		t.Fatal(err)
 	}
-	if err := RecordApproval(storageDir, mr, sha, patchID, "approved"); err != nil {
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -932,8 +936,8 @@ func TestCheckVerdicts_StaleApproveDoesNotCount(t *testing.T) {
 	if result.Passed {
 		t.Error("CheckVerdicts should fail when the only APPROVE is bound to another revision")
 	}
-	if result.MakerCount != 0 {
-		t.Errorf("MakerCount = %d, want 0", result.MakerCount)
+	if result.ReviewerCount != 0 {
+		t.Errorf("ReviewerCount = %d, want 0", result.ReviewerCount)
 	}
 }
 
@@ -951,7 +955,7 @@ func TestCheckVerdicts_Evidence(t *testing.T) {
 	}
 
 	// 2. Record human approval
-	if err := RecordApproval(storageDir, mr, sha, patchID, "Approved by Security Lead"); err != nil {
+	if err := RecordApproval(storageDir, mr, sha, patchID, "Approved by Security Lead", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1024,7 +1028,7 @@ func TestConcurrentApprovalRecordsAreNotLost(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if err := RecordApproval(storageDir, 9, "abc123", "patch", fmt.Sprintf("approval-%d", i)); err != nil {
+			if err := RecordApproval(storageDir, 9, "abc123", "patch", fmt.Sprintf("approval-%d", i), "", ""); err != nil {
 				t.Errorf("RecordApproval %d: %v", i, err)
 			}
 		}(i)
@@ -1036,5 +1040,61 @@ func TestConcurrentApprovalRecordsAreNotLost(t *testing.T) {
 	}
 	if len(records) != n {
 		t.Fatalf("lost approvals: got %d, want %d", len(records), n)
+	}
+}
+
+func TestCheckVerdicts_CrossModeSameMakerCounts(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 42
+	sha := "abc123"
+	patchID := "patch123"
+
+	// A different model from the same maker is a cross-mode review and counts.
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "zai:GLM-5.3-Flash", "zai:GLM-5.3", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if !result.Passed {
+		t.Errorf("CheckVerdicts should pass for a same-maker cross-model review, got reasons: %v", result.MissingReasons)
+	}
+	if result.ReviewerCount != 1 {
+		t.Errorf("ReviewerCount = %d, want 1", result.ReviewerCount)
+	}
+}
+
+func TestCheckVerdicts_SameModelIgnoringCaseDoesNotCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 42
+	sha := "abc123"
+	patchID := "patch123"
+
+	// The same model under a different spelling is still a self-review.
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "ZAI:GLM-5.3", "zai:glm-5.3", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if result.Passed {
+		t.Error("CheckVerdicts should fail when reviewer model equals worker model ignoring case")
+	}
+	if result.ReviewerCount != 0 {
+		t.Errorf("ReviewerCount = %d, want 0", result.ReviewerCount)
 	}
 }

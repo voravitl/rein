@@ -30,7 +30,7 @@ Every AI agent performing code reviews on an MR or PR MUST strictly adhere to th
    rein verdict record --mr <MR> --sha <HEAD_SHA> --verdict <APPROVE|REQUEST_CHANGES> --reviewer <MODEL> --worker <MODEL>
    ```
 5. **Human Approval Gate:**
-   `APPROVE` is a review recommendation. Merge is gated by `rein verdict check` and requires explicit human approval via `rein approve`.
+   `APPROVE` is a review recommendation. Merge is gated by `rein verdict check` — cross-model review (the reviewer model must differ from the worker model) — and requires explicit human approval via `rein approve`, typed directly or recorded with `--as-directed` when the human directs it through an AI session (provenance is stored).
 
 ### 2.2 Standard Review Report Schema (6 Sections)
 ```markdown

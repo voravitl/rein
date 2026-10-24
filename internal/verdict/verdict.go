@@ -33,12 +33,17 @@ type VerdictRecord struct {
 	Timestamp     time.Time `json:"timestamp"`
 }
 
-// ApprovalRecord stores a human approval.
+// ApprovalRecord stores a human approval. Via and SessionID record how the
+// approval was captured: "claude-code" for --as-directed inside an AI session,
+// "ask-user-question" for an interactive harness prompt. An empty Via means
+// the human typed `rein approve` directly.
 type ApprovalRecord struct {
 	MR        int       `json:"mr"`
 	SHA       string    `json:"sha"`
 	PatchID   string    `json:"patch_id"`
 	Reason    string    `json:"reason,omitempty"`
+	Via       string    `json:"via,omitempty"`
+	SessionID string    `json:"session_id,omitempty"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -163,6 +168,13 @@ func unchangedPatchBody(repoPath, sha string) (string, error) {
 		return "", fmt.Errorf("reading diff failed: %w", err)
 	}
 	return body.String(), nil
+}
+
+// NormalizeModelName canonicalizes a full model identifier for equality
+// checks. Cross-mode review compares whole models, not only makers, so
+// "zai:GLM-5.3-Flash" reviewing "zai:GLM-5.3" counts as an independent review.
+func NormalizeModelName(model string) string {
+	return strings.ToLower(strings.TrimSpace(model))
 }
 
 // NormalizeModelMaker extracts the model maker from a model string.

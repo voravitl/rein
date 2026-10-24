@@ -31,6 +31,7 @@ This skill provides AI models (coordinators, workers, reviewers, advisors) with 
 | Record code review verdict | `rein verdict record` | `--mr`, `--sha`, `--verdict`, `--reviewer` | `0` = recorded |
 | Verify MR merge readiness | `rein verdict check` | `--mr`, `--sha`, `--tier` | `0` = pass, `1` = fail |
 | Render terminal-only approval preview | `rein approve prompt` | `--mr`, `--sha` | `0` = JSON preview and terminal command; interactive approval disabled |
+| Record human approval | `rein approve` | `--mr`, `--sha`, `--reason`, `--as-directed` (inside an AI session) | `0` = approved, `1` = refused |
 | Run secondary advisor model | `rein advise <role>` | `<role>`, `<dir>`, `<task>`, `<out>` | `0` = finished |
 | Run native Orca worker lifecycle | `rein orca <launch\|wait\|drain\|close\|tidy>` | `--run`, `--terminal`, `--worktree` | `0` = ok, `1` = error, `3` = dirty, `4` = unique commit |
 | Run E2E test via Orca browser | `rein e2e test` or `run` | `<url-or-spec>`, `--out`, `--json` | `0` = pass, `1` = fail |
