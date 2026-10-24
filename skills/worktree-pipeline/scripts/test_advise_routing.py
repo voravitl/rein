@@ -147,6 +147,65 @@ Path(os.environ['TEST_RECEIPT']).write_text('consumed receipt')
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(calls, [], 'nothing may be checked or called when the effort cannot be applied')
 
+    def test_hermes_advisor_fails_before_receipt_or_model_call(self):
+        self.env.update(ADVISE_PROVIDER='hermes', ADVISE_MODEL='hermes-test')
+        self.out.write_text('Previous report\n')
+        self.write_cli('hermes', "raise SystemExit('Hermes must not run')\n")
+        result, calls = self.invoke()
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertIn('cannot probe Hermes', result.stdout + result.stderr)
+        self.assertEqual(calls, [], 'unsupported advisor must not consume a review receipt')
+        self.assertEqual(self.out.read_text(), 'Previous report\n')
+
+    def hermes_cli(self):
+        self.write_cli('hermes', '''import json,os,sys
+if sys.argv[1:]==['--cli','chat','--help']:
+    print('--read-only-root DIR')
+    raise SystemExit(0)
+with open(os.environ['TEST_CALLS'],'a') as f:
+    f.write(json.dumps(['hermes-call',os.getcwd(),os.environ.get('HERMES_HOME')]+sys.argv[1:])+'\\n')
+print('Hermes verified answer')
+''')
+
+    def test_hermes_uses_fixed_readers_from_disposable_cwd_and_keeps_profile(self):
+        self.hermes_cli()
+        profile = self.root / 'authenticated-profile'
+        self.env.update(ADVISE_PROVIDER='hermes', ADVISE_MODEL='anthropic:claude-test',
+                        ADVISE_EFFORT='high', HERMES_HOME=str(profile))
+        result, calls = self.invoke()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(calls[0][calls[0].index('--agent')+1], 'hermes')
+        call = calls[1]
+        self.assertEqual(call[0], 'hermes-call')
+        self.assertNotEqual(Path(call[1]).resolve(), self.root.resolve())
+        self.assertFalse(Path(call[1]).exists(), 'disposable cwd must be cleaned')
+        self.assertEqual(call[2], str(profile))
+        self.assertEqual(call[3:-1], ['--cli', 'chat', '--read-only-root', str(self.root.resolve()),
+                                    '--model', 'anthropic:claude-test', '--reasoning', 'high', '--quiet', '--query'])
+        self.assertEqual(self.out.read_text(), 'Hermes verified answer\n')
+        self.assertEqual(calls[2][:2], ['ledger', 'call'])
+        self.assertFalse(profile.exists(), 'wrapper must not populate or copy credentials')
+
+    def test_hermes_worker_home_refused_before_receipt_and_probe(self):
+        self.hermes_cli()
+        self.env.update(ADVISE_PROVIDER='hermes', HERMES_HOME=str(self.root / '.hermes'))
+        self.out.write_text('Previous report\n')
+        result, calls = self.invoke()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('worker task home', result.stdout + result.stderr)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.out.read_text(), 'Previous report\n')
+
+    def test_hermes_old_cli_refused_before_receipt(self):
+        self.write_cli('hermes', "print('chat help without readonly capability')\n")
+        self.env.update(ADVISE_PROVIDER='hermes')
+        self.out.write_text('Previous report\n')
+        result, calls = self.invoke()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn('lacks chat --read-only-root', result.stdout + result.stderr)
+        self.assertEqual(calls, [])
+        self.assertEqual(self.out.read_text(), 'Previous report\n')
+
     def test_post_call_ledger_failure_is_failure(self):
         self.env['LEDGER_EXIT'] = '1'
         result, calls = self.invoke()

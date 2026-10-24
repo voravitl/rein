@@ -27,6 +27,30 @@ import (
 
 var stopGraphQuotaProcess = stopGraphProcess
 
+// moveAsideStaleReport renames the report of an earlier attempt so this attempt has to write its
+// own. A timestamp cannot tell the two apart: an earlier attempt can set the file's time to the
+// future, and a touch during a later attempt makes an old report look fresh.
+func moveAsideStaleReport(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("the report path %s is not a regular file; refusing the launch", path)
+	}
+	stale := path + ".stale"
+	if err := os.Remove(stale); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(path, stale); err != nil {
+		return fmt.Errorf("cannot move the earlier report aside: %w", err)
+	}
+	return nil
+}
+
 // cmdRouteLaunch runs an argv, never shell text, after validating its prepared routing decision.
 func cmdRouteLaunch(args []string) int { return routeLaunch(context.Background(), args, nil, nil, nil) }
 
@@ -80,6 +104,15 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
 	}
+	if agent == "hermes" && !isOrcaLaunch(argv) {
+		for _, key := range []string{"HERMES_SAFE_MODE", "HERMES_IGNORE_USER_CONFIG"} {
+			switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+			case "1", "true", "yes", "on":
+				fmt.Fprintln(os.Stderr, "[route] incompatible Hermes worker environment:", key)
+				return 1
+			}
+		}
+	}
 	var endpointArgs []string
 	if isOrcaLaunch(argv) {
 		endpointArgs, err = orcaObservationSelectors(argv)
@@ -101,7 +134,7 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	if err == nil && isOrcaLaunch(argv) && d.Launch != "orca" {
 		err = fmt.Errorf("selected provider requires the shell route; Orca does not forward its model/guard flags")
 	}
-	if err == nil && isOrcaLaunch(argv) && (agent == "codex" || agent == "kiro" || agent == "opencode" || agent == "opencode2") {
+	if err == nil && isOrcaLaunch(argv) && (agent == "codex" || agent == "kiro" || agent == "opencode" || agent == "opencode2" || agent == "hermes") {
 		err = fmt.Errorf("this harness requires the direct shell route for model and hook flags")
 	}
 	if err == nil {
@@ -121,6 +154,33 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "[route]", err)
 		return 1
+	}
+	if agent == "hermes" && !isOrcaLaunch(argv) {
+		if err := hooks.BindHermesCredentials(c.Worktree); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		// A task home that can switch the plugin off, or a plugin file that was replaced, must not
+		// reach exec: the worker would run without the guard that judged its contract.
+		if err := hooks.CheckHermesTaskHome(c.Worktree); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		if err := hooks.CheckHermesGuard(contract.Real(c.Worktree), c.Name); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		if err := hooks.CheckHermesPluginDir(contract.Real(c.Worktree)); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
+		// The report must be this attempt's. A report left by an earlier attempt is moved aside
+		// before the worker starts, so it cannot pass as this attempt's evidence: neither its
+		// timestamp nor a touch can make it fresh again.
+		if err := moveAsideStaleReport(c.ReportPath); err != nil {
+			fmt.Fprintln(os.Stderr, "[route]", err)
+			return 1
+		}
 	}
 	var graphInput io.Reader
 	if name := filepath.Base(argv[0]); controller != nil && (name == "opencode" || name == "opencode2") {
@@ -205,6 +265,9 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = c.Worktree
 	cmd.Env = append(os.Environ(), "ADVISE_RUN="+*runID, "ADVISE_TASK="+c.Name)
+	if agent == "hermes" && !isOrcaLaunch(argv) {
+		cmd.Env = append(cmd.Env, "HERMES_HOME="+filepath.Join(c.Worktree, ".hermes"), "HERMES_ENABLE_PROJECT_PLUGINS=1")
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	var captured dispatchReceiptBuffer
 	var agyStderr *dispatchReceiptBuffer
@@ -319,6 +382,16 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 	// Native agy can exit zero with an unfinished turn; only its stderr diagnostic is authoritative.
 	if err == nil && agyStderr != nil && (agyStderr.overflow || agyPrintTimedOut(agyStderr.String())) {
 		err = errors.New("Antigravity print completion unverified (partial timeout or stderr capture overflow)")
+	}
+	// Recheck the report in Rein itself: a missing/old plugin must not turn a
+	// zero-exit Hermes process into successful task completion. The report must be this
+	// attempt's: the earlier attempt's report was moved aside before the launch, so any
+	// file at the path now was written during this attempt.
+	if err == nil && d.Agent == "hermes" && !isOrcaLaunch(argv) {
+		info, reportErr := os.Lstat(c.ReportPath)
+		if reportErr != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+			err = fmt.Errorf("Hermes completion requires a nonempty regular report at %s", c.ReportPath)
+		}
 	}
 	code := 0
 	if err != nil {
@@ -532,7 +605,7 @@ func launchFlag(args []string, names ...string) (string, error) {
 
 func launchIdentity(argv []string, c *contract.Contract, runID string) (string, string, error) {
 	name, args := filepath.Base(argv[0]), argv[1:]
-	agent := map[string]string{"claude": "claude", "codex": "codex", "agy": "antigravity", "kiro-cli": "kiro", "opencode": "opencode", "opencode2": "opencode2"}[name]
+	agent := map[string]string{"claude": "claude", "codex": "codex", "agy": "antigravity", "kiro-cli": "kiro", "opencode": "opencode", "opencode2": "opencode2", "hermes": "hermes"}[name]
 	if isOrcaLaunch(argv) {
 		if _, err := orcaObservationSelectors(argv); err != nil {
 			return "", "", err
@@ -571,6 +644,11 @@ func launchIdentity(argv []string, c *contract.Contract, runID string) (string, 
 		for _, flag := range []string{"-C", "--cd", "--cwd", "--directory"} {
 			if dir, err := launchFlag(args, flag); err != nil || (dir != "" && contract.Real(dir) != contract.Real(c.Worktree)) {
 				return "", "", fmt.Errorf("provider directory override differs from contracted worktree")
+			}
+		}
+		if name == "hermes" {
+			if _, err := hermesPromptSlot(argv); err != nil {
+				return "", "", err
 			}
 		}
 		if name == "codex" {
@@ -645,6 +723,13 @@ func openCodeModelVariant(argv []string) (string, string, error) {
 // launchEffort returns the reasoning effort an argv asks for: --effort or --variant (claude, agy, Orca worker-start), OpenCode V2's model suffix,
 // or Codex's model_reasoning_effort configuration. "" means it names none; two different values are an error.
 func launchEffort(argv []string) (string, error) {
+	if filepath.Base(argv[0]) == "hermes" {
+		if _, err := hermesPromptSlot(argv); err != nil {
+			return "", err
+		}
+		effort, err := launchFlag(argv[1:], "--reasoning")
+		return strings.ToLower(effort), err
+	}
 	if name := filepath.Base(argv[0]); !isOrcaLaunch(argv) && (name == "opencode" || name == "opencode2") {
 		_, variant, err := openCodeModelVariant(argv)
 		return variant, err

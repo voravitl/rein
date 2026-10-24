@@ -1,8 +1,10 @@
 #!/bin/bash
-# One advisor call (spec critique, gate-failure triage, disputed finding) with an ENFORCED read-only sandbox.
+# One advisor call with enforced read-only tool permissions (provider boundaries differ).
 # Uses an OMC agent prompt (critic, tracer, code-reviewer, security-reviewer, test-engineer, ...) as the role and
 # templates/advisor-rules.md as the rules. Providers (ADVISE_PROVIDER):
 #   codex: `codex exec -s read-only` (no file writes, no docker socket; network stays open)
+#   hermes: patched `chat --read-only-root` fixed bounded local readers, no shell/writes/network tools/delegation.
+#           This is a tool permission mode, not an OS sandbox; host runtime can write profile caches.
 #   claude: headless restricted settings with only Read,Grep,Glob; MCP configuration excluded.
 #   kiro: `kiro-cli chat --no-interactive --trust-tools=read,grep,glob` (only read tools run; writes and shell are
 #         rejected; costs Kiro credits, not Claude Code quota). Never `omc ask`: it runs codex without a sandbox.
@@ -17,7 +19,25 @@ PROVIDER=${ADVISE_PROVIDER:-}; MODEL=${5:-${ADVISE_MODEL:-}}
 for VALUE in "$RUN" "$TASK_ID" "$PROVIDER" "$MODEL"; do
   case "$VALUE" in *[![:space:]]*) ;; *) echo "[advise] explicit ADVISE_RUN, ADVISE_TASK, ADVISE_PROVIDER and model are required"; exit 2;; esac
 done
-case "$PROVIDER" in codex|kiro|claude) ;; *) echo "[advise] ADVISE_PROVIDER must be codex, kiro or claude"; exit 2;; esac
+case "$PROVIDER" in codex|kiro|claude|hermes) ;; *) echo "[advise] ADVISE_PROVIDER must be codex, kiro, claude or hermes"; exit 2;; esac
+# Hermes reviews preserve the selected profile/auth; project worker homes carry a different contract.
+# Probe before consuming a route receipt or replacing a previous answer.
+HERMES_REVIEW_CWD=
+if [ "$PROVIDER" = hermes ]; then
+  DIR=$(cd "$DIR" && pwd -P) || exit 2
+  python3 - "$DIR" <<'PYHOME' || exit 2
+import os, pathlib, sys
+home = os.environ.get('HERMES_HOME')
+if home and pathlib.Path(home).expanduser().resolve() == (pathlib.Path(sys.argv[1]).resolve() / '.hermes'):
+    sys.exit('[advise] HERMES_HOME selects the worker task home; select your authenticated advisor profile before rein advise')
+PYHOME
+  HERMES_REVIEW_CWD=$(mktemp -d) || exit 2
+  trap 'rm -rf -- "$HERMES_REVIEW_CWD"' EXIT
+  HERMES_HELP=$(cd "$HERMES_REVIEW_CWD" && timeout 15 hermes --cli chat --help 2>/dev/null) || {
+    echo "[advise] cannot probe Hermes; install a CLI supporting chat --read-only-root"; exit 2;
+  }
+  case "$HERMES_HELP" in *--read-only-root*) ;; *) echo "[advise] Hermes lacks chat --read-only-root; install the patched CLI before advice"; exit 2;; esac
+fi
 case "$MODEL" in *fable*) echo "[advise] fable is never used"; exit 2;; esac
 # The effort a review runs at is part of what an automatic receipt was chosen on: `route check --effort` must match it.
 EFFORT=${ADVISE_EFFORT:-}
@@ -77,6 +97,14 @@ if [ "$PROVIDER" = codex ]; then
   timeout "${ADVISE_TIMEOUT:-1500}" codex exec -s read-only --skip-git-repo-check --ephemeral --color never \
     -m "$MODEL" -c model_reasoning_effort="$EFFORT" -C "$DIR" -o "$OUT" "$PROMPT" </dev/null >"$LOG" 2>&1
   RC=$?
+elif [ "$PROVIDER" = hermes ]; then
+  # A disposable cwd prevents project discovery while the fixed readers stay rooted at DIR.
+  # HERMES_HOME is deliberately inherited: no credentials are copied or profile silently changed.
+  (cd "$HERMES_REVIEW_CWD" && timeout "${ADVISE_TIMEOUT:-1500}" hermes --cli chat \
+    --read-only-root "$DIR" --model "$MODEL" ${EFFORT:+--reasoning "$EFFORT"} --quiet --query "$PROMPT") \
+    </dev/null >"$OUT" 2>"$LOG"
+  RC=$?
+  cat "$OUT" >>"$LOG"
 elif [ "$PROVIDER" = claude ]; then
   (cd "$DIR" && timeout "${ADVISE_TIMEOUT:-1500}" claude -p --model "$MODEL" ${EFFORT:+--effort "$EFFORT"} --restricted \
     --tools Read,Grep,Glob --strict-mcp-config "$PROMPT") </dev/null >"$LOG" 2>&1

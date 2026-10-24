@@ -72,24 +72,28 @@ Antigravity IPC commands remain subject to its terminal sandbox. Rein does not e
 ### `rein hooks install`
 Installs vendor hook configuration into the worker's worktree so tool calls are guarded:
 ```sh
-rein hooks install <TASK_ID> [--vendors codex,agy,kiro,opencode,claude]
+rein hooks install <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude]
 ```
+Without `--vendors`, the guard is installed for codex, agy, kiro and opencode. A Hermes worker needs
+`--vendors hermes`: its plugin lives in the task's Hermes home, and installing it by default would hide the
+worker's own `.hermes` files from git status and drift. Claude is opt-in for the same reason: its hook is the
+plugin's global one.
 
 ### `rein hooks uninstall`
 
 ```sh
-rein hooks uninstall <TASK_ID> [--vendors codex,agy,kiro,opencode,claude]
+rein hooks uninstall <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude]
 ```
 
-Removes only identifiable Rein task hooks and updates both contract copies. Default removal scans all five supported vendors and every shared hook event; modified executable commands or residual copies outside the owned layout return exit 2 and retain that vendor's metadata. Other owners' hooks, settings and sibling files remain. Conflicting or modified artifacts and symlink destinations fail closed; inspect the error instead of deleting the parent directory. Repeated removal is safe. Reinstall with `rein hooks install` and use the newly printed launch flags. Restart an already-running harness to unload cached hooks; removal on disk cannot revoke a running process's launch arguments.
+Removes only identifiable Rein task hooks and updates both contract copies. Default removal scans all six supported vendors and every shared hook event; modified executable commands or residual copies outside the owned layout return exit 2 and retain that vendor's metadata. Other owners' hooks, settings and sibling files remain. Conflicting or modified artifacts and symlink destinations fail closed; inspect the error instead of deleting the parent directory. Repeated removal is safe. Reinstall with `rein hooks install` and use the newly printed launch flags. Restart an already-running harness to unload cached hooks; removal on disk cannot revoke a running process's launch arguments.
 
-Codex, OpenCode and Kiro hooks are task-bound project artifacts, not global plugin registrations. Native plugin registration is a separate operation (`scripts/install-harness.sh`); failures return nonzero rather than printing success.
+Codex, OpenCode, Kiro and Hermes hooks are task-bound project artifacts, not global plugin registrations. Native plugin registration is a separate operation (`scripts/install-harness.sh`); failures return nonzero rather than printing success.
 
 ### `rein hook`
 Invoked automatically on every tool call by the agent harness via stdin:
 ```sh
 # Called by harness PreToolUse / Stop hooks
-rein hook [--vendor claude|codex|agy|kiro|opencode]
+rein hook [--vendor claude|codex|agy|kiro|opencode|hermes]
 ```
 - **Silent outside contracted worktrees:** Costs ~5ms, does nothing if no contract.
 - **Inside contracted worktree:** Blocks `git push`, `gh/glab`, destructive git resets, writes outside allowlist, and touching live ports/databases.
@@ -105,7 +109,7 @@ rein drift <TASK_ID> \
   [--worktree <PATH>] \
   [--base origin/main] \
   [--claimed-files file1,file2] \
-  [--expect-guard claude|codex|agy|kiro|opencode] \
+  [--expect-guard claude|codex|agy|kiro|opencode|hermes] \
   [--json]
 ```
 
@@ -234,9 +238,10 @@ rein approve --mr <N> [--sha <HEAD_SHA>] --reason "<APPROVAL_REASON>"
 
 Dispatches a secondary model to inspect claims, trace errors, or audit blast radius:
 ```sh
-rein advise --run <RUN> --task <CONTRACT> --provider codex|kiro|claude --model <M> <ROLE> <CONTRACT_WORKTREE> <TASK_FILE> <OUT_FILE>
+rein advise --run <RUN> --task <CONTRACT> --provider codex|kiro|claude|hermes --model <M> <ROLE> <CONTRACT_WORKTREE> <TASK_FILE> <OUT_FILE>
 ```
 - Available roles: `code-reviewer`, `claim-auditor`, `blast-radius`, `tracer`.
+- `--provider hermes` requires patched Hermes `chat --read-only-root DIR`; an older CLI or inherited worker `HERMES_HOME=<WORKTREE>/.hermes` is refused before consuming the receipt or replacing prior output. Advice runs from a disposable directory with the selected authenticated profile and fixed, bounded `read_file`/literal `search_files` tools rooted at the worktree. Shell, writes, network tools, plugins and delegation are denied; symlinks and nonregular files are refused. The explicit provider-qualified model is pinned before startup normalization; provider/model changes, configured fallbacks, smart routing and auxiliary model calls are refused or disabled. Provider discovery uses bundled implementations only. `--effort` maps to Hermes `--reasoning`. This is a tool permission mode, not an OS sandbox: inference and runtime profile writes remain possible. Credentials are never copied. The coordinator collects stdout as the report; task-bound writing workers use `rein hooks install <TASK_ID> --vendors hermes` separately and require patched `completion_check` lifecycle support.
 
 ---
 

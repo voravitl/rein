@@ -9,10 +9,10 @@ import (
 
 const nativeCodexQuotaSource = "native Codex app-server/account/rateLimits/read"
 
-// ReadNativeQuota reports local Codex metadata only. It does not select a model,
+// ReadNativeQuota reports local Codex and configured Hermes provider metadata. It does not select a model,
 // authorize a worker, replace Orca quota gates, or prove the provider data's age.
-// A nil config and one pinned harness prevent configured discovery argv or other
-// harnesses from being launched through this display-only surface.
+// Pinned harness commands prevent configured discovery argv from being launched
+// through this display-only surface.
 func ReadNativeQuota(ctx context.Context, dir string, timeout time.Duration) ([]QuotaSnapshot, error) {
 	if timeout <= 0 {
 		return nativeQuotaSnapshots(Inventory{}, time.Now().UTC()), errors.New("native quota timeout must be positive")
@@ -24,14 +24,20 @@ func ReadNativeQuota(ctx context.Context, dir string, timeout time.Duration) ([]
 	if len(inventories) != 1 {
 		return nativeQuotaSnapshots(Inventory{}, time.Now().UTC()), errors.New("native Codex inventory unavailable")
 	}
-	return nativeQuotaSnapshots(inventories[0], time.Now().UTC()), nil
+	rows := nativeQuotaSnapshots(inventories[0], time.Now().UTC())
+	for i := range rows {
+		if rows[i].Provider == "hermes" {
+			rows[i] = readHermesQuota(ctx, dir, timeout)
+		}
+	}
+	return rows, nil
 }
 
 // nativeQuotaSnapshots deliberately copies no inventory reason, scope, model,
 // executable, credential/account identifier or raw response into display data.
 func nativeQuotaSnapshots(inv Inventory, now time.Time) []QuotaSnapshot {
-	out := make([]QuotaSnapshot, 0, 4)
-	for _, provider := range []string{"claude", "codex", "antigravity", "opencode2"} {
+	out := make([]QuotaSnapshot, 0, 5)
+	for _, provider := range []string{"claude", "codex", "antigravity", "opencode2", "hermes"} {
 		s := QuotaSnapshot{Provider: provider, Source: "native quota unsupported", Scope: "No native quota adapter queried; quota and account binding unknown", AccountEvidence: "unverified", Status: "unsupported", Windows: []QuotaWindow{}}
 		if provider == "codex" {
 			s.Source = nativeCodexQuotaSource

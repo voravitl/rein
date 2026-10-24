@@ -523,7 +523,7 @@ func (x *ctx) coordRouteLaunch(args []string) string {
 }
 
 func harnessLaunch(name string, args []string) bool {
-	if !slices.Contains([]string{"claude", "codex", "agy", "kiro-cli", "opencode", "opencode2"}, name) {
+	if !slices.Contains([]string{"claude", "codex", "agy", "kiro-cli", "opencode", "opencode2", "hermes"}, name) {
 		return false
 	}
 	if len(args) == 1 && slices.Contains([]string{"--help", "-h", "--version", "-v", "help", "version", "models"}, args[0]) {

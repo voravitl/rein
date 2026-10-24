@@ -30,7 +30,7 @@ type Action struct {
 }
 
 // Vendors are the values accepted by `rein hook --vendor`.
-var Vendors = []string{"claude", "codex", "agy", "kiro", "opencode"}
+var Vendors = []string{"claude", "codex", "agy", "kiro", "opencode", "hermes"}
 
 // coordAgents are the coordinator agents the plugin must never start as Claude subagents: the coordinator runs in
 // the main session through Orca orchestration, and steward jobs start as Orca workers (ADR 0002 B0).
@@ -56,6 +56,8 @@ func parse(vendor string, raw []byte) (Action, bool) {
 		return parseKiro(raw)
 	case "opencode":
 		return parseOpencode(raw)
+	case "hermes":
+		return parseHermes(raw)
 	}
 	return Action{}, false
 }
@@ -290,6 +292,68 @@ func parseOpencode(raw []byte) (Action, bool) {
 			if s, ok := v.(string); ok && strings.Contains(s, patchMarker) {
 				a.Paths = append(a.Paths, patchPaths(s)...)
 			}
+		}
+	}
+	return a, true
+}
+
+// hermesWriteTools are Hermes' own file-writing tools (tools/file_tools.py): write_file creates or replaces a
+// whole file, patch edits one in place.
+var hermesWriteTools = map[string]bool{"write_file": true, "patch": true, "edit_file": true, "create_file": true}
+
+// hermesReadOnly lists the Hermes tools that take a path only to read it.
+func hermesReadOnly(name string) bool {
+	switch name {
+	case "read_file", "search_file", "list_files", "list_dir", "grep", "code_search", "view_file":
+		return true
+	}
+	for _, p := range []string{"read_", "list_", "search_", "view_", "grep_"} {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// parseHermes reads one Hermes lifecycle event. The rein-guard plugin pipes the tool name, its arguments and the
+// worktree directory, in the same shape the opencode plugin uses. The pre_verify event is Hermes' report gate
+// (its counterpart of the other vendors' Stop hook), so it maps onto the guard's "stop" event.
+func parseHermes(raw []byte) (Action, bool) {
+	var ev struct {
+		Tool  string          `json:"tool"`
+		Input json.RawMessage `json:"input"`
+		Cwd   string          `json:"cwd"`
+		Event string          `json:"hook_event_name"`
+	}
+	if json.Unmarshal(raw, &ev) != nil {
+		return Action{}, false
+	}
+	if ev.Event == "pre_verify" || ev.Event == "stop" {
+		return Action{Event: "stop", Tool: "pre_verify", Cwd: ev.Cwd, Kind: "other"}, true
+	}
+	if ev.Tool == "" {
+		return Action{}, false
+	}
+	a := Action{Event: "pretool", Tool: ev.Tool, Cwd: ev.Cwd, Kind: "other"}
+	in := object(ev.Input)
+	withWorkdir(&a, in)
+	switch {
+	case ev.Tool == "terminal" || ev.Tool == "shell" || ev.Tool == "bash":
+		a.Kind, a.Command = "bash", str(in, "command")
+	case hermesWriteTools[ev.Tool]:
+		a.Kind = "write"
+		if p := str(in, "path", "file_path", "filePath"); p != "" {
+			a.Paths = []string{p}
+		}
+		for _, v := range in { // a patch body names its own files
+			if s, ok := v.(string); ok && strings.Contains(s, patchMarker) {
+				a.Paths = append(a.Paths, patchPaths(s)...)
+			}
+		}
+	default:
+		// a tool that names a path it may write is judged as a write unless it is known to only read
+		if p := str(in, "path", "file_path", "filePath", "target_file", "TargetFile"); p != "" && !hermesReadOnly(ev.Tool) {
+			a.Kind, a.Paths = "write", []string{p}
 		}
 	}
 	return a, true

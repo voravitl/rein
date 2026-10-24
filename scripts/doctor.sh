@@ -47,6 +47,7 @@ echo "== worker / reviewer / advisor CLIs (install the ones you route to)"
 check vendor codex "codex --version" "worker, review gate, default advisor (codex login)"
 check vendor agy "agy --version" "antigravity worker (Gemini)"
 check vendor opencode2 "opencode2 --version" "cheap worker on its own provider quota"
+check vendor hermes "hermes version" "task-bound worker/reviewer; advisor requires chat --read-only-root; rein hooks install <task> --vendors hermes"
 check vendor kiro-cli "kiro-cli --version" "fallback worker/reviewer, kiro advisor (kiro-cli login)"
 
 echo "== optional"

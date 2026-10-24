@@ -951,7 +951,7 @@ var globChars = "*?["
 // directory that holds one. Segments are matched like shell globs: a leading dot needs a literal dot.
 func matchesHook(top, pattern string) bool {
 	segs := strings.Split(pattern, "/")
-	cands := append([]string{".codex", ".agents", ".kiro", ".kiro/agents", ".opencode", ".opencode/plugins", ".opencode/plugins/rein", ".claude"}, hookFiles...)
+	cands := append([]string{".codex", ".agents", ".kiro", ".kiro/agents", ".opencode", ".opencode/plugins", ".opencode/plugins/rein", ".claude", ".hermes", ".hermes/plugins", ".hermes/plugins/rein-guard"}, hookFiles...)
 	for _, c := range cands {
 		cs := strings.Split(c, "/")
 		if len(cs) != len(segs) || !protectedHook(top, c) {

@@ -52,7 +52,7 @@ class HarnessInstallerTests(unittest.TestCase):
                 self.assertNotEqual(self.run_script(harness).returncode, 0)
 
     def test_missing_artifacts_fail(self):
-        for harness in ('opencode', 'kiro', 'codex'):
+        for harness in ('opencode', 'kiro', 'codex', 'hermes'):
             self.assertNotEqual(self.run_script(harness).returncode, 0)
 
     def test_task_bound_hooks_cannot_be_registered_globally(self):
@@ -131,6 +131,23 @@ class HarnessInstallerTests(unittest.TestCase):
         self.assertFalse(self.log.exists())
         self.assertEqual(self.run_script('uninstall', 'codex').returncode, 0)
         self.assertEqual(self.log.read_text(), 'plugin remove rein@rein\n')
+
+    def test_hermes_is_task_bound_and_preserves_global_home(self):
+        foreign = self.home / '.hermes/config.yaml'
+        foreign.parent.mkdir()
+        foreign.write_text('foreign config\n')
+        self.cli('hermes')
+        for args, action in ((('hermes',), 'install'), (('uninstall', 'hermes'), 'uninstall')):
+            result = self.run_script(*args)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(f'rein hooks {action} <task> --vendors hermes', result.stderr)
+            self.assertEqual(foreign.read_text(), 'foreign config\n')
+        self.assertFalse(self.log.exists(), 'no global Hermes CLI operation is supported')
+
+    def test_all_attempts_hermes_task_bound_guidance(self):
+        result = self.run_script('all')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('rein hooks install <task> --vendors hermes', result.stderr)
 
     def test_invalid_target_fails(self):
         self.assertNotEqual(self.run_script('invalid').returncode, 0)

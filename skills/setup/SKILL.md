@@ -1,6 +1,6 @@
 ---
 name: setup
-description: "Set up or repair the rein plugin on this machine: install or rebuild the guard binary, check every prerequisite (Go, git, Orca, OMC, codex/agy/opencode/kiro, glab, docker), remove duplicate rein hooks or old local copies of the worktree-pipeline skill and orca agents, and create a project profile, project pack and fallback chain from the examples. Use it after installing rein, when a session says the rein guard binary is not installed, when the user says 'setup rein', 'ติดตั้ง rein', 'rein doctor', or before the first worktree-pipeline run on a new project."
+description: "Set up or repair the rein plugin on this machine: install or rebuild the guard binary, check every prerequisite (Go, git, Orca, OMC, codex/agy/opencode/kiro/hermes, glab, docker), remove duplicate rein hooks or old local copies of the worktree-pipeline skill and orca agents, and create a project profile, project pack and fallback chain from the examples. Use it after installing rein, when a session says the rein guard binary is not installed, when the user says 'setup rein', 'ติดตั้ง rein', 'rein doctor', or before the first worktree-pipeline run on a new project."
 ---
 
 # rein setup

@@ -1,6 +1,6 @@
 # แบบและแผนเชื่อม Crux กับ Rein และ Orca
 
-เอกสารนี้เป็นแบบและลำดับพัฒนาจากโค้ดปัจจุบัน ไม่ใช่หลักฐานว่าระบบทั้งหมดเชื่อมทำงานจริงแล้ว ขอบเขตบังคับคือ Claude Code, Codex, Antigravity และ OpenCode2 ทั้งสี่ตัว เป้าหมายคือให้ผู้ใช้สั่งงานผ่าน `crux-mode` จุดเดียว แล้วระบบเลือกวิธีทำงาน แบ่ง agent ส่งต่องาน ตรวจผล และอธิบายสถานะเป็นไทยได้ต่อเนื่อง
+เอกสารนี้เป็นแบบและลำดับพัฒนาจากโค้ดปัจจุบัน ไม่ใช่หลักฐานว่าระบบทั้งหมดเชื่อมทำงานจริงแล้ว ขอบเขตบังคับคือ Claude Code, Codex, Antigravity, OpenCode2 และ Hermes Agent ทั้งห้าตัว เป้าหมายคือให้ผู้ใช้สั่งงานผ่าน `crux-mode` จุดเดียว แล้วระบบเลือกวิธีทำงาน แบ่ง agent ส่งต่องาน ตรวจผล และอธิบายสถานะเป็นไทยได้ต่อเนื่อง
 
 ## สิ่งที่ผู้ใช้จะได้รับ
 
@@ -78,11 +78,11 @@ Harness หมายถึงโปรแกรมที่ใช้รัน ag
 
 Mapping อ้างจาก [routing.go](../../../internal/routing/routing.go), [hooks.go](../../../internal/hooks/hooks.go), [route_launch.go](../../../cmd/rein/route_launch.go) และ [discover.go](../../../internal/providers/discover.go) OpenCode2 เป็นชื่อ executable/provider ที่ repo ใช้ ต้องผูกกับ binary/version จริง ไม่เดาว่า plugin v1 ใช้กับ v2 ได้
 
-ตัวอย่างรายชื่อ vendor ที่ Rein รับคือ `--vendors claude,codex,agy,opencode` ไม่ใช่ `antigravity,opencode2` ต้องติดตั้ง hooks ก่อนสร้าง contract hash/profile ที่ผูก generation ส่วน Claude ตรวจ global guard เดิมก่อน opt-in เพื่อไม่ติดตั้งซ้ำ
+ตัวอย่างรายชื่อ vendor ที่ Rein รับคือ `--vendors claude,codex,agy,opencode,hermes` ไม่ใช่ `antigravity,opencode2` ต้องติดตั้ง hooks ก่อนสร้าง contract hash/profile ที่ผูก generation ส่วน Claude ตรวจ global guard เดิมก่อน opt-in เพื่อไม่ติดตั้งซ้ำ
 
 Claude discovery รองรับ SDK initialize สำหรับ Claude Code 2.1.302 ขึ้นไปใน major 2 แล้ว โดยอ่าน resolvedModel และ effort จาก client catalog เท่านั้น ยังต้องผ่าน entitlement/quota, quality evidence, billing และ guard ก่อนเลือกอัตโนมัติ Routed Orca ปฏิเสธ Codex/OpenCode2 และ direct `rein orca launch` ยังไม่รับ OpenCode2 ดังนั้นแผนสี่ harness ผ่าน Orca ทั้งหมดต้องแก้ runtime integration ไม่ใช่เพิ่มชื่อในตาราง
 
-## แบบ adapter ของทั้งสี่ตัว
+## แบบ adapter ของทั้งห้าตัว
 
 ใช้ shared skill/communication policy ชุดเดียว ส่วน manifest, hook payload, native agent format และ input/output เป็นของ adapter แต่ละตัว ไม่สร้าง controller ใหม่ สถานะเปิด Crux เป็น preference ของ session ไม่ใช่ Rein run ownership
 
@@ -92,12 +92,15 @@ Claude discovery รองรับ SDK initialize สำหรับ Claude Cod
 | Codex | native plugin, TOML roles และ Codex hooks ที่ผ่าน trust | `$crux:crux-mode`; `SessionStart`/`UserPromptSubmit` ผูก `session_id` | `codex exec -` หรือ App Server ที่ตรวจ schema แล้ว |
 | Antigravity | Agent Skills กับ native Crux agent และ hook schema ของ Antigravity | เข้าโหมดผ่านการเลือก Crux agent หรือ explicit activation action ที่ทดสอบแล้ว ไม่ตรวจ slash command จาก field ที่ไม่มี | print/stream input ผ่าน `agy` พร้อม conversation/agent identity จริง |
 | OpenCode2 | V2 plugin module กับ Markdown agents/skills | ใช้ prompt hook สำหรับรับ activation และ context hook สำหรับ policy ที่ต้องมีในแต่ละ model call ผูก session จริง | `opencode2 run --standalone` และ input/file channel ของ V2 ที่ตรวจแล้ว |
+| Hermes Agent | Hermes plugin (`plugin.yaml` + `__init__.py`) ที่โหลดจาก `~/.hermes/plugins/crux/` หรือ project plugin ใน worktree | ใช้ hook `pre_llm_call` คืน `{"context": ...}` ซึ่ง Hermes ผสานเข้า user message ของทุกรอบ; ผูก `session_id` | `hermes --cli chat` ที่เปิด project plugin (`HERMES_ENABLE_PROJECT_PLUGINS=1` + `HERMES_HOME`) |
 
-มี implementation ของ adapter ทั้งสี่แล้วตามคู่มือใน `adapters/` แต่ไม่ได้ติดตั้งส่วนกลางหรือพิสูจน์ session จริงครบทุกตัว ทุกตัวต้องมีทางออกจากโหมดที่พิสูจน์ได้และไม่ปิด guard ของ Rein สำหรับ Antigravity อาจใช้การเปลี่ยน agent/เปิด session ที่ไม่ใช่ Crux หาก runtime ไม่รองรับ toggle ใน session เดิม ให้รายงานข้อจำกัดนี้ตรงๆ
+มี implementation ของ adapter ทั้งห้าแล้วตามคู่มือใน `adapters/` แต่ไม่ได้ติดตั้งส่วนกลางหรือพิสูจน์ session จริงครบทุกตัว ทุกตัวต้องมีทางออกจากโหมดที่พิสูจน์ได้และไม่ปิด guard ของ Rein สำหรับ Antigravity อาจใช้การเปลี่ยน agent/เปิด session ที่ไม่ใช่ Crux หาก runtime ไม่รองรับ toggle ใน session เดิม ให้รายงานข้อจำกัดนี้ตรงๆ
 
 Antigravity `PreInvocation` ใช้ `conversationId` และส่ง context ผ่าน `injectSteps` ไม่มี `prompt` ใน payload ที่เอกสารระบุ จึงใช้ตัวจับ `UserPromptSubmit` ของ Codex แทนไม่ได้ ใช้ Agent Skills สำหรับงานใหม่ ไม่ผูกกับ legacy workflows
 
 OpenCode2 ต้องยืนยันว่าเป็น OpenCode V2 ใช้ `setup(ctx)`, `ctx.session.hook("prompt", ...)` และ `ctx.session.hook("context", ...)` ตาม V2 ไม่ใช้ returned hook object/config ของ V1 การเติม policy เข้า context ไม่ควรแก้ประวัติ user prompt ทุก turn
+
+Hermes ไม่มี native agent แบบ Claude/Codex: การแบ่งงานใช้ `delegate_task` ของ Hermes ซึ่งต้องส่ง persona และ override model ให้ชัดเจนทุกครั้ง (Hermes ไม่ให้ subagent อ่าน skill เอง) ตัว plugin โหลดแบบ opt-in: `plugins.enabled` ใน `~/.hermes/config.yaml` ต้องมี `crux` จึงจะทำงาน Hermes ไม่มี project plugin แบบ allow-list เหมือนกัน: task ที่อยู่ใน rein ต้องมี `crux` ใน `plugins.enabled` ของ task home แล้ว และไม่ควรเปิดทั้ง `crux` กับ guard ของ rein ใน home เดียวกันโดยไม่ตั้งใจ เพราะทั้งคู่เขียนไฟล์ใน `.hermes/`
 
 Codex manifest ที่ผ่านการค้นพบในเครื่องต้องคง regression test ไว้ก่อนเปลี่ยน packaging ตาม rolling docs โดยเฉพาะ `extensions.com.openai` กับ `.codex-plugin/plugin.json` ซึ่งไม่ใช่ overlay ที่ merge ทุก field อัตโนมัติ
 
@@ -109,6 +112,7 @@ Codex manifest ที่ผ่านการค้นพบในเครื�
 - Codex: [plugin packaging](https://developers.openai.com/plugins/build/plugins), [hooks](https://developers.openai.com/codex/hooks), [subagents](https://developers.openai.com/codex/subagents), [App Server](https://developers.openai.com/codex/app-server)
 - Antigravity: [Agent Skills](https://www.antigravity.google/docs/skills), [CLI plugin features](https://www.antigravity.google/docs/cli/features/), [hooks](https://www.antigravity.google/docs/hooks), [subagents](https://www.antigravity.google/docs/subagents), [CLI](https://www.antigravity.google/docs/cli/reference)
 - OpenCode V2: [plugins](https://dev.opencode.ai/v2/docs/plugins), [plugin API](https://dev.opencode.ai/v2/docs/build/plugins/), [skills](https://dev.opencode.ai/v2/docs/skills/), [agents](https://dev.opencode.ai/v2/docs/agents/), [migration](https://dev.opencode.ai/v2/docs/migrate-v1/)
+- Hermes Agent: [docs](https://hermes-agent.nousresearch.com/docs)
 
 ## เลือกเส้นทางทำงานก่อนเปิด agent
 
@@ -169,11 +173,11 @@ Codex manifest ที่ผ่านการค้นพบในเครื�
 
 ### P5 เชื่อมครบสี่ harness และตรวจคำตอบต่อเนื่อง
 
-- ต้องมี adapter จริงสำหรับ Claude Code, Codex, Antigravity และ OpenCode2 เพิ่มทีละตัวบน shared skills เดิม แต่ละ adapter ระบุวิธี input, role/model selection, result, cancellation และข้อจำกัดที่พิสูจน์แล้ว
+- ต้องมี adapter จริงสำหรับ Claude Code, Codex, Antigravity, OpenCode2 และ Hermes Agent เพิ่มทีละตัวบน shared skills เดิม แต่ละ adapter ระบุวิธี input, role/model selection, result, cancellation และข้อจำกัดที่พิสูจน์แล้ว
 - ใช้ [ชุดสถานการณ์ภาษา](../tests/communication.eval.json) ตรวจทั้งคำสั่งไทย คำสั่งอังกฤษที่ไม่ได้ขอเปลี่ยนภาษา คำขออังกฤษเฉพาะชิ้นงาน error ต้นฉบับ และความไม่แน่นอนของหลักฐาน
 - แยก smoke ต่อ harness ให้ครบ discovery → activation → continuation/compaction ที่รองรับ → ปิดโหมด → role/result → guard denial → handoff/cancel ห้ามใช้ tests ของ Codex แทนอีกสามตัว
 - ให้ผู้ใช้ทดลองอ่านคำอธิบายรอบจริง ตรวจว่ารู้ว่างานเสร็จอะไร ติดอะไร และต้องทำอะไรต่อ โดยไม่ต้องอ่านศัพท์ภายในทั้งหมด
-- เกณฑ์จบ: ทั้ง Claude Code, Codex, Antigravity และ OpenCode2 ผ่านวงจรเดียวกันบน provider ที่ประกาศรองรับ ภาษาและผลตรวจไม่หายเมื่อ handoff/compaction และยังรักษาข้อจำกัดสิทธิ์เดิม
+- เกณฑ์จบ: ทั้ง Claude Code, Codex, Antigravity, OpenCode2 และ Hermes Agent ผ่านวงจรเดียวกันบน provider ที่ประกาศรองรับ ภาษาและผลตรวจไม่หายเมื่อ handoff/compaction และยังรักษาข้อจำกัดสิทธิ์เดิม
 
 ## ตรวจการโหลดจริงก่อนใช้โควตาโมเดล
 
@@ -240,7 +244,7 @@ go test ./internal/routing ./internal/supervisor ./internal/orca -count=1
 - Rein เป็นเจ้าของขอบเขต routing/checkpoint/accounting และ approval เพียงชุดเดียว
 - provider ผู้รับใช้ context ที่ตรวจแล้วจริง และมีสอง provider ผ่าน pilot
 - Orca worker มี lifecycle ที่ตรวจครบ รวมการหยุด/กู้คืนก่อน retry
-- Claude Code, Codex, Antigravity และ OpenCode2 ผ่าน adapter จริงครบทั้งสี่ พร้อมการสื่อสารไทยและคำขอภาษาอื่น
+- Claude Code, Codex, Antigravity, OpenCode2 และ Hermes Agent ผ่าน adapter จริงครบทั้งห้า พร้อมการสื่อสารไทยและคำขอภาษาอื่น
 - ผลทุกข้อผูกกับ revision/receipt ของรอบนั้น ไม่มีการใช้ green fixture สรุปแทน production
 
 จนกว่าเกณฑ์ทั้งหมดนี้จะผ่าน ให้รายงานส่วนที่เชื่อมได้พร้อมหลักฐาน และคงส่วนที่ยังไม่พิสูจน์เป็นงานค้าง

@@ -24,16 +24,19 @@ import (
 )
 
 // Default vendors: Claude workers are covered by the plugin's global hook, so "claude" is opt-in.
+// "hermes" is opt-in too: its plugin lives in the task's Hermes home, and installing it by default
+// would hide a worker's own .hermes files from git status and drift on every other vendor.
 var Default = []string{"codex", "agy", "kiro", "opencode"}
 
 // All is every vendor `rein hooks install` knows.
-var All = []string{"codex", "agy", "kiro", "opencode", "claude"}
+var All = []string{"codex", "agy", "kiro", "opencode", "claude", "hermes"}
 
 // launch is what the coordinator must do when starting each vendor's worker, or its hook is silently skipped.
 var launch = map[string]string{
 	"agy":      "start agy inside the worktree (agy -p ... or interactive); no extra flag. Hooks load from <worktree>/.agents/hooks.json",
 	"kiro":     "kiro-cli chat --agent rein --trust-all-tools --model <model> ...   (--agent rein is required on EVERY launch; without it no hook runs)",
 	"opencode": "start opencode2 inside the worktree (opencode2 run --standalone --auto -m <model> ...); no extra flag. The plugin loads from <worktree>/.opencode/plugins/rein",
+	"hermes":   "start hermes inside the worktree with HERMES_ENABLE_PROJECT_PLUGINS=1 and the task's HERMES_HOME, through `rein route launch --task <t> --run <r> -- hermes --cli chat --model <provider:model> --query <prompt> --oneshot`; the plugin loads from <worktree>/.hermes/plugins/rein-guard. Do not use Orca worker-start --agent hermes: it starts Hermes with the user's own home, so the task's plugin never loads",
 	"claude":   "no flag; Claude Code reads <worktree>/.claude/settings.local.json. Do not combine with the rein plugin's global hook unless you accept two calls per tool use",
 }
 
@@ -203,7 +206,7 @@ func union(a, b []string) []string {
 
 type writer func(wt string, c *contract.Contract, bin string) ([]string, error)
 
-var writers = map[string]writer{"codex": writeCodex, "agy": writeAgy, "kiro": writeKiro, "opencode": writeOpencode, "claude": writeClaude}
+var writers = map[string]writer{"codex": writeCodex, "agy": writeAgy, "kiro": writeKiro, "opencode": writeOpencode, "claude": writeClaude, "hermes": writeHermes}
 
 // command is what a vendor runs: the hook bound to its task, so it cannot be redirected to another contract.
 func command(bin, vendor, task string) string {
@@ -531,7 +534,359 @@ const pluginPackage = `{
 }
 `
 
-// Match the complete generated command, never incidental mentions in another tool's hook.
+// hermesPluginYAML is the manifest Hermes' project-plugin loader reads.
+const hermesPluginYAML = `name: rein-guard
+version: 0.1.0
+description: "rein guard for task %s"
+kind: standalone
+provides_hooks:
+  - pre_tool_call
+  - completion_check
+  - pre_verify
+`
+
+// hermesConfigYAML enables the guard plugin in the task's Hermes home. Hermes loads plugins from an opt-in
+// allow-list, so the plugin is written next to the list that activates it.
+const hermesConfigYAML = `plugins:
+  enabled:
+    - rein-guard
+`
+
+// Recognize only these exact task-home templates; never rewrite arbitrary user YAML.
+const hermesCruxConfigYAML = `plugins:
+  enabled:
+    - crux
+`
+
+const hermesCombinedConfigYAML = `plugins:
+  enabled:
+    - rein-guard
+    - crux
+`
+
+// hermesPluginInit is the Hermes project plugin: it pipes every tool call to `rein hook --vendor hermes --task T`
+// and blocks the tool when the guard denies. The task and worktree are fixed here (Hermes puts no directory in
+// the hook input), and a guard that cannot run is a denial too: the plugin only exists inside a contracted worktree.
+const hermesPluginInit = `import subprocess, json, sys
+
+REIN = %s
+REIN_TASK = %s
+WORKTREE = %s
+
+
+def _guard(i=None, **kwargs):
+    tool = i.get("tool_name") if isinstance(i, dict) and i.get("tool_name") else (kwargs.get("tool_name") or (i.get("tool") if isinstance(i, dict) else None))
+    args = (i.get("args") if isinstance(i, dict) and i.get("args") else None) or kwargs.get("args") or (i.get("tool_input") if isinstance(i, dict) else None) or {}
+    payload = {"tool": tool, "input": args, "cwd": WORKTREE}
+    r = subprocess.run([REIN, "hook", "--vendor", "hermes", "--task", REIN_TASK],
+                       input=json.dumps(payload), capture_output=True, text=True, timeout=10)
+    try:
+        out = json.loads(r.stdout) if r.stdout.strip() else {}
+    except Exception:
+        out = {}
+    msg = out.get("message")
+    if out.get("action") == "block" and msg:
+        return {"action": "block", "message": msg}
+    # A guard that could not run is a denial, not a silent allow.
+    if r.returncode not in (0, None) or (not r.stdout.strip() and r.stderr.strip()):
+        return {"action": "block", "message": "[rein] guard did not run: " + (r.stderr.strip() or "exit " + str(r.returncode))}
+    return None
+
+
+def _report_gate(**kwargs):
+    """Mandatory completion policy, checked even after read-only turns."""
+    payload = {"tool": "pre_verify", "input": {}, "cwd": WORKTREE,
+               "hook_event_name": "pre_verify"}
+    try:
+        r = subprocess.run([REIN, "hook", "--vendor", "hermes", "--task", REIN_TASK],
+                           input=json.dumps(payload), capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"action": "block", "message": "[rein] guard did not run: " + str(exc)}
+    if r.returncode != 0:
+        return {"action": "block", "message": "[rein] report guard failed: " + (r.stderr.strip() or str(r.returncode))}
+    # Rein's successful stop check deliberately emits no output.
+    if not r.stdout.strip() and not r.stderr.strip():
+        return {"action": "allow"}
+    try:
+        out = json.loads(r.stdout)
+    except (ValueError, TypeError):
+        return {"action": "block", "message": "[rein] report guard returned malformed output"}
+    if isinstance(out, dict) and out.get("action") == "continue" and isinstance(out.get("message"), str) and out["message"].strip():
+        return {"action": "continue", "message": out["message"]}
+    return {"action": "block", "message": "[rein] report guard returned an invalid decision"}
+
+
+def register(ctx):
+    ctx.register_hook("pre_tool_call", _guard)
+    ctx.register_hook("completion_check", _report_gate)
+    # Older Hermes retains this optional gate; Rein also checks the report after exit.
+    ctx.register_hook("pre_verify", _report_gate)
+`
+
+func writeHermes(wt string, c *contract.Contract, bin string) ([]string, error) {
+	rels := []string{".hermes/plugins/rein-guard/plugin.yaml", ".hermes/plugins/rein-guard/__init__.py", ".hermes/config.yaml"}
+	for _, rel := range rels {
+		if _, err := prepare(wt, rel); err != nil {
+			return nil, err
+		}
+	}
+	if err := checkHermesPlugin(wt, c.Name, bin); err != nil {
+		return nil, err
+	}
+	cfg := filepath.Join(wt, ".hermes", "config.yaml")
+	existing, err := os.ReadFile(cfg)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	configExists := err == nil
+	base, credentialHome, err := splitHermesCredentials(string(existing))
+	if err != nil {
+		return nil, err
+	}
+	// Only the generated config can be verified without interpreting arbitrary YAML.
+	config := hermesConfigYAML
+	switch base {
+	case "":
+		if configExists {
+			return nil, fmt.Errorf("existing empty .hermes/config.yaml is not owned by rein; preserve it and use a fresh task Hermes home")
+		}
+	case hermesConfigYAML:
+	case hermesCruxConfigYAML, hermesCombinedConfigYAML:
+		config = hermesCombinedConfigYAML
+	default:
+		return nil, fmt.Errorf("cannot verify rein-guard is enabled in existing .hermes/config.yaml; preserve it and use a fresh task Hermes home")
+	}
+	config = hermesCredentialsConfig(config, credentialHome)
+	dir := filepath.Join(wt, ".hermes", "plugins", "rein-guard")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plugin.yaml"), []byte(fmt.Sprintf(hermesPluginYAML, c.Name)), 0644); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "__init__.py"), []byte(hermesInit(bin, c.Name, wt)), 0644); err != nil {
+		return nil, err
+	}
+	if string(existing) != config {
+		if err := os.WriteFile(cfg, []byte(config), 0644); err != nil {
+			return nil, err
+		}
+	}
+	// The task's Hermes home is the guard's own state (plugin, config, runtime caches); a worker's
+	// `git add -A` would otherwise stage the guard's files into the worktree's commit.
+	if err := sandbox.Exclude(wt, ".hermes/"); err != nil {
+		return nil, fmt.Errorf("written, but could not exclude .hermes/ from git status: %w", err)
+	}
+	return rels, nil
+}
+
+func hermesInit(bin, task, wt string) string {
+	binLit, _ := json.Marshal(bin)
+	taskLit, _ := json.Marshal(task)
+	wtLit, _ := json.Marshal(wt)
+	return fmt.Sprintf(hermesPluginInit, binLit, taskLit, wtLit)
+}
+
+// Validate the whole plugin before any write or removal; never traverse a linked parent.
+// CheckHermesPlugin verifies that the installed guard plugin is still the one rein wrote.
+// A replaced plugin file means the worker would run a different judge.
+func CheckHermesPlugin(wt, task string) error {
+	return checkHermesPlugin(wt, task, "")
+}
+
+// CheckHermesGuard verifies, at launch, that the task's guard plugin is installed, complete and still
+// calls this rein. The install-time check cannot do this: it tolerates a missing plugin (it is about to
+// write one) and it accepts whatever binary the file names, because a self-consistent file can still
+// point somewhere else. A launch without this check runs the worker with no judge at all: a deleted
+// plugin directory, a partial plugin, or a plugin whose REIN names another program all look installed.
+func CheckHermesGuard(wt, task string) error {
+	const dir = ".hermes/plugins/rein-guard"
+	entries, err := os.ReadDir(filepath.Join(wt, filepath.FromSlash(dir)))
+	if err != nil {
+		return fmt.Errorf("the Hermes guard plugin is not installed at %s: %w", dir, err)
+	}
+	present := map[string]bool{}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "__pycache__" {
+			// Python writes the cache next to the source and loads it in preference to the source,
+			// so a cached .pyc can run instead of the file that was checked. A cache under the
+			// plugin directory is therefore never trusted: it is removed, and a plugin whose
+			// cache cannot be removed is refused.
+			if err := removeHermesCache(filepath.Join(wt, filepath.FromSlash(dir), name)); err != nil {
+				return err
+			}
+			continue
+		}
+		if name != "plugin.yaml" && name != "__init__.py" {
+			return fmt.Errorf("foreign Hermes plugin file %s; refusing the launch", name)
+		}
+		present[name] = true
+	}
+	for _, name := range []string{"plugin.yaml", "__init__.py"} {
+		if !present[name] {
+			return fmt.Errorf("the Hermes guard plugin is incomplete: %s is missing from %s; reinstall it with rein hooks uninstall <task> --vendors hermes && rein hooks install <task> --vendors hermes", name, dir)
+		}
+	}
+	if err := checkHermesPlugin(wt, task, ""); err != nil {
+		return err
+	}
+	body, err := os.ReadFile(filepath.Join(wt, filepath.FromSlash(dir+"/__init__.py")))
+	if err != nil {
+		return err
+	}
+	_, rest, found := strings.Cut(string(body), "\nREIN = ")
+	if !found {
+		return fmt.Errorf("the Hermes guard plugin names no rein binary; refusing the launch")
+	}
+	binLine, _, _ := strings.Cut(rest, "\n")
+	var bin string
+	if json.Unmarshal([]byte(binLine), &bin) != nil {
+		return fmt.Errorf("the Hermes guard plugin names no rein binary; refusing the launch")
+	}
+	if !isReinBinary(bin) {
+		return fmt.Errorf("the Hermes guard plugin calls %s instead of this rein; refusing the launch: reinstall it with rein hooks uninstall <task> --vendors hermes && rein hooks install <task> --vendors hermes", bin)
+	}
+	return nil
+}
+
+// removeHermesCache deletes the Python bytecode cache under the guard plugin. A symlinked or
+// non-directory cache is refused rather than removed: following it would delete a path outside
+// the plugin, and a cache that cannot be removed is a cache that may still be loaded.
+func removeHermesCache(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("the Hermes guard plugin cache %s is not a plain directory; refusing the launch", filepath.Base(path))
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("cannot remove the Hermes guard plugin cache %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
+// CheckHermesPluginDir refuses a plugin beside the guard that the worker could have written. Hermes
+// loads every enabled plugin into the worker's own process, so a sibling plugin can neutralise the
+// guard: patching subprocess.run makes every tool call look allowed. A plugin that is a symlink to a
+// directory outside the worktree (the crux plugin, installed that way) is not the worker's to write,
+// so it is allowed; anything the worker could have created inside the worktree is refused.
+func CheckHermesPluginDir(wt string) error {
+	const dir = ".hermes/plugins"
+	root := filepath.Join(wt, filepath.FromSlash(dir))
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "rein-guard" {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			target, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return fmt.Errorf("the Hermes plugin %s is a broken symlink: %w", entry.Name(), err)
+			}
+			if insideWorktree(target, wt) {
+				return fmt.Errorf("the Hermes plugin %s points inside the worktree; the worker could replace it, so remove it or use a fresh task Hermes home", entry.Name())
+			}
+			continue
+		}
+		return fmt.Errorf("the Hermes task home holds another plugin (%s); it shares the worker process and can neutralise the guard, so remove it or use a fresh task Hermes home", entry.Name())
+	}
+	return nil
+}
+
+// insideWorktree reports whether p lies inside dir.
+func insideWorktree(p, dir string) bool {
+	rel, err := filepath.Rel(contract.Real(dir), contract.Real(p))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// isReinBinary reports whether path is the rein binary this process runs. A plugin that calls another
+// program is not a guard: it would answer every tool call with success and judge nothing.
+func isReinBinary(path string) bool {
+	if path == "" {
+		return false
+	}
+	if exe, err := os.Executable(); err == nil && sameFile(path, exe) {
+		return true
+	}
+	if bin, _, err := BinaryPath(); err == nil && bin != "" && sameFile(path, bin) {
+		return true
+	}
+	return false
+}
+
+func sameFile(a, b string) bool {
+	fa, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	fb, err := os.Stat(b)
+	if err != nil {
+		return false
+	}
+	return os.SameFile(fa, fb)
+}
+
+func checkHermesPlugin(wt, task, expectedBin string) error {
+	const dir = ".hermes/plugins/rein-guard"
+	if _, err := prepare(wt, dir); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(filepath.Join(wt, dir))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "__pycache__" && entry.IsDir() {
+			continue // Python owns its cache; leave it untouched on uninstall.
+		}
+		if name != "plugin.yaml" && name != "__init__.py" {
+			return fmt.Errorf("foreign Hermes plugin file %s; refusing modification", name)
+		}
+		path, err := prepare(wt, dir+"/"+name)
+		if err != nil {
+			return err
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		expected := fmt.Sprintf(hermesPluginYAML, task)
+		if name == "__init__.py" {
+			_, rest, found := strings.Cut(string(body), "\nREIN = ")
+			binLine, _, _ := strings.Cut(rest, "\n")
+			var bin string
+			if !found || json.Unmarshal([]byte(binLine), &bin) != nil || (expectedBin != "" && bin != expectedBin) {
+				return fmt.Errorf("foreign Hermes plugin file %s; refusing modification", name)
+			}
+			expected = hermesInit(bin, task, wt)
+		}
+		if string(body) != expected {
+			return fmt.Errorf("foreign, modified, or older Hermes plugin file %s; refusing modification (preserve and inspect it before using a fresh task Hermes home)", name)
+		}
+	}
+	return nil
+}
+
 func ownedCommand(value any, identity string) bool {
 	parts := strings.SplitN(identity, "\x00", 2)
 	if len(parts) != 2 {
@@ -696,6 +1051,45 @@ func Uninstall(c *contract.Contract, vendors []string) ([]Result, []string, erro
 
 func uninstallVendor(wt, task, vendor string) ([]string, error) {
 	rels := map[string]string{"codex": ".codex/hooks.json", "claude": ".claude/settings.local.json", "agy": ".agents/hooks.json", "kiro": ".kiro/agents/rein.json"}
+	if vendor == "hermes" {
+		if err := checkHermesPlugin(wt, task, ""); err != nil {
+			return nil, err
+		}
+		cfg, err := prepare(wt, ".hermes/config.yaml")
+		if err != nil {
+			return nil, err
+		}
+		config, err := os.ReadFile(cfg)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		dir := filepath.Join(wt, ".hermes", "plugins", "rein-guard")
+		var removed []string
+		for _, name := range []string{"plugin.yaml", "__init__.py"} {
+			rel := ".hermes/plugins/rein-guard/" + name
+			if err := os.Remove(filepath.Join(dir, name)); err == nil {
+				removed = append(removed, rel)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return removed, err
+			}
+		}
+		_ = os.Remove(dir)
+		// Remove only the generated guard setting, preserving Crux and foreign config bytes.
+		base, credentialHome, _ := splitHermesCredentials(string(config))
+		switch base {
+		case hermesConfigYAML:
+			if err := os.Remove(cfg); err != nil {
+				return removed, err
+			}
+			removed = append(removed, ".hermes/config.yaml")
+		case hermesCombinedConfigYAML:
+			if err := os.WriteFile(cfg, []byte(hermesCredentialsConfig(hermesCruxConfigYAML, credentialHome)), 0644); err != nil {
+				return removed, err
+			}
+			removed = append(removed, ".hermes/config.yaml")
+		}
+		return removed, nil
+	}
 	if vendor == "opencode" {
 		if err := checkPlugin(wt, task); err != nil {
 			return nil, err

@@ -61,6 +61,9 @@ func (c *Config) CheckQuota(name string) error {
 	if !ok {
 		return errors.New("quota precheck: unknown provider")
 	}
+	if p.Agent == "hermes" {
+		return errors.New("quota precheck: Hermes launch quota unsupported; native usage does not bind launch account/model/pool")
+	}
 	if err := validateQuotaMapping(p); err != nil {
 		return err
 	}

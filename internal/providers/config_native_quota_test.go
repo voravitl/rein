@@ -23,7 +23,7 @@ func TestNativeQuotaParsedWindowsAndPrivacy(t *testing.T) {
 	now := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	inv := nativeQuotaFixture(t, now)
 	rows := nativeQuotaSnapshots(inv, now)
-	if len(rows) != 4 {
+	if len(rows) != 5 {
 		t.Fatal(rows)
 	}
 	for _, row := range rows {
@@ -133,13 +133,13 @@ func TestNativeQuotaMalformedAndEmptyResponsesRemainUnknown(t *testing.T) {
 func TestReadNativeQuotaInvalidRequestDoesNotDiscover(t *testing.T) {
 	// These branches return before Discover; no native process or model is run.
 	rows, err := ReadNativeQuota(context.Background(), t.TempDir(), 0)
-	if err == nil || len(rows) != 4 || rows[1].Status != "unknown" {
+	if err == nil || len(rows) != 5 || rows[1].Status != "unknown" {
 		t.Fatalf("%+v %v", rows, err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	rows, err = ReadNativeQuota(ctx, t.TempDir(), time.Second)
-	if err == nil || len(rows) != 4 || rows[1].Status != "unknown" {
+	if err == nil || len(rows) != 5 || rows[1].Status != "unknown" {
 		t.Fatalf("%+v %v", rows, err)
 	}
 }

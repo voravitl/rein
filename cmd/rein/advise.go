@@ -10,7 +10,7 @@ import (
 
 func cmdAdvise(args []string) int {
 	fs := flag.NewFlagSet("advise", flag.ContinueOnError)
-	provider := fs.String("provider", "", "explicit routed advisor harness (codex|kiro|claude; or $ADVISE_PROVIDER)")
+	provider := fs.String("provider", "", "explicit routed advisor harness (codex|kiro|claude|hermes; or $ADVISE_PROVIDER)")
 	model := fs.String("model", "", "explicit routed model (or $ADVISE_MODEL)")
 	runID := fs.String("run", "", "run identity (or $ADVISE_RUN)")
 	taskID := fs.String("task", "", "contract name (or $ADVISE_TASK)")

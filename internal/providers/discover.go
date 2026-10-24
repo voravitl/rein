@@ -123,6 +123,7 @@ var adapters = map[string]struct{ name, exe, min string }{
 	"antigravity": {"agy/models", "agy", "1.3.2"},
 	"opencode":    {"opencode/models", "opencode", "2.0.0"},
 	"opencode2":   {"opencode/models", "opencode2", "2.0.0"},
+	"hermes":      {"hermes/model-catalog-json-v1", "hermes", "0.21.5"},
 }
 
 // Discover refreshes every requested harness concurrently and returns one Inventory per harness, sorted by harness name. It
@@ -247,6 +248,8 @@ func discoverOne(ctx context.Context, cfg *Config, harness, dir string, timeout 
 		collectKiro(ctx, argv, dir, &inv)
 	case "antigravity":
 		collectAgy(ctx, argv, dir, &inv)
+	case "hermes":
+		hint = collectHermes(ctx, argv, dir, &inv)
 	default:
 		collectOpencode(ctx, argv, dir, &inv)
 	}

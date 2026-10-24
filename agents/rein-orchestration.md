@@ -133,13 +133,15 @@ rein orca call tidy
 - Route worker: `rein route prepare --task <task-name> --run <run-id> --chain worker:default`
 - Install guard hooks for the target harness:
   - Claude: `rein sandbox <task-name>`
-  - Codex / Kiro / AGY: `rein hooks install <task-name>`
+  - Codex / Kiro / AGY / OpenCode: `rein hooks install <task-name>`
+  - Hermes: `rein hooks install <task-name> --vendors hermes` (Hermes is opt-in: its plugin lives in the task's Hermes home, and installing it by default would hide the worker's own `.hermes` files from git status)
 
 ### Stage 4: Orca Worker Dispatch
 - Launch worker:
   ```sh
   rein orca call launch <task-name> <base-branch> <run>/specs/<task-name>.md <agent> --model <model> --effort high --coord $ORCA_COORD --run $ORCA_RUN
   ```
+- Hermes is not launched through Orca: `rein orca call launch` refuses it, because Orca starts Hermes with the user's own Hermes home, so the task's guard plugin never loads. Start a Hermes worker through the direct shell route instead: `rein route launch --task <task-name> --run <run-id> -- hermes --cli chat --model <provider:model> --query "$(cat <run>/specs/<task-name>.md)" --oneshot`.
 - Prune default shell tab immediately.
 - Record dispatch ID and terminal handle in the run manifest.
 
