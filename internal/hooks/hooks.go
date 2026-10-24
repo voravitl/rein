@@ -502,8 +502,11 @@ func writeZcode(wt string, c *contract.Contract, bin string) ([]string, error) {
 	if disabled, ok := hooks["enabled"].(bool); ok && !disabled {
 		return nil, fmt.Errorf("%s: hooks.enabled is false; refusing to enable configuration-file hooks for the whole workspace", rel)
 	}
-	events, _ := hooks["events"].(map[string]any)
-	if events == nil {
+	events, hasEvents := hooks["events"].(map[string]any)
+	if !hasEvents {
+		if _, present := hooks["events"]; present {
+			return nil, fmt.Errorf("%s: hooks.events is not an object; refusing to rewrite it", rel)
+		}
 		events = map[string]any{}
 	}
 	// cleanShared and mergeGroups work on a doc whose "hooks" key holds the event
