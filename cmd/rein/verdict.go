@@ -207,19 +207,16 @@ func cmdApprove(args []string) int {
 		return 2
 	}
 
-	if inClaudeCode() && !*asDirected {
-		fmt.Fprintln(os.Stderr, "error: rein approve is user-only inside Claude Code")
+	kind, sessionID := aiSession()
+	if kind != "" && !*asDirected {
+		fmt.Fprintf(os.Stderr, "error: rein approve is user-only inside an AI session (%s)\n", kind)
 		fmt.Fprintln(os.Stderr, "If the human directed this approval, rerun with --as-directed; the approval record stores the AI-session provenance.")
 		return 1
 	}
 
-	via, sessionID := "", ""
-	if inClaudeCode() {
-		via = "claude-code"
-		sessionID = os.Getenv("CLAUDE_CODE_SESSION_ID")
-		if sessionID == "" {
-			sessionID = os.Getenv("CLAUDE_PID")
-		}
+	via := ""
+	if kind != "" {
+		via = kind
 	}
 
 	ref := *sha
@@ -452,8 +449,25 @@ func getChangedFiles(repoPath, base, head string) ([]string, error) {
 	return files, nil
 }
 
-func inClaudeCode() bool {
-	return os.Getenv("CLAUDE_PID") != "" || os.Getenv("CLAUDE_CODE_SESSION_ID") != ""
+// aiSession reports whether rein is running inside an AI coding session, and
+// which one: "claude-code" (CLAUDE_CODE_SESSION_ID / CLAUDE_PID) or "zcode"
+// (ZCODE_APP_VERSION / ZCODE_PROCESS_LABEL). kind is empty in a user terminal.
+func aiSession() (kind, sessionID string) {
+	if v := os.Getenv("CLAUDE_CODE_SESSION_ID"); v != "" {
+		return "claude-code", v
+	}
+	if v := os.Getenv("CLAUDE_PID"); v != "" {
+		return "claude-code", v
+	}
+	if os.Getenv("ZCODE_APP_VERSION") != "" || os.Getenv("ZCODE_PROCESS_LABEL") != "" {
+		return "zcode", os.Getenv("ZCODE_PROCESS_LABEL")
+	}
+	return "", ""
+}
+
+func inAISession() bool {
+	kind, _ := aiSession()
+	return kind != ""
 }
 
 func execOutput(dir string, name string, args ...string) ([]byte, error) {

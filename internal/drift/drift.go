@@ -127,6 +127,7 @@ var launchHint = map[string]string{
 	"opencode": "opencode2 must be started inside the worktree",
 	"hermes":   "hermes must be started inside the worktree with HERMES_ENABLE_PROJECT_PLUGINS=1 and the task's HERMES_HOME, through `rein route launch --task <t> --run <r> -- hermes --cli chat --model <provider:model> --query <prompt> --oneshot`; Orca worker-start --agent hermes starts Hermes with the user's own home, so the task's plugin never loads",
 	"claude":   "no rein plugin hook and no hook in .claude/settings.local.json",
+	"zcode":    "zcode must be started inside the worktree; it reads .zcode/config.json there and runs configuration-file hooks only when hooks.enabled is true (the installer sets it)",
 }
 
 // guardVendors are the vendors whose hook calls count as proof: the one named by --expect-guard, else every

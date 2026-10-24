@@ -26,10 +26,11 @@ import (
 // Default vendors: Claude workers are covered by the plugin's global hook, so "claude" is opt-in.
 // "hermes" is opt-in too: its plugin lives in the task's Hermes home, and installing it by default
 // would hide a worker's own .hermes files from git status and drift on every other vendor.
+// "zcode" is opt-in: its workspace config also belongs to the interactive user, not to a worker default.
 var Default = []string{"codex", "agy", "kiro", "opencode"}
 
 // All is every vendor `rein hooks install` knows.
-var All = []string{"codex", "agy", "kiro", "opencode", "claude", "hermes"}
+var All = []string{"codex", "agy", "kiro", "opencode", "claude", "hermes", "zcode"}
 
 // launch is what the coordinator must do when starting each vendor's worker, or its hook is silently skipped.
 var launch = map[string]string{
@@ -38,6 +39,7 @@ var launch = map[string]string{
 	"opencode": "start opencode2 inside the worktree (opencode2 run --standalone --auto -m <model> ...); no extra flag. The plugin loads from <worktree>/.opencode/plugins/rein",
 	"hermes":   "start hermes inside the worktree with HERMES_ENABLE_PROJECT_PLUGINS=1 and the task's HERMES_HOME, through `rein route launch --task <t> --run <r> -- hermes --cli chat --model <provider:model> --query <prompt> --oneshot`; the plugin loads from <worktree>/.hermes/plugins/rein-guard. Do not use Orca worker-start --agent hermes: it starts Hermes with the user's own home, so the task's plugin never loads",
 	"claude":   "no flag; Claude Code reads <worktree>/.claude/settings.local.json. Do not combine with the rein plugin's global hook unless you accept two calls per tool use",
+	"zcode":    "start zcode inside the worktree; no extra flag. It reads <worktree>/.zcode/config.json, where the installer also sets hooks.enabled=true (ZCode runs configuration-file hooks only when they are enabled)",
 }
 
 // CodexFlags are the codex launch flags that make the guard run (POSIX sh quoting; on Windows use Git Bash).
@@ -206,7 +208,7 @@ func union(a, b []string) []string {
 
 type writer func(wt string, c *contract.Contract, bin string) ([]string, error)
 
-var writers = map[string]writer{"codex": writeCodex, "agy": writeAgy, "kiro": writeKiro, "opencode": writeOpencode, "claude": writeClaude, "hermes": writeHermes}
+var writers = map[string]writer{"codex": writeCodex, "agy": writeAgy, "kiro": writeKiro, "opencode": writeOpencode, "claude": writeClaude, "hermes": writeHermes, "zcode": writeZcode}
 
 // command is what a vendor runs: the hook bound to its task, so it cannot be redirected to another contract.
 func command(bin, vendor, task string) string {
@@ -475,6 +477,53 @@ func writeKiro(wt string, c *contract.Contract, bin string) ([]string, error) {
 		return nil, fmt.Errorf("%s: foreign agent; refusing replacement", rel)
 	}
 	return []string{rel}, writeJSON(path, agent)
+}
+
+// writeZcode writes the guard into the worktree's ZCode workspace configuration
+// (<worktree>/.zcode/config.json). ZCode runs configuration-file hooks only when
+// hooks.enabled is true, so the installer sets it; a configuration the user has
+// explicitly disabled is refused rather than silently re-enabled. Foreign hook
+// groups and every other configuration key are preserved, and uninstall removes
+// only rein's own entries.
+func writeZcode(wt string, c *contract.Contract, bin string) ([]string, error) {
+	const rel = ".zcode/config.json"
+	path, err := prepare(wt, rel)
+	if err != nil {
+		return nil, err
+	}
+	doc, err := readJSON(path)
+	if err != nil {
+		return nil, err
+	}
+	hooks, _ := doc["hooks"].(map[string]any)
+	if hooks == nil {
+		hooks = map[string]any{}
+	}
+	if disabled, ok := hooks["enabled"].(bool); ok && !disabled {
+		return nil, fmt.Errorf("%s: hooks.enabled is false; refusing to enable configuration-file hooks for the whole workspace", rel)
+	}
+	events, hasEvents := hooks["events"].(map[string]any)
+	if !hasEvents {
+		if _, present := hooks["events"]; present {
+			return nil, fmt.Errorf("%s: hooks.events is not an object; refusing to rewrite it", rel)
+		}
+		events = map[string]any{}
+	}
+	// cleanShared and mergeGroups work on a doc whose "hooks" key holds the event
+	// groups directly; the adapter wraps ZCode's hooks.events nesting in that shape.
+	adapter := map[string]any{"hooks": events}
+	if err := cleanShared(adapter, "zcode", c.Name); err != nil {
+		return nil, err
+	}
+	h := []any{map[string]any{"type": "command", "command": command(bin, "zcode", c.Name), "timeout": 10}}
+	marker := "zcode\x00" + c.Name
+	mergeGroups(adapter, "PreToolUse", marker, map[string]any{"matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit|Agent|ApplyPatch", "hooks": h})
+	mergeGroups(adapter, "PostToolUse", marker, map[string]any{"matcher": "AskUserQuestion", "hooks": h})
+	mergeGroups(adapter, "Stop", marker, map[string]any{"hooks": h})
+	hooks["events"] = adapter["hooks"]
+	hooks["enabled"] = true
+	doc["hooks"] = hooks
+	return []string{rel}, writeJSON(path, doc)
 }
 
 // pluginJS is the opencode v2 plugin: it pipes each tool call to `rein hook --vendor opencode --task T` and
@@ -1105,6 +1154,45 @@ func uninstallVendor(wt, task, vendor string) ([]string, error) {
 		}
 		_ = os.Remove(filepath.Join(wt, ".opencode/plugins/rein"))
 		return removed, nil
+	}
+	if vendor == "zcode" {
+		rel := ".zcode/config.json"
+		path, err := prepare(wt, rel)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		} else if err != nil {
+			return nil, err
+		}
+		doc, err := readJSON(path)
+		if err != nil {
+			return nil, err
+		}
+		hooks, _ := doc["hooks"].(map[string]any)
+		events, _ := hooks["events"].(map[string]any)
+		adapter := map[string]any{"hooks": events}
+		before, _ := json.Marshal(doc)
+		if err := cleanShared(adapter, vendor, task); err != nil {
+			return nil, err
+		}
+		if events != nil {
+			hooks["events"] = events
+			if len(events) == 0 {
+				// ours were the only hooks: the enablement and the events object were ours too
+				delete(hooks, "enabled")
+				delete(hooks, "events")
+			}
+			if len(hooks) == 0 {
+				delete(doc, "hooks")
+			}
+		}
+		after, _ := json.Marshal(doc)
+		if string(before) == string(after) {
+			return nil, nil
+		}
+		return []string{rel}, writeJSON(path, doc)
 	}
 	rel := rels[vendor]
 	path, err := prepare(wt, rel)

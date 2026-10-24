@@ -30,7 +30,7 @@ type Action struct {
 }
 
 // Vendors are the values accepted by `rein hook --vendor`.
-var Vendors = []string{"claude", "codex", "agy", "kiro", "opencode", "hermes"}
+var Vendors = []string{"claude", "codex", "agy", "kiro", "opencode", "hermes", "zcode"}
 
 // coordAgents are the coordinator agents the plugin must never start as Claude subagents: the coordinator runs in
 // the main session through Orca orchestration, and steward jobs start as Orca workers (ADR 0002 B0).
@@ -50,6 +50,8 @@ func parse(vendor string, raw []byte) (Action, bool) {
 		return parseClaude(raw, false)
 	case "codex":
 		return parseClaude(raw, true) // codex speaks Claude's format and adds apply_patch
+	case "zcode":
+		return parseClaude(raw, true) // ZCode speaks Claude's format; its Write/Edit tools alias ApplyPatch
 	case "agy":
 		return parseAgy(raw)
 	case "kiro":
@@ -152,7 +154,7 @@ func parseClaude(raw []byte, codex bool) (Action, bool) {
 	switch {
 	case ev.ToolName == "Bash":
 		a.Kind, a.Command = "bash", str(in, "command")
-	case codex && (editTools[ev.ToolName] || ev.ToolName == "apply_patch"):
+	case codex && (editTools[ev.ToolName] || ev.ToolName == "apply_patch" || ev.ToolName == "ApplyPatch"): // ZCode spells the patch tool ApplyPatch
 		// a known writer is a write even when its target is unreadable: decide then denies it
 		a.Kind = "write"
 		if p := str(in, "file_path", "notebook_path", "path"); p != "" {
