@@ -20,7 +20,7 @@ const settingsRel = ".claude/settings.local.json"
 
 // Settings returns the sandbox block for a contract.
 func Settings(c *contract.Contract) map[string]any {
-	allowWrite := append([]string{c.ReportPath}, c.WorkerWritable...)
+	allowWrite := c.OwnedPaths()
 	sb := map[string]any{
 		"enabled":                  true,
 		"allowUnsandboxedCommands": false, // no dangerouslyDisableSandbox retries

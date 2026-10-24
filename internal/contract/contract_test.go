@@ -63,3 +63,26 @@ func TestContractNameKeepsSpacesAndUnicode(t *testing.T) {
 		}
 	}
 }
+
+// A relative report path belongs to the task's worktree: that is where the worker runs and writes the report.
+// Stored absolute, so the guard, the drift check and the OS sandbox compare the same path.
+func TestRelativeReportPathBecomesWorktreePath(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "idx"))
+	c, err := New("t", 0, filepath.Join(root, "run"), "src/**", "", "S1", filepath.Join(root, "wts"),
+		"report/task-1.md", "", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(c.Worktree, "report/task-1.md")
+	if c.ReportPath != want {
+		t.Fatalf("ReportPath = %q, want %q", c.ReportPath, want)
+	}
+	loaded, err := Load("t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ReportPath != want {
+		t.Fatalf("loaded ReportPath = %q, want %q", loaded.ReportPath, want)
+	}
+}

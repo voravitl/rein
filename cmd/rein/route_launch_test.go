@@ -280,18 +280,30 @@ esac
 		t.Fatal(err)
 	}
 	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high"}
-	if code := cmdRouteLaunch(args); code != 0 {
-		t.Fatalf("launch: %d", code)
-	}
-	b, err := os.ReadFile(filepath.Join(contract.IndexDir(), "routes", "leases", "task.json"))
+	stderr := os.Stderr
+	warning, err := os.CreateTemp(t.TempDir(), "launch-stderr")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var lease routing.Lease
-	if err := json.Unmarshal(b, &lease); err != nil {
+	defer warning.Close()
+	os.Stderr = warning
+	defer func() { os.Stderr = stderr }()
+	code := cmdRouteLaunch(args)
+	os.Stderr = stderr
+	message, err := os.ReadFile(warning.Name())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if lease.OrcaTask != "actual-task" || lease.Dispatch != "actual-dispatch" || !lease.Dispatched || lease.DispatchPending {
-		t.Fatalf("identity not recorded: %+v", lease)
+	// The Antigravity terminal sandbox blocks the Orca runtime metadata, so the worker's worker_done
+	// never arrives. A launch that can never be proven complete must be refused, not started.
+	if code == 0 {
+		t.Fatalf("Orca AGY launch accepted: %s", message)
+	}
+	if !strings.Contains(string(message), "native AGY sandbox IPC is unsupported") || strings.Contains(string(message), "BypassSandbox: true") {
+		t.Fatalf("missing the safe functionality refusal: %s", message)
+	}
+	// A refused launch records no dispatch, so no worker can be left running without a proof.
+	if _, err := os.Stat(filepath.Join(contract.IndexDir(), "routes", "leases", "task.json")); !os.IsNotExist(err) {
+		t.Fatalf("a refused launch recorded a dispatch: %v", err)
 	}
 }

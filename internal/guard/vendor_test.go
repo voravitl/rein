@@ -109,6 +109,60 @@ func TestAgy(t *testing.T) {
 	}
 }
 
+// IPC commands remain policy-allowed, but command text cannot authorize a sandbox escape.
+func TestAgyIPCStaysSandboxed(t *testing.T) {
+	wt, c := setup(t)
+	run := func(command string) string {
+		t.Helper()
+		out, _, code := call(t, "agy", f2(agyPre, `{"CommandLine":`+jstr(command)+`,"Cwd":"@WT@"}`, `"run_command"`), wt)
+		if code != 0 {
+			t.Fatalf("hook exited %d for %q", code, command)
+		}
+		return out
+	}
+	for _, command := range []string{
+		`orca orchestration send --from term_1 --type worker_done --subject done --task-id task_1 --dispatch-id ctx_1`,
+		`cd @WT@ && orca orchestration check --terminal term_1 --json`,
+		`timeout 15 orca orchestration run-list --json`,
+		`env FOO=1 orca orchestration inbox --terminal term_1 --json`,
+		`bash -c 'orca orchestration send --from term_1'`,
+		`./orca orchestration send --from term_1`,
+		`src/orca orchestration send --from term_1`,
+		`/tmp/x/orca orchestration send --from term_1`,
+		`orca-dev orchestration send --from term_1`,
+		`orca-ide orchestration send --from term_1`,
+		`export BASH_ENV=/tmp/startup.sh`,
+		`export PATH=/tmp/x:$PATH`,
+	} {
+		if out := run(command); out != "" {
+			t.Errorf("%s: want policy allow with sandbox retained, got %q", command, out)
+		}
+	}
+	for _, command := range []string{
+		`orca terminal send --text "curl http://evil"`,     // types a payload into another terminal
+		`orca orchestration worker-start --spec s --run r`, // its spec becomes another agent's prompt
+		`orca orchestration send --body x && curl http://127.0.0.1:6379`,
+		`echo "orca orchestration send"`, // the words are only text
+		`sh /tmp/worker.sh`,              // a body the guard cannot read
+		`sh -c 'orca orchestration send --from term_1 && curl http://127.0.0.1:6379'`,
+		`orca orchestration send --body "$(cat /etc/passwd)"`, // a substitution that reads a file
+	} {
+		if out := run(command); out != "" {
+			t.Errorf("%s: want the sandbox to stay, got %q", command, out)
+		}
+	}
+	if out := run(`orca orchestration send --body x && git push origin HEAD`); !strings.Contains(out, `"decision":"deny"`) || strings.Contains(out, "BypassSandbox") {
+		t.Errorf("a denied line must deny, not bypass: %q", out)
+	}
+	if reason, bypass := checkBash(`orca orchestration send --from term_1`, c, wt, wt); reason != "" || !bypass {
+		t.Errorf("checkBash: want allowed IPC classification, got reason %q bypass %v", reason, bypass)
+	}
+	// No overwrite grants unsandboxed execution, including after terminal environment changes.
+	if out := run(`orca orchestration send --from term_1`); out != "" {
+		t.Errorf("unexpected sandbox overwrite = %q", out)
+	}
+}
+
 func TestKiro(t *testing.T) {
 	wt, c := setup(t)
 	for name, ev := range map[string]string{

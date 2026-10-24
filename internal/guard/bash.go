@@ -48,6 +48,8 @@ type ctx struct {
 	pipeRHS     map[*syntax.Stmt]bool // statements that read a pipe
 	specChecked bool                  // current direct call has an adjacent successful source preflight
 	coord       *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
+	ipc         bool                  // the line contains an allowlisted `orca orchestration` IPC call
+	other       bool                  // the line also runs something else, so it is not IPC-only
 }
 
 type stdinKind int
@@ -77,13 +79,24 @@ var textOnly = map[string]bool{"git": true, "echo": true, "printf": true, "grep"
 
 // CheckBash returns a non-empty reason when the command must be denied.
 func CheckBash(cmd string, c *contract.Contract, top, cwd string) string {
+	reason, _ := checkBash(cmd, c, top, cwd)
+	return reason
+}
+
+// checkBash is CheckBash plus the sandbox finding: whether the line runs nothing but allowlisted `orca
+// orchestration` IPC calls (optionally behind a wrapper and a cd). The Antigravity terminal sandbox blocks those
+// calls, so a worker's `orca orchestration send` fails and its worker_done never lands.
+func checkBash(cmd string, c *contract.Contract, top, cwd string) (string, bool) {
 	top = contract.Real(top)
 	cwd = contract.Real(cwd)
 	x := &ctx{c: c, top: top, cwd: cwd, vars: map[string]string{}, ports: portRx(c.Profile.ProtectPorts), pipeRHS: map[*syntax.Stmt]bool{}}
 	if h, err := os.UserHomeDir(); err == nil {
 		x.vars["HOME"] = h
 	}
-	return x.script(cmd)
+	if reason := x.script(cmd); reason != "" {
+		return reason, false
+	}
+	return "", x.ipc && !x.other
 }
 
 func (x *ctx) script(src string) string {
@@ -151,6 +164,7 @@ func (x *ctx) script(src string) string {
 				x.pipeRHS[n.Y] = true
 			}
 		case *syntax.DeclClause: // export / declare / local / readonly X=literal
+			x.other = true
 			for _, a := range n.Args {
 				if r := x.coordAssign(a); r != "" {
 					reason = r
@@ -159,6 +173,9 @@ func (x *ctx) script(src string) string {
 				x.assign(a)
 			}
 		case *syntax.CallExpr:
+			if len(n.Assigns) > 0 {
+				x.other = true // assignments can enable startup code outside a literal shell body
+			}
 			for _, a := range n.Assigns {
 				if r := x.coordAssign(a); r != "" {
 					reason = r
@@ -278,6 +295,7 @@ func (x *ctx) call(args []string) string {
 	prof := &x.c.Profile
 	name := base(args[0])
 	rest := args[1:]
+	x.classify(name, args)
 	if x.coord != nil { // the coordinator pushes, merges and drives gh/glab: only its own rules apply
 		if r := x.coordCall(args[0], name, rest); r != "" {
 			return r
@@ -832,6 +850,9 @@ func (x *ctx) write(target string) string {
 	if protectedHook(x.top, rel) {
 		return fmt.Sprintf("%s belongs to the rein guard installed for task %s; workers never change it", rel, x.c.Name)
 	}
+	if x.c.Writable(p) { // the worker's own file; the never-edit list and the guard files won above
+		return ""
+	}
 	owned := glob.Match(rel, x.c.Allow)
 	if info, err := os.Stat(p); err == nil && info.IsDir() {
 		owned = owned || glob.Match(rel+"/", x.c.Allow)
@@ -850,6 +871,16 @@ func mustRel(base, p string) string {
 	return r
 }
 
+// runDirOf is the coordinator's run dir. It comes from the durable contract copy (always <run>/contracts/<name>.json)
+// rather than from the report path, so the run dir stays protected when the report lives inside the worktree
+// instead of in <run>/reports.
+func runDirOf(c *contract.Contract) string {
+	if c.RunCopy != "" && filepath.IsAbs(c.RunCopy) && filepath.Base(filepath.Dir(c.RunCopy)) == "contracts" {
+		return contract.Real(filepath.Dir(filepath.Dir(c.RunCopy)))
+	}
+	return contract.Real(filepath.Dir(filepath.Dir(c.ReportPath)))
+}
+
 // outsideWrite judges a write outside the worktree. Order matters: the contract index and the run dir are
 // protected BEFORE the temp-dir allowance, because a run dir may itself live under a temp dir.
 func outsideWrite(p, shown string, c *contract.Contract, top string) string {
@@ -862,7 +893,7 @@ func outsideWrite(p, shown string, c *contract.Contract, top string) string {
 	if inside(p, filepath.Dir(top)) {
 		return fmt.Sprintf("%s is in another task's worktree area (%s); stay inside %s", shown, filepath.Dir(top), top)
 	}
-	runDir := contract.Real(filepath.Dir(filepath.Dir(c.ReportPath)))
+	runDir := runDirOf(c)
 	if inside(p, runDir) {
 		return fmt.Sprintf("%s belongs to the coordinator's run dir; only your report %s may be written there", shown, c.ReportPath)
 	}

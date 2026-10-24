@@ -101,6 +101,96 @@ func TestDriftCatchesEverything(t *testing.T) {
 	}
 }
 
+// The report path is the worker's own file, not work: inside the worktree it is neither an out-of-scope change
+// nor an uncommitted file, or the guard's own report instruction could never be satisfied.
+func TestReportInsideWorktreeIsNotDrift(t *testing.T) {
+	wt, c := repo(t, "report")
+	c.ReportPath = filepath.Join(wt, "report", "report.md")
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
+	write(t, c.ReportPath, "# report\n## S1 done\nfiles: backend/Routing/A.cs\n\n## S2 done\nchecks passed\n")
+	sh(t, wt, "git", "add", "backend/Routing/A.cs")
+	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
+
+	// an untracked report is not an uncommitted file
+	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(kinds(r.Drift), "UNCOMMITTED") {
+		t.Errorf("the worker's report counted as uncommitted: %s", kinds(r.Drift))
+	}
+
+	// a committed report is not out of scope
+	sh(t, wt, "git", "add", "-A")
+	sh(t, wt, "git", "commit", "-qm", "report #169")
+	r, err = Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(r.Drift); strings.Contains(got, "OUT_OF_SCOPE") || strings.Contains(got, "UNCOMMITTED") {
+		t.Errorf("the worker's report counted as drift: %s", got)
+	}
+}
+
+// A report's sibling needs explicit ownership.
+func TestReportSiblingIsDrift(t *testing.T) {
+	wt, c := repo(t, "report-sibling")
+	c.ReportPath = filepath.Join(wt, "report", "report.md")
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
+	write(t, filepath.Join(wt, "report", "report.md"), "# report\n## S1 done\nfiles: backend/Routing/A.cs\n\n## S2 done\nchecks passed\n")
+	write(t, filepath.Join(wt, "report", "notes.md"), "worker scratch\n")
+	sh(t, wt, "git", "add", "backend/Routing/A.cs")
+	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
+
+	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(r.Drift); !strings.Contains(got, "UNCOMMITTED") {
+		t.Errorf("the unowned report sibling was not counted as drift: %s", got)
+	}
+}
+
+// A file outside the report directory is still the worker's uncommitted work.
+func TestFileOutsideReportDirectoryIsDrift(t *testing.T) {
+	wt, c := repo(t, "outside-report")
+	c.ReportPath = filepath.Join(wt, "report", "report.md")
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
+	write(t, filepath.Join(wt, "report", "report.md"), "# report\n## S1 done\nfiles: backend/Routing/A.cs\n\n## S2 done\nchecks passed\n")
+	write(t, filepath.Join(wt, "scratch.md"), "not the report\n")
+	sh(t, wt, "git", "add", "backend/Routing/A.cs")
+	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
+
+	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(r.Drift); !strings.Contains(got, "UNCOMMITTED") {
+		t.Errorf("a file outside the report directory was not counted: %s", got)
+	}
+}
+
+// An explicitly allowed file (--writable) is the worker's own too: the guard lets it write it, so drift must not
+// count it as uncommitted work.
+func TestWritablePathIsNotDrift(t *testing.T) {
+	wt, c := repo(t, "writable-path")
+	c.ReportPath = filepath.Join(wt, "report", "report.md")
+	c.WorkerWritable = []string{filepath.Join(wt, "notes", "scratch.md")}
+	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
+	write(t, filepath.Join(wt, "report", "report.md"), "# report\n## S1 done\nfiles: backend/Routing/A.cs\n\n## S2 done\nchecks passed\n")
+	write(t, filepath.Join(wt, "notes", "scratch.md"), "worker scratch\n")
+	sh(t, wt, "git", "add", "backend/Routing/A.cs")
+	sh(t, wt, "git", "commit", "-qm", "fix(routing): edge case #169")
+
+	r, err := Check(c, wt, "origin/main", []string{"backend/Routing/A.cs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := kinds(r.Drift); strings.Contains(got, "UNCOMMITTED") || strings.Contains(got, "OUT_OF_SCOPE") {
+		t.Errorf("the allowed file counted as drift: %s", got)
+	}
+}
+
 func TestDriftClean(t *testing.T) {
 	wt, c := repo(t, "good")
 	write(t, filepath.Join(wt, "backend/Routing/A.cs"), "a\nb\n")
@@ -297,5 +387,34 @@ func TestDriftErrorExitIsNotSkippedTest(t *testing.T) {
 	}
 	if !strings.Contains(kinds(r.Drift), "FAKE_COMPLETION") {
 		t.Fatal("actual skipped test was not detected")
+	}
+}
+
+// A report beside tracked code must not exempt unrelated code from either drift gate.
+func TestReportBesideTrackedCodeDoesNotHideDrift(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		name := "uncommitted"
+		if committed {
+			name = "committed"
+		}
+		t.Run(name, func(t *testing.T) {
+			wt, c := repo(t, "report-code")
+			c.ReportPath = filepath.Join(wt, "backend", "REPORT.md")
+			write(t, filepath.Join(wt, "backend", "REPORT.md"), "# report\n## S1 done\nfiles: backend/Auth/Login.cs\n## S2 done\nchecks passed\n")
+			write(t, filepath.Join(wt, "backend/Auth/Login.cs"), "unowned code\n")
+			want := "UNCOMMITTED"
+			if committed {
+				sh(t, wt, "git", "add", "backend/Auth/Login.cs")
+				sh(t, wt, "git", "commit", "-qm", "fix(auth): unowned #169")
+				want = "OUT_OF_SCOPE"
+			}
+			r, err := Check(c, wt, "origin/main", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(kinds(r.Drift), want) {
+				t.Fatalf("missing %s: %+v", want, r.Drift)
+			}
+		})
 	}
 }

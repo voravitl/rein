@@ -152,7 +152,8 @@ func boundDecide(a Action, task, cwd string) string {
 	if err != nil {
 		return fmt.Sprintf("the subagent is bound to task %s but its contract cannot be loaded (%v); run `rein contract new` first", task, err)
 	}
-	return decide(a, c, contract.Real(c.Worktree), cwd)
+	reason, _ := decide(a, c, contract.Real(c.Worktree), cwd)
+	return reason
 }
 
 var taskRx = regexp.MustCompile(`rein-task:[ \t]*([A-Za-z0-9][A-Za-z0-9._-]*)`)

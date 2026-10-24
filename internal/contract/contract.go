@@ -213,6 +213,7 @@ func Load(name string) (*Contract, error) {
 	if c.Name == "" || c.Worktree == "" || len(c.Allow) == 0 || len(c.Scope) == 0 || c.ReportPath == "" {
 		return nil, fmt.Errorf("contract %s: name, worktree, allow, scope and report_path are required", name)
 	}
+	c.resolvePaths() // a contract written by an older rein (or by hand) may carry a relative report path
 	return &c, nil
 }
 
@@ -229,17 +230,41 @@ func LoadFile(path string) (*Contract, error) {
 	if c.Name == "" || c.Worktree == "" || len(c.Allow) == 0 || len(c.Scope) == 0 || c.ReportPath == "" {
 		return nil, fmt.Errorf("contract %s: name, worktree, allow, scope and report_path are required", path)
 	}
+	c.resolvePaths() // a contract written by an older rein (or by hand) may carry a relative report path
 	return &c, nil
 }
 
-// Writable reports whether abs (an absolute, cleaned path outside the worktree) is a file the worker may write.
+// Writable reports whether abs is the exact report or an explicitly writable file.
+// A report's parent directory grants no ownership of sibling files or subdirectories.
 func (c *Contract) Writable(abs string) bool {
-	for _, p := range append([]string{c.ReportPath}, c.WorkerWritable...) {
+	for _, p := range c.OwnedPaths() {
 		if SamePath(abs, p) {
 			return true
 		}
 	}
 	return false
+}
+
+// OwnedPaths are exact report and explicitly writable paths shared by the guard,
+// drift check and OS sandbox. Directory access requires an explicit allow glob.
+func (c *Contract) OwnedPaths() []string {
+	return append([]string{c.ReportPath}, c.WorkerWritable...)
+}
+
+// resolvePaths makes the worker's own paths absolute, so the guard, the drift check and the OS sandbox all compare
+// the same path. A relative one belongs to the task's worktree: that is where the worker runs and writes.
+func (c *Contract) resolvePaths() {
+	c.ReportPath = inWorktree(c.Worktree, c.ReportPath)
+	for i, w := range c.WorkerWritable {
+		c.WorkerWritable[i] = inWorktree(c.Worktree, w)
+	}
+}
+
+func inWorktree(wt, p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(wt, p)
 }
 
 // SamePath compares two paths after resolving symlinks where possible (macOS /tmp -> /private/tmp).
@@ -312,6 +337,7 @@ func New(name string, issue int, runDir, allow, deny, scope, worktreeRoot, repor
 	for _, w := range splitList(writable) {
 		c.WorkerWritable = append(c.WorkerWritable, expand(w))
 	}
+	c.resolvePaths() // a relative report or writable path belongs to the task's worktree, where the worker writes it
 	abs, err := filepath.Abs(filepath.Join(runDir, "contracts", name+".json"))
 	if err != nil {
 		return nil, err

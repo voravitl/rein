@@ -27,6 +27,21 @@ const kiroJSON = `{"models":[{"model_name":"auto","description":"x","model_id":"
 {"model_name":"claude-sonnet-5.5","description":"x","model_id":"claude-sonnet-5.5","context_window_tokens":1000000,"rate_multiplier":1.3,"rate_unit":"Credit"},
 {"model_name":"qwen3-coder-next","description":"x","model_id":"qwen3-coder-next","context_window_tokens":256000,"rate_multiplier":0.05,"rate_unit":"Credit"}],"default_model":"auto"}`
 
+// A model id may carry a context variant suffix ("[1m]"), which opencode 2.1.0 prints, and must still be refused
+// when it carries shell metacharacters.
+func TestModelIDAcceptsContextVariantsAndRefusesMetacharacters(t *testing.T) {
+	for _, good := range []string{"9router/ag/claude-opus-5-5-high[1m]", "opencode-go/glm-5.3-flash", "openrouter/~anthropic/claude-opus-latest"} {
+		if !validID(good) {
+			t.Errorf("validID rejected %q", good)
+		}
+	}
+	for _, bad := range []string{"a b", "a;b", "$(x)/y", "a|b", "a&b", "a>b", "a`b`", "a\nb"} {
+		if validID(bad) {
+			t.Errorf("validID accepted %q", bad)
+		}
+	}
+}
+
 func TestDiscoverHelper(t *testing.T) {
 	sc := os.Getenv("REIN_FAKE_SCENARIO")
 	if sc == "" {

@@ -152,6 +152,14 @@ func routeLaunch(ctx context.Context, args []string, controller *run.Controller,
 		fmt.Fprintln(os.Stderr, "[route] Orca dispatch requires an attributable task lease")
 		return 1
 	}
+	// Installing a hook cannot bind the executable or state of the vendor terminal. The Antigravity
+	// terminal sandbox then blocks the Orca runtime metadata, so the worker's worker_done never
+	// arrives and the lease stays fenced forever. Refuse the launch instead of starting a worker
+	// whose completion can never be proven.
+	if isOrcaLaunch(argv) && agent == "antigravity" {
+		fmt.Fprintln(os.Stderr, "[route] native AGY sandbox IPC is unsupported: rein retains the terminal sandbox, so the worker's worker_done cannot reach Orca; use the direct shell route for AGY")
+		return 1
+	}
 	if !isOrcaLaunch(argv) && agent == "codex" {
 		bin, binErr := os.Executable()
 		if binErr != nil {

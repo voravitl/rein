@@ -40,6 +40,36 @@ func withChildren(gs []string) []string {
 	return out
 }
 
+// workerOwned is the set of worktree-relative paths the worker owns: the report and the
+// explicitly allowed files. The guard lets the worker write exactly these, so drift must not judge any of them as the
+// worker's uncommitted work. It asks the contract for the same answer the guard gets, so the two cannot disagree.
+type workerOwned struct {
+	files map[string]bool // exact paths
+}
+
+func newWorkerOwned(c *contract.Contract, wt string) workerOwned {
+	o := workerOwned{files: map[string]bool{}}
+	root := contract.Real(wt)
+	for _, p := range c.OwnedPaths() {
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(root, abs)
+		}
+		rel, err := filepath.Rel(root, contract.Real(abs))
+		if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			continue
+		}
+		rel = filepath.ToSlash(rel)
+		o.files[rel] = true
+	}
+	return o
+}
+
+// has reports whether rel (a worktree-relative, slash-separated path) is one the worker owns.
+func (o workerOwned) has(rel string) bool {
+	return o.files[rel]
+}
+
 var (
 	fake = regexp.MustCompile(`(TODO|FIXME|\.skip\(|\.only\(|\[Fact\(Skip|\[Ignore|throw new NotImplementedException|it\.todo|\bxit\(|\bxdescribe\()`)
 	// Secrets: known token shapes, private keys, and credential-named keys with a literal value in code,
@@ -178,6 +208,11 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 	files := nulSplit(names) // -z: no C-style quoting, so non-ASCII names match the globs as written
 	r.Files = len(files)
 
+	// The contract's report path is the worker's own file, not part of the work: the guard tells the worker to
+	// write it, so it is never out of scope and never counted as an uncommitted change. The same holds for a
+	// sibling of the report in its own directory: the guard allows the worker to write it.
+	owned := newWorkerOwned(c, wt)
+
 	// Compute tier from allow globs, then escalate from actual changed files (ADR B2.1)
 	baseTier := tier.EvaluateFromAllowGlobs(c.Allow, c.Profile.SensitivePaths)
 	computedTier := tier.EvaluateFromChangedFiles(files, c.Profile.SensitivePaths, baseTier)
@@ -220,6 +255,9 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 			continue
 		}
 		p := strings.TrimSuffix(l[3:], "/")
+		if owned.has(p) { // the worker's own files: the guard lets it write them, drift does not judge them as work
+			continue
+		}
 		arts := c.Profile.LocalArtifacts
 		if strings.HasPrefix(l, "?? ") && glob.Match(p, append(arts, withChildren(arts)...)) {
 			continue
@@ -234,6 +272,8 @@ func CheckWith(c *contract.Contract, wt, base string, claimed []string, opt Opti
 		switch {
 		case glob.Match(f, c.Deny):
 			d("DENIED_PATH", "%s", f)
+		case owned.has(f):
+			// the worker's own files: the guard lets it write them, so they are not out of scope
 		case !glob.Match(f, c.Allow):
 			d("OUT_OF_SCOPE", "%s", f)
 		}

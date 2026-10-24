@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/voravitl/rein/internal/run"
@@ -134,6 +135,62 @@ func contains(s []string, v string) bool {
 
 var syncLedgerFile = (*os.File).Sync
 
+// ledgerCache is the process-local view of the ledger used by Append. Append re-read and re-validated the whole file
+// on every call, so n appends cost O(n^2). The cache keeps the charge index and re-reads only when the file's path or
+// size says another process appended.
+var ledgerCache struct {
+	mu      sync.Mutex
+	path    string
+	size    int64
+	charges map[[2]string]Row
+}
+
+// chargeIndex returns the recorded (attempt, charge_id) -> row map of the ledger. The file is read and validated in
+// full once; a later append only has to check its own row. A file that another process changed is re-read, so a
+// conflict introduced elsewhere still fails the append.
+func chargeIndex() (map[[2]string]Row, error) {
+	path, err := filepath.Abs(Path())
+	if err != nil {
+		return nil, err
+	}
+	size := int64(0)
+	if fi, err := os.Stat(path); err == nil {
+		size = fi.Size()
+	}
+	ledgerCache.mu.Lock()
+	defer ledgerCache.mu.Unlock()
+	if ledgerCache.charges != nil && ledgerCache.path == path && ledgerCache.size == size {
+		return ledgerCache.charges, nil
+	}
+	rows, err := loadStrict("")
+	if err != nil {
+		return nil, err
+	}
+	idx := make(map[[2]string]Row)
+	for _, row := range rows {
+		if row.Kind != "cost" || row.ChargeID == "" {
+			continue
+		}
+		idx[[2]string{row.Attempt, row.ChargeID}] = row
+	}
+	ledgerCache.charges, ledgerCache.path, ledgerCache.size = idx, path, size
+	return idx, nil
+}
+
+// cacheCharge records one appended row in the process-local index, so the next Append need not re-read the file.
+func cacheCharge(r Row, path string, before, written int64) {
+	ledgerCache.mu.Lock()
+	defer ledgerCache.mu.Unlock()
+	if ledgerCache.charges == nil || ledgerCache.path != path || ledgerCache.size != before {
+		ledgerCache.charges = nil
+		return
+	}
+	if r.Kind == "cost" && r.ChargeID != "" {
+		ledgerCache.charges[[2]string{r.Attempt, r.ChargeID}] = r
+	}
+	ledgerCache.size = before + written
+}
+
 func Append(r Row) error {
 	path, err := filepath.Abs(Path())
 	if err != nil {
@@ -144,21 +201,28 @@ func Append(r Row) error {
 		return err
 	}
 	defer unlock()
-	if r.Kind == "cost" && r.ChargeID != "" {
-		rows, err := LoadStrict("")
-		if err != nil {
-			return err
-		}
-		if err := validateCharges(append(rows, r)); err != nil {
-			return err
-		}
-	}
-
 	r.RecordedAt = time.Now().Format(time.RFC3339)
 	b, err := json.Marshal(r)
 	if err != nil {
 		return fmt.Errorf("not recorded: %w", err)
 	}
+	// Compare and cache the serialized snapshot: caller pointers and omitempty
+	// values must have identical semantics before and after a cache reload.
+	var snapshot Row
+	if err := json.Unmarshal(b, &snapshot); err != nil {
+		return fmt.Errorf("not recorded: %w", err)
+	}
+	r = snapshot
+	if r.Kind == "cost" && r.ChargeID != "" {
+		idx, err := chargeIndex()
+		if err != nil {
+			return err
+		}
+		if first, ok := idx[[2]string{r.Attempt, r.ChargeID}]; ok && !sameCharge(first, r) {
+			return fmt.Errorf("conflicting duplicate charge %q of attempt %q", r.ChargeID, r.Attempt)
+		}
+	}
+
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -166,12 +230,17 @@ func Append(r Row) error {
 	if err != nil {
 		return err
 	}
+	before, err := f.Stat()
+	if err != nil {
+		return errors.Join(err, f.Close())
+	}
 	if _, err := f.Write(append(b, '\n')); err != nil {
 		return errors.Join(err, f.Close())
 	}
 	if err := syncAndCloseLedger(f); err != nil {
 		return err
 	}
+	cacheCharge(r, path, before.Size(), int64(len(b)+1))
 	return syncLedgerDirectories(path)
 }
 
@@ -202,8 +271,11 @@ func Load(since string) ([]Row, error) {
 
 // LoadStrict refuses corrupt records instead of undercounting spend at a budget gate.
 func LoadStrict(since string) ([]Row, error) {
-	return load(since, true)
+	return loadStrict(since)
 }
+
+// loadStrict is the seam tests use to count strict loads.
+var loadStrict = func(since string) ([]Row, error) { return load(since, true) }
 
 func load(since string, strict bool) ([]Row, error) {
 	f, err := os.Open(Path())

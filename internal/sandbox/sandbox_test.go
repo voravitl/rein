@@ -65,3 +65,28 @@ func TestApplyNeedsWorktree(t *testing.T) {
 		t.Errorf("want a create-it-first error, got %v", err)
 	}
 }
+
+// The OS sandbox grants the report file without exposing its parent subtree.
+func TestSettingsAllowsOnlyTheReportFile(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "contracts"))
+	c, err := contract.New("t", 0, filepath.Join(root, "run"), "src/**", "", "S1", filepath.Join(root, "wts"),
+		"report/task-1.md", "", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := Settings(c)["filesystem"].(map[string]any)["allowWrite"].([]string)
+	area := contract.Real(filepath.Join(c.Worktree, "report"))
+	found := false
+	for _, p := range allow {
+		if contract.Real(p) == area {
+			t.Errorf("report parent exposed: %v", allow)
+		}
+		if contract.SamePath(p, c.ReportPath) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the report file %s is not writable in the sandbox: %v", area, allow)
+	}
+}

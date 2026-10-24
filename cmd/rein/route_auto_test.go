@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +39,26 @@ func TestRouteDiscoverProcess(t *testing.T) {
 	case last == "models":
 		fmt.Print("gemini-w-high\tGemini W (High)\n")
 	}
+	os.Exit(0)
+}
+
+// TestRouteDiscoverClaudeProcess is the fake `claude` metadata session: it answers the
+// control_request that asks for the resolved model catalog.
+func TestRouteDiscoverClaudeProcess(t *testing.T) {
+	if os.Getenv("REIN_FAKE_CLAUDE_DISCOVER") == "" {
+		return
+	}
+	if os.Args[len(os.Args)-1] == "--version" {
+		fmt.Println("2.1.302")
+		os.Exit(0)
+	}
+	for _, flag := range []string{"--setting-sources", "--strict-mcp-config", "--no-session-persistence", "--input-format", "--output-format"} {
+		if !slices.Contains(os.Args, flag) {
+			os.Exit(10)
+		}
+	}
+	_, _ = io.Copy(io.Discard, os.Stdin)
+	fmt.Println(`{"type":"control_response","response":{"subtype":"success","request_id":"rein-model-metadata","response":{"models":[{"value":"default","resolvedModel":"gemini-w-high"}]}}}`)
 	os.Exit(0)
 }
 
@@ -88,6 +109,12 @@ type e2eEnv struct {
 }
 
 func newE2E(t *testing.T, workerLaunch string) *e2eEnv {
+	return newE2EAgent(t, workerLaunch, "antigravity")
+}
+
+// newE2EAgent builds the fixture with a named worker vendor. The Orca route is only used by vendors whose
+// completion rein can prove, so an Orca fixture names one of them.
+func newE2EAgent(t *testing.T, workerLaunch, workerAgent string) *e2eEnv {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake POSIX CLI")
@@ -106,17 +133,22 @@ func newE2E(t *testing.T, workerLaunch string) *e2eEnv {
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CLAUDE_PID", "")
 	t.Setenv("REIN_FAKE_DISCOVER", "1")
+	t.Setenv("REIN_FAKE_CLAUDE_DISCOVER", "1")
 
 	sel := &contract.Selection{Objective: "balanced", AcceptFreshness: []string{"client_catalog"}, InventoryMaxAgeMinutes: 60, Suite: "s1",
 		Worker:   contract.WorkerPolicy{QualityFloor: contract.QualityFloor{MinApprovalRate: 0.5, MaxFalseClaims: zero()}, MinCompleteAttempts: 5, MaxEvidenceAgeDays: 30},
 		Reviewer: contract.ReviewerPolicy{MinDefectFixtures: 4, MinCleanFixtures: 4, MinRecall: 0.4, MinSpecificity: 0.4, MaxFalsePositiveRate: func() *float64 { v := 0.5; return &v }(), MaxEvidenceAgeDays: 30}}
-	c := &contract.Contract{Name: "task", Worktree: wt, Allow: []string{"src/**"}, Scope: []string{"S1"}, ReportPath: filepath.Join(root, "report"), HooksInstalled: []string{"agy"},
+	hookVendor := workerAgent
+	if hookVendor == "antigravity" {
+		hookVendor = "agy"
+	}
+	c := &contract.Contract{Name: "task", Worktree: wt, Allow: []string{"src/**"}, Scope: []string{"S1"}, ReportPath: filepath.Join(root, "report"), HooksInstalled: []string{hookVendor},
 		HooksGeneration: "g", MaxChangedLines: 50, Profile: contract.Profile{Selection: sel, SensitivePaths: []string{"infra/**"}}}
 	if _, err := c.Save(); err != nil {
 		t.Fatal(err)
 	}
 	prov := func(model string, pool string) providers.Provider {
-		return providers.Provider{Agent: "antigravity", Model: model, Launch: workerLaunch, Effort: "high", Capabilities: []string{"repository-edit", "tests"}, ContextTokens: 200000,
+		return providers.Provider{Agent: workerAgent, Model: model, Launch: workerLaunch, Effort: "high", Capabilities: []string{"repository-edit", "tests"}, ContextTokens: 200000,
 			Billing: &providers.Billing{Mode: "credits", Unit: "agy_credits", Pool: pool}, ProbeBound: &providers.Bound{Calls: 1, Amount: 0.5},
 			Probe: []string{os.Args[0], "-test.run=TestRouteProbeProcess", "--", "route-probe"}}
 	}
@@ -126,8 +158,9 @@ func newE2E(t *testing.T, workerLaunch string) *e2eEnv {
 	cfg := providers.Config{Providers: map[string]providers.Provider{"w": prov("gemini-w-high", "agy/credits"), "r": reviewer},
 		WorkerChains: map[string][]string{"backend": {"w"}}, ReviewChains: map[string][]string{"all": {"r"}},
 		Discovery: map[string]providers.DiscoverySpec{
-			"antigravity": {Command: []string{os.Args[0], "-test.run=^TestRouteDiscoverProcess$", "--"}},
-			"kiro":        {Command: []string{os.Args[0], "-test.run=^TestRouteDiscoverProcess$", "--", "kiro"}}}}
+			workerAgent: {Command: []string{os.Args[0], "-test.run=^TestRouteDiscoverProcess$", "--"}},
+			"kiro":      {Command: []string{os.Args[0], "-test.run=^TestRouteDiscoverProcess$", "--", "kiro"}},
+			"claude":    {Command: []string{os.Args[0], "-test.run=^TestRouteDiscoverClaudeProcess$", "--"}}}}
 	cfgPath := filepath.Join(root, "config.json")
 	b, _ := json.Marshal(cfg)
 	if err := os.WriteFile(cfgPath, b, 0o600); err != nil {
@@ -141,7 +174,7 @@ func newE2E(t *testing.T, workerLaunch string) *e2eEnv {
 		launch := ledger.Row{Kind: "routing_launch", Attempt: id, Run: "old", Task: "old", Worker: &ledger.AgentModel{Agent: w.Agent, Model: w.Model}, Type: "backend", Effort: "high", Config: routing.ProviderFingerprint(w), Suite: "s1", Tier: "T1"}
 		out := ledger.Row{Kind: "task", Attempt: id, Run: "old", Task: "old", Source: "measured", GatesPassed: yes(), Reviewer: &ledger.AgentModel{Agent: "claude", Model: "claude-opus-5-5-high"}, ReviewSHA: "sha", Approved: true,
 			Blockers: zero(), Highs: zero(), FalseClaims: zero(), Drift: zero(), ReviewRounds: one()}
-		ch, _ := ledger.NewChargeRow(id, "w", "worker", "agy/credits", "agy_credits", "antigravity", w.Model, 1.5)
+		ch, _ := ledger.NewChargeRow(id, "w", "worker", "agy/credits", "agy_credits", workerAgent, w.Model, 1.5)
 		seedRows(t, launch, out, ch)
 	}
 	for i := 0; i < 4; i++ {
@@ -224,7 +257,7 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 	agy := filepath.Join(root, "agy")
 	logf := filepath.Join(root, "launch.log")
 	t.Setenv("TEST_LAUNCH_LOG", logf)
-	if err := os.WriteFile(agy, []byte("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$TEST_LAUNCH_LOG\"\nsleep \"${TEST_LAUNCH_SLEEP:-0}\"\nexit 0\n"), 0o700); err != nil {
+	if err := os.WriteFile(agy, []byte("#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$TEST_LAUNCH_LOG\"\nif [ -n \"${TEST_LAUNCH_RELEASE:-}\" ]; then while [ ! -f \"$TEST_LAUNCH_RELEASE\" ]; do sleep 0.05; done; fi\nsleep \"${TEST_LAUNCH_SLEEP:-0}\"\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	launch := func(effort ...string) []string {
@@ -333,7 +366,8 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 	}
 
 	// two writers on one checkout: with a run in flight, a freshly prepared receipt is refused (and stays unused)
-	t.Setenv("TEST_LAUNCH_SLEEP", "2")
+	release := filepath.Join(root, "release")
+	t.Setenv("TEST_LAUNCH_RELEASE", release)
 	prepare := func() string {
 		out, code := capture(t, func() int { return cmdRoute(base) })
 		var r struct {
@@ -345,11 +379,24 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 		return r.Attempt
 	}
 	second := prepare()
+	os.Remove(logf)
 	var wg sync.WaitGroup
 	var firstCode int
 	wg.Add(1)
 	go func() { defer wg.Done(); firstCode = cmdRouteLaunch(launch("--effort", "high")) }()
-	time.Sleep(700 * time.Millisecond)
+	// the lease is taken before the provider starts, so the launch log proves the first writer owns it
+	waitFor := time.Now().Add(10 * time.Second)
+	for {
+		if _, err := os.Stat(logf); err == nil {
+			break
+		}
+		if time.Now().After(waitFor) {
+			os.WriteFile(release, nil, 0o600)
+			wg.Wait()
+			t.Fatal("the first writer never started its provider")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	third := prepare() // the first run is in flight: it is not yet evidence, so the model still qualifies
 	if code := cmdRouteLaunch(launch("--effort", "high")); code == 0 {
 		t.Error("a second writer was admitted beside a running one")
@@ -357,11 +404,13 @@ func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
 	if routing.ReceiptUsed(third) {
 		t.Error("a launch refused for the running writer consumed its receipt")
 	}
+	os.WriteFile(release, nil, 0o600)
 	wg.Wait()
 	if firstCode != 0 || !routing.ReceiptUsed(second) {
 		t.Errorf("the first writer: code %d, receipt used %v", firstCode, routing.ReceiptUsed(second))
 	}
-	t.Setenv("TEST_LAUNCH_SLEEP", "0")
+	os.Remove(release)
+	t.Setenv("TEST_LAUNCH_RELEASE", "")
 
 	// a review: its tier follows the real git diff, `route check` binds the effort and spends the receipt once
 	if _, err := exec.LookPath("git"); err == nil {
@@ -585,7 +634,7 @@ func TestReconcileRefusesWhileTheTaskHasAWriter(t *testing.T) {
 // A successful launcher without a ready receipt cannot establish worker readiness
 // or termination: fail the launch, retain the fence, and claim no duration.
 func TestOrcaUnconfirmedDispatchHoldsTheTaskUntilSettle(t *testing.T) {
-	e := newE2E(t, "orca")
+	e := newE2EAgent(t, "orca", "claude")
 	root, wt := e.root, e.wt
 	out, code := capture(t, func() int {
 		return cmdRoute([]string{"auto", "--task", "task", "--run", "run", "--profile-file", e.profile, "--config", e.cfgPath, "--timeout", "30s"})
@@ -603,7 +652,7 @@ func TestOrcaUnconfirmedDispatchHoldsTheTaskUntilSettle(t *testing.T) {
 	if err := os.WriteFile(orca, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run",
+	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "claude", "--run", "run",
 		"--worktree", "path:" + wt, "--model", "gemini-w-high", "--effort", "high"}
 	if code := cmdRouteLaunch(args); code != 1 {
 		t.Fatalf("unconfirmed Orca dispatch must fail: %d", code)
@@ -660,7 +709,7 @@ func TestOrcaUnconfirmedDispatchHoldsTheTaskUntilSettle(t *testing.T) {
 
 // An Orca acknowledgement failure does not prove that its asynchronous worker never started.
 func TestOrcaFailedAcknowledgementKeepsWriterFence(t *testing.T) {
-	e := newE2E(t, "orca")
+	e := newE2EAgent(t, "orca", "claude")
 	if out, code := capture(t, func() int {
 		return cmdRoute([]string{"auto", "--task", "task", "--run", "run", "--profile-file", e.profile, "--config", e.cfgPath, "--timeout", "30s"})
 	}); code != 0 {
@@ -672,7 +721,7 @@ func TestOrcaFailedAcknowledgementKeepsWriterFence(t *testing.T) {
 	if err := os.WriteFile(orca, []byte("#!/bin/sh\nsleep 30 >/dev/null 2>&1 &\necho $! > \"$TEST_WORKER_PID\"\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "antigravity", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high"}
+	args := []string{"--task", "task", "--run", "run", "--", orca, "orchestration", "worker-start", "--agent", "claude", "--run", "run", "--worktree", "path:" + e.wt, "--model", "gemini-w-high", "--effort", "high"}
 	if code := cmdRouteLaunch(args); code != 1 {
 		t.Fatalf("failed acknowledgement: %d", code)
 	}
