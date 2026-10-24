@@ -173,8 +173,15 @@ func unchangedPatchBody(repoPath, sha string) (string, error) {
 // NormalizeModelName canonicalizes a full model identifier for equality
 // checks. Cross-mode review compares whole models, not only makers, so
 // "zai:GLM-5.3-Flash" reviewing "zai:GLM-5.3" counts as an independent review.
+// A leading "<maker>:" prefix is stripped so the same model written with and
+// without it ("zai:GLM-5.3" vs "GLM-5.3") is still one model and cannot pose
+// as its own reviewer.
 func NormalizeModelName(model string) string {
-	return strings.ToLower(strings.TrimSpace(model))
+	model = strings.ToLower(strings.TrimSpace(model))
+	if i := strings.Index(model, ":"); i >= 0 {
+		model = model[i+1:]
+	}
+	return model
 }
 
 // NormalizeModelMaker extracts the model maker from a model string.

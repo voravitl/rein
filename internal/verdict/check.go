@@ -251,9 +251,10 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	}
 	effective := make(map[string]int)
 	for i, v := range current {
-		prev, ok := effective[v.ReviewerModel]
+		key := NormalizeModelName(v.ReviewerModel)
+		prev, ok := effective[key]
 		if !ok || !v.Timestamp.Before(current[prev].Timestamp) {
-			effective[v.ReviewerModel] = i
+			effective[key] = i
 		}
 	}
 
@@ -262,7 +263,7 @@ func CheckVerdicts(storageDir string, mr int, sha, currentPatchID string, taskTi
 	var matchingVerdicts []VerdictRecord
 
 	for i, v := range current {
-		if effective[v.ReviewerModel] != i {
+		if effective[NormalizeModelName(v.ReviewerModel)] != i {
 			continue // superseded by a later verdict from the same reviewer
 		}
 		if v.Verdict != Approve {

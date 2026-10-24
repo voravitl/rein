@@ -1098,3 +1098,63 @@ func TestCheckVerdicts_SameModelIgnoringCaseDoesNotCount(t *testing.T) {
 		t.Errorf("ReviewerCount = %d, want 0", result.ReviewerCount)
 	}
 }
+
+func TestCheckVerdicts_MakerPrefixCannotPoseAsDifferentModel(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 45
+	sha := "jk101"
+	patchID := "patch101"
+
+	// The same model written with and without its maker prefix is one model.
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "GLM-5.3", "zai:GLM-5.3", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if result.Passed {
+		t.Error("CheckVerdicts should fail when the reviewer model differs from the worker model only by a maker prefix")
+	}
+	if result.ReviewerCount != 0 {
+		t.Errorf("ReviewerCount = %d, want 0", result.ReviewerCount)
+	}
+}
+
+func TestCheckVerdicts_RequestChangesRetractsAcrossSpellings(t *testing.T) {
+	tmpDir := t.TempDir()
+	storageDir := filepath.Join(tmpDir, "verdicts")
+
+	mr := 46
+	sha := "lm202"
+	patchID := "patch202"
+
+	// An APPROVE and a later REQUEST_CHANGES from the same model under two
+	// spellings: the retraction must win.
+	if err := RecordVerdict(storageDir, mr, sha, Approve, "zai:GLM-5.3-Flash", "zai:GLM-5.3", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordVerdict(storageDir, mr, sha, RequestChanges, "GLM-5.3-FLASH", "zai:GLM-5.3", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordApproval(storageDir, mr, sha, patchID, "approved", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := CheckVerdicts(storageDir, mr, sha, patchID, tier.T1, "")
+	if err != nil {
+		t.Fatalf("CheckVerdicts failed: %v", err)
+	}
+	if result.Passed {
+		t.Error("a REQUEST_CHANGES recorded later must retract an earlier APPROVE from the same model under another spelling")
+	}
+	if result.ReviewerCount != 0 {
+		t.Errorf("ReviewerCount = %d, want 0 (the effective verdict is REQUEST_CHANGES)", result.ReviewerCount)
+	}
+}
