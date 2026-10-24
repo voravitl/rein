@@ -68,7 +68,7 @@ func TestApprovePromptTerminalContext(t *testing.T) {
 			// Execute the generated shell command against the real CLI handler in a disposable fixture.
 			cmd := exec.Command("sh", "-c", `rein() { "$REIN_PROMPT_TEST_BINARY" -test.run='^TestApprovePromptTerminalHelper$' -- "$@"; }; `+payload.Command)
 			cmd.Dir = other
-			cmd.Env = append(os.Environ(), "REIN_PROMPT_TEST_BINARY="+binary, "CLAUDE_PID=", "CLAUDE_CODE_SESSION_ID=", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
+			cmd.Env = append(os.Environ(), "REIN_PROMPT_TEST_BINARY="+binary, "CLAUDE_PID=", "CLAUDE_CODE_SESSION_ID=", "ZCODE_APP_VERSION=", "ZCODE_PROCESS_LABEL=", "GIT_CONFIG_GLOBAL="+os.DevNull, "GIT_CONFIG_NOSYSTEM=1")
 			if out, err := cmd.CombinedOutput(); err != nil {
 				t.Fatalf("terminal command failed: %v\n%s\n%s", err, payload.Command, out)
 			}

@@ -547,3 +547,28 @@ func TestGitInTempScratchDirs(t *testing.T) {
 		t.Errorf("git outside temp and worktree must stay denied, got %q", out)
 	}
 }
+
+// ZCode speaks Claude's event format (its Write/Edit tools alias ApplyPatch), so the guard
+// judges it through the same parser as codex.
+func TestZcode(t *testing.T) {
+	wt, _ := setup(t)
+	push := f2(codexPre, `"Bash"`, `{"command":"git push origin HEAD"}`)
+	if out, _, code := call(t, "zcode", push, wt); code != 0 || !strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Errorf("push: want a Claude-style deny, got %q (exit %d)", out, code)
+	}
+	write := f2(codexPre, `"Write"`, `{"file_path":"@WT@/backend/Routing/A.cs","content":"x"}`)
+	if out, _, code := call(t, "zcode", write, wt); out != "" || code != 0 {
+		t.Errorf("owned write: want allow, got %q (exit %d)", out, code)
+	}
+	apply := f2(codexPre, `"ApplyPatch"`, `{"command":"*** Begin Patch\n*** Update File: /etc/evil\n@@\n-x\n+y\n*** End Patch"}`)
+	if out, _, _ := call(t, "zcode", apply, wt); !strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Errorf("apply_patch outside scope: want deny, got %q", out)
+	}
+	stop := `{"session_id":"s","cwd":"@WT@","hook_event_name":"Stop","model":"glm-5.3","permission_mode":"p","stop_hook_active":false,"last_assistant_message":"ok"}`
+	if out, _, _ := call(t, "zcode", stop, wt); !strings.Contains(out, `"decision":"block"`) {
+		t.Errorf("stop without a report must block, got %q", out)
+	}
+	if out, _, _ := call(t, "zcode", strings.Replace(stop, `"stop_hook_active":false`, `"stop_hook_active":true`, 1), wt); out != "" {
+		t.Errorf("second stop must pass, got %q", out)
+	}
+}

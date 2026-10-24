@@ -72,7 +72,7 @@ Antigravity IPC commands remain subject to its terminal sandbox. Rein does not e
 ### `rein hooks install`
 Installs vendor hook configuration into the worker's worktree so tool calls are guarded:
 ```sh
-rein hooks install <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude]
+rein hooks install <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude,zcode]
 ```
 Without `--vendors`, the guard is installed for codex, agy, kiro and opencode. A Hermes worker needs
 `--vendors hermes`: its plugin lives in the task's Hermes home, and installing it by default would hide the
@@ -82,7 +82,7 @@ plugin's global one.
 ### `rein hooks uninstall`
 
 ```sh
-rein hooks uninstall <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude]
+rein hooks uninstall <TASK_ID> [--vendors codex,agy,kiro,opencode,hermes,claude,zcode]
 ```
 
 Removes only identifiable Rein task hooks and updates both contract copies. Default removal scans all six supported vendors and every shared hook event; modified executable commands or residual copies outside the owned layout return exit 2 and retain that vendor's metadata. Other owners' hooks, settings and sibling files remain. Conflicting or modified artifacts and symlink destinations fail closed; inspect the error instead of deleting the parent directory. Repeated removal is safe. Reinstall with `rein hooks install` and use the newly printed launch flags. Restart an already-running harness to unload cached hooks; removal on disk cannot revoke a running process's launch arguments.
@@ -93,7 +93,7 @@ Codex, OpenCode, Kiro and Hermes hooks are task-bound project artifacts, not glo
 Invoked automatically on every tool call by the agent harness via stdin:
 ```sh
 # Called by harness PreToolUse / Stop hooks
-rein hook [--vendor claude|codex|agy|kiro|opencode|hermes]
+rein hook [--vendor claude|codex|agy|kiro|opencode|hermes|zcode]
 ```
 - **Silent outside contracted worktrees:** Costs ~5ms, does nothing if no contract.
 - **Inside contracted worktree:** Blocks `git push`, `gh/glab`, destructive git resets, writes outside allowlist, and touching live ports/databases.
@@ -109,7 +109,7 @@ rein drift <TASK_ID> \
   [--worktree <PATH>] \
   [--base origin/main] \
   [--claimed-files file1,file2] \
-  [--expect-guard claude|codex|agy|kiro|opencode|hermes] \
+  [--expect-guard claude|codex|agy|kiro|opencode|hermes|zcode] \
   [--json]
 ```
 

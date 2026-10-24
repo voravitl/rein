@@ -190,5 +190,5 @@ func cmdHunter(args []string) int {
 // owner.
 var ownerTerminal = func() bool {
 	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0 && !inClaudeCode() && os.Getenv("CODEX_THREAD_ID") == ""
+	return err == nil && info.Mode()&os.ModeCharDevice != 0 && !inAISession() && os.Getenv("CODEX_THREAD_ID") == ""
 }
