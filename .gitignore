@@ -8,3 +8,5 @@ __pycache__/
 .omc/
 .agents/
 .rein/
+# crux adapters' per-session runtime state (hermes writes adapters/hermes/state/; a stray file also landed in adapters/state/) — never commit
+plugins/crux/adapters/**/state/

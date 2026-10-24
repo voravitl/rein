@@ -28,6 +28,14 @@ jobs:
         run: node --test plugins/crux/adapters/codex/hooks/*.test.mjs plugins/crux/tests/*.test.mjs
       - name: Crux offline transport and safety tests
         run: python3 -B -m unittest discover -s plugins/crux/tests -p 'test_*.py'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: Crux bun tool tests
+        run: |
+          cd plugins/crux/skills/crux-mode/scripts
+          bun install --frozen-lockfile
+          bun run test
       - name: install and preflight script tests
         if: runner.os != 'Windows'
         run: python3 -B -m unittest discover -s scripts -p 'test*.py'
@@ -53,12 +61,9 @@ jobs:
           for f in skills/worktree-pipeline/scripts/*.sh; do bash -n "$f"; done
           python3 -m py_compile skills/worktree-pipeline/scripts/*.py
           for f in .claude-plugin/*.json hooks/hooks.json examples/*.json; do python3 -m json.tool "$f" >/dev/null; done
-      - name: cleanup regression tests
+      - name: worktree-pipeline script tests
         if: runner.os != 'Windows'
-        run: python3 -B -m unittest discover -s skills/worktree-pipeline/scripts -p 'test*cleanup*.py'
-      - name: advisor routing regression tests
-        if: runner.os != 'Windows'
-        run: python3 -B -m unittest discover -s skills/worktree-pipeline/scripts -p 'test_advise_routing.py'
+        run: python3 -B -m unittest discover -s skills/worktree-pipeline/scripts -p 'test*.py'
       - name: SessionStart installer builds once and is idempotent
         if: runner.os != 'Windows'
         run: |

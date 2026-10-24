@@ -201,6 +201,17 @@ func TestOrcaSubjectComposesAgentAndModel(t *testing.T) {
 	}
 }
 
+func TestIsExecutableName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"orca": true, "orca-dev": true, "orca-ide": true,
+		"ORCA": false, "orca-idx": false, "orcar": false, "": false,
+	} {
+		if got := IsExecutableName(name); got != want {
+			t.Errorf("IsExecutableName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestLaunchTitlesCarryComposedSubject(t *testing.T) {
 	for _, tt := range []struct {
 		agent     string

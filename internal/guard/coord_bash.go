@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/voravitl/rein/internal/contract"
+	"github.com/voravitl/rein/internal/orca"
 	"github.com/voravitl/rein/internal/routing"
 	"github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/spec"
@@ -373,7 +374,7 @@ func (x *ctx) taskSpecPreflight(cmd string) string {
 }
 
 func isOrca(name string) bool {
-	return name == "orca" || name == "orca-dev" || name == "orca-ide"
+	return orca.IsExecutableName(name)
 }
 
 func flagValue(args []string, name string) (string, bool) {

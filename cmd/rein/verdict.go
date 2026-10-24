@@ -400,8 +400,9 @@ func getVerdictSummary(storageDir string, mr int, sha string, repoPath string) s
 	// Build summary: count approvals and request-changes matching this revision
 	var approvals, changes []string
 	for _, rec := range records {
-		// Match either exact SHA or matching patch-id
-		if rec.SHA == sha || (rec.PatchID != "" && currentPatchID != "" && rec.PatchID == currentPatchID) {
+		// Same revision binding as `verdict check` (ADR B2.2): exact SHA,
+		// equal patch ID, or a proven unchanged rebase.
+		if verdict.RecordMatchesRevision(rec.SHA, rec.PatchID, sha, currentPatchID, repoPath) {
 			maker := verdict.NormalizeModelMaker(rec.ReviewerModel)
 			switch rec.Verdict {
 			case verdict.Approve:

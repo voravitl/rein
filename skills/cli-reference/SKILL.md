@@ -1,11 +1,11 @@
 ---
 name: cli-reference
-description: "Complete CLI command reference and operational guide for rein. Use whenever you need to know how to invoke rein commands (contract, drift, hook, run, budget, task, ledger, providers, verdict, approve, advise, e2e, spec, sandbox), understand CLI flags, interpret exit codes, or find copy-paste operational recipes."
+description: "Complete CLI command reference and operational guide for rein. Use whenever you need to know how to invoke rein commands (config, contract, drift, hook, hooks, run, budget, task, ledger, providers, route, verdict, approve, advise, orca, e2e, spec, sandbox, checkpoint, hunter, supervisor, version), understand CLI flags, interpret exit codes, or find copy-paste operational recipes."
 ---
 
 # `rein` CLI Command Reference & AI Guide
 
-This skill provides AI models (coordinators, workers, reviewers, advisors) with immediate, authoritative usage instructions for all 16 `rein` commands.
+This skill provides AI models (coordinators, workers, reviewers, advisors) with immediate, authoritative usage instructions for the full `rein` command set.
 
 ---
 
@@ -14,8 +14,10 @@ This skill provides AI models (coordinators, workers, reviewers, advisors) with 
 | When you need to... | Run this command | Key flags | Exit code |
 |---|---|---|---|
 | Set task boundary for worker | `rein contract new` | `--name`, `--allow`, `--scope`, `--run-dir` | `0` = ok |
+| Write/inspect Crux provider config | `rein config init/check --dir DIR` | `--model`, `--quota` | `0` = ok, `1` = error, `2` = invalid flag |
 | Inspect active task allowlist | `rein contract show <name>` | `<name>` | `0` = ok |
-| Guard worker worktree | `rein hooks install <name>` | `--vendors` | `0` = installed |
+| Guard worker worktree | `rein hooks install <name>` / `rein hooks uninstall <name>` | `--vendors` | `0` = installed, `2` = refused |
+| Inspect a PreToolUse hook event | `rein hook` | `--vendor` | `0` = allow, `1` = bad flag (deny via stderr) |
 | Write OS sandbox profile | `rein sandbox <name>` | `<name>` | `0` = written |
 | Check for scope drift / false claims | `rein drift <name>` | `--expect-guard`, `--claimed-files` | `0` = clean, `1` = drift |
 | Start coordinator run | `rein run start [repo]` | `--run <name>`, `--profile` | `0` = ok |
@@ -24,13 +26,19 @@ This skill provides AI models (coordinators, workers, reviewers, advisors) with 
 | Check if worker is stuck/dead | `rein task status <task>` | `<task>` | String status |
 | Record model spending/ledger | `rein ledger add` | `--task`, `--worker`, `--rounds` | `0` = recorded |
 | Check provider fallback chains | `rein providers` | `--chain`, `--timeout` | `0` = ok |
+| Pick task route + model automatically | `rein route auto` | `--task`, `--run`, `--profile-file`, `--worker-model` | `0` = receipt written, `1` = refused |
 | Generate Review Report scaffold | `rein verdict template` | `--mr`, `--sha`, `--reviewer`, `--worker` | `0` = printed |
 | Record code review verdict | `rein verdict record` | `--mr`, `--sha`, `--verdict`, `--reviewer` | `0` = recorded |
 | Verify MR merge readiness | `rein verdict check` | `--mr`, `--sha`, `--tier` | `0` = pass, `1` = fail |
 | Render terminal-only approval preview | `rein approve prompt` | `--mr`, `--sha` | `0` = JSON preview and terminal command; interactive approval disabled |
 | Run secondary advisor model | `rein advise <role>` | `<role>`, `<dir>`, `<task>`, `<out>` | `0` = finished |
+| Run native Orca worker lifecycle | `rein orca <launch\|wait\|drain\|close\|tidy>` | `--run`, `--terminal`, `--worktree` | `0` = ok, `1` = error, `3` = dirty, `4` = unique commit |
 | Run E2E test via Orca browser | `rein e2e test` or `run` | `<url-or-spec>`, `--out`, `--json` | `0` = pass, `1` = fail |
 | Lint task spec before launch | `rein spec check` | `<spec>`, `<contract>` | `0` = pass, `1` = lint fail |
+| Snapshot / restore a worktree safely | `rein checkpoint <finalize\|verify\|restore>` | `--task`, `--attempt`, `--run`, `--worktree` | `0` = success, `1` = refused |
+| Evidence-based bug finding workflow | `rein hunter <report\|reproduce\|verify\|review\|approve>` | `--id`, `--repo`, `--attempt` | `0` = recorded, `1` = refused |
+| Validate / run a bounded plan | `rein supervisor <validate\|run>` | `--plan`, `--invocation` | `0` = verified, `1` = blocked |
+| Print binary version | `rein version` | — | `0` = ok |
 
 ---
 
@@ -76,5 +84,5 @@ rein e2e test http://localhost:3000 --out report/e2e
 ---
 
 ## 3. Full Reference
-Consult the complete 16-command manual at:
-[docs/CLI_REFERENCE.md](file:///Users/voravit.l/dev/rein/docs/CLI_REFERENCE.md)
+Consult the complete command manual (full flags, exit codes, refusal codes, recipes) at:
+[docs/CLI_REFERENCE.md](https://github.com/voravitl/rein/blob/main/docs/CLI_REFERENCE.md)

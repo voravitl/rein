@@ -9,6 +9,7 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | Command | Primary User | Purpose | When to Call | Exit Codes |
 |---|---|---|---|---|
 | `rein contract` | Coordinator | Create/inspect task boundary | Before starting worker | `0` = ok, `1` = error, `2` = invalid flag |
+| `rein config` | Coordinator | Write/inspect Crux provider config (disabled by default) | Routing setup (`--quota orca` reads cached quota) | `0` = ok, `1` = error, `2` = invalid flag |
 | `rein hooks install/uninstall` | Coordinator | Manage Rein guard hooks in one worktree | Worker setup/teardown | `0` = success, `2` = refused/failed |
 | `rein hook` | AI Harness | Hook event inspector | Auto-invoked by Claude/Codex/AGY | `0` = allow, `1` = bad flag (deny via stderr) |
 | `rein sandbox` | Coordinator | Write OS sandbox profile | Before worker starts | `0` = written, `1` = failed |

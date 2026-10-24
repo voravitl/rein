@@ -81,6 +81,8 @@ Before merge, the remediating AI must:
 - **Command**: `rein verdict record --mr <N> --sha <HEAD_SHA> --verdict <VERDICT> --reviewer <R> --worker <W>`
 ```
 
+Audit and trail evidence lives in the tracked `.audit/` directory (append-only; never ignored) — see [`docs/AUDIT_POLICY.md`](docs/AUDIT_POLICY.md).
+
 ---
 
 ## 3. Subagent Collaboration & Safety Rules
@@ -104,5 +106,5 @@ Before merge, the remediating AI must:
 
 ## 5. Complete CLI Reference
 
-Consult [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) for full syntax, flags, exit codes, and operational examples for all 16 `rein` commands (`contract`, `drift`, `hook`, `run`, `budget`, `task`, `ledger`, `providers`, `verdict`, `approve`, `advise`, `e2e`, `spec`, `sandbox`).
+Consult [`docs/CLI_REFERENCE.md`](docs/CLI_REFERENCE.md) for the full command set with syntax, flags, exit codes, and operational examples for every `rein` command (the quick matrix there is the canonical list; do not hardcode a count here).
 

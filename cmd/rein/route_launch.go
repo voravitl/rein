@@ -450,8 +450,7 @@ func isOrcaLaunch(argv []string) bool {
 	if len(argv) == 0 {
 		return false
 	}
-	n := filepath.Base(argv[0])
-	return n == "orca" || n == "orca-dev" || n == "orca-ide"
+	return orca.IsExecutableName(filepath.Base(argv[0]))
 }
 
 func routeBudget(c *contract.Contract, runID string) error {
