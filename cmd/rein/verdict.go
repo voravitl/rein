@@ -158,7 +158,7 @@ func cmdVerdictCheck(args []string) int {
 		fmt.Println(string(data))
 	} else {
 		fmt.Printf("Verdict check for MR %d (SHA %s, tier %s):\n", *mr, *sha, taskTier)
-		fmt.Printf("  Maker count: %d\n", result.MakerCount)
+		fmt.Printf("  Distinct reviewer models: %d\n", result.ReviewerCount)
 		fmt.Printf("  Has approval: %v\n", result.HasApproval)
 		if result.Passed {
 			fmt.Println("  ✓ All conditions met")
@@ -188,19 +188,15 @@ func cmdApprove(args []string) int {
 		return cmdApprovePrompt(args[1:])
 	}
 
-	// Direct approval command (user-only)
-	if inClaudeCode() {
-		fmt.Fprintln(os.Stderr, "error: rein approve is user-only and cannot be run inside Claude Code")
-		fmt.Fprintln(os.Stderr, "Run this command in your own terminal; interactive merge approvals are disabled pending authenticated hook pairing")
-		return 1
-	}
-
+	// Direct approval command. Inside an AI session it stays refused unless the
+	// human explicitly directed it; --as-directed records that provenance.
 	fs := flag.NewFlagSet("approve", flag.ExitOnError)
 	mr := fs.Int("mr", 0, "MR number")
 	sha := fs.String("sha", "", "commit SHA")
 	reason := fs.String("reason", "", "approval reason")
 	runDir := fs.String("run-dir", "", "run directory (optional)")
 	repoPath := fs.String("repo", ".", "repository path")
+	asDirected := fs.Bool("as-directed", false, "record a human-directed approval from inside an AI session (the ledger stores the AI-session provenance)")
 
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -209,6 +205,21 @@ func cmdApprove(args []string) int {
 	if *mr == 0 {
 		fmt.Fprintln(os.Stderr, "error: --mr is required")
 		return 2
+	}
+
+	if inClaudeCode() && !*asDirected {
+		fmt.Fprintln(os.Stderr, "error: rein approve is user-only inside Claude Code")
+		fmt.Fprintln(os.Stderr, "If the human directed this approval, rerun with --as-directed; the approval record stores the AI-session provenance.")
+		return 1
+	}
+
+	via, sessionID := "", ""
+	if inClaudeCode() {
+		via = "claude-code"
+		sessionID = os.Getenv("CLAUDE_CODE_SESSION_ID")
+		if sessionID == "" {
+			sessionID = os.Getenv("CLAUDE_PID")
+		}
 	}
 
 	ref := *sha
@@ -230,7 +241,7 @@ func cmdApprove(args []string) int {
 	}
 
 	storageDir := verdict.StorageDir(*runDir, *repoPath)
-	if err := verdict.RecordApproval(storageDir, *mr, actualSHA, patchID, *reason); err != nil {
+	if err := verdict.RecordApproval(storageDir, *mr, actualSHA, patchID, *reason, via, sessionID); err != nil {
 		fmt.Fprintf(os.Stderr, "error recording approval: %v\n", err)
 		return 1
 	}
@@ -238,6 +249,9 @@ func cmdApprove(args []string) int {
 	fmt.Printf("Approval recorded: MR %d, SHA %s\n", *mr, actualSHA)
 	if patchID != "" {
 		fmt.Printf("  Patch ID: %s\n", patchID)
+	}
+	if via != "" {
+		fmt.Printf("  Via: human-directed in %s session %s\n", via, sessionID)
 	}
 	if *reason != "" {
 		fmt.Printf("  Reason: %s\n", *reason)

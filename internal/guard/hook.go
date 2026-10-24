@@ -261,7 +261,7 @@ func recordApprovalResponse(a Action, repoPath string) {
 		return
 	}
 	patchID, _ := verdict.ComputeRevisionID(repoPath, "origin/main", sha)
-	_ = verdict.RecordApproval(storageDir, int(mr), sha, patchID, "Human approval via AskUserQuestion")
+	_ = verdict.RecordApproval(storageDir, int(mr), sha, patchID, "Human approval via AskUserQuestion", "ask-user-question", a.SessionID)
 }
 
 func decide(a Action, c *contract.Contract, top, cwd string) (string, bool) {

@@ -45,7 +45,7 @@ func TestCmdVerdictCheck_EvidenceOutput(t *testing.T) {
 	}
 
 	// Record approval
-	if err := verdict.RecordApproval(storageDir, 10, sha, "", "Human approved in review"); err != nil {
+	if err := verdict.RecordApproval(storageDir, 10, sha, "", "Human approved in review", "", ""); err != nil {
 		t.Fatal(err)
 	}
 

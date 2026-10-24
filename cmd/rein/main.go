@@ -135,7 +135,7 @@ func usage() {
   rein verdict check --mr N --sha SHA [--tier T1|T2|T3] [--run-dir D] [--repo PATH]    exits 0 (pass), 1 (fail)
   rein verdict template [--mr N] [--sha SHA] [--base SHA] [--title T] [--reviewer R] [--worker W]    render Review Report scaffold
   rein approve prompt --mr N [--sha SHA] [--run-dir D] [--repo PATH]    prints AskUserQuestion JSON
-  rein approve --mr N [--sha SHA] [--reason TEXT] [--run-dir D] [--repo PATH]    user-only: records human approval
+  rein approve --mr N [--sha SHA] [--reason TEXT] [--as-directed] [--run-dir D] [--repo PATH]    records human approval (--as-directed records a human instruction given inside an AI session, provenance stored)
   rein advise --run R --task T --provider codex|kiro|claude --model M <role> <dir> <task-file> <out-file>    run read-only advisor
   rein e2e check [--json] | test <url-or-spec> [--out DIR] | run <spec-file> [--out DIR] [--base-url URL] [--json]
 
