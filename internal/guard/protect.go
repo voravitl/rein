@@ -14,7 +14,9 @@ var hookFiles = []string{".codex/hooks.json", ".agents/hooks.json", ".kiro/agent
 	".opencode/plugins/rein/server.js", ".claude/settings.local.json",
 	".hermes/config.yaml", ".hermes/plugins/rein-guard/plugin.yaml", ".hermes/plugins/rein-guard/__init__.py",
 	// Hermes loads the task home's dotenv files with override, so one of them can switch plugins off.
-	".hermes/.env", ".hermes/.op.env"}
+	".hermes/.env", ".hermes/.op.env",
+	// ZCode runs configuration-file hooks only while hooks.enabled is true, so that flag is the guard's off switch.
+	".zcode/config.json"}
 
 // protectedHook reports whether rel (slash form, relative to the worktree) is a hook file, anything under the
 // opencode or hermes plugin dir, or a directory that currently holds a hook file (so rm -r / mv of the directory

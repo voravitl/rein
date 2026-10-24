@@ -217,7 +217,7 @@ func TestInstallWritesExcludesAndRecords(t *testing.T) {
 	}
 	for _, p := range []string{contract.PathOf("w"), c.RunCopy} {
 		got := mustJSON(t, p)["hooks_installed"].([]any)
-		if len(got) != 6 {
+		if len(got) != 7 {
 			t.Errorf("%s: hooks_installed = %v", p, got)
 		}
 	}

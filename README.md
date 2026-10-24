@@ -26,7 +26,7 @@ behaving well.
 | Layer | Covers | Catches |
 |---|---|---|
 | **Contract** | everyone | the rules: which files the task may edit, which never, which scope items the report must cover |
-| **Guard hook** | Claude Code workers (plugin hook), and codex, agy, kiro, opencode workers after `rein hooks install <task>` and Hermes workers after `rein hooks install <task> --vendors hermes` (one judge, one contract; vendor differences in [`docs/SETUP.md`](docs/SETUP.md) section 8) | `git push` / rebase / `reset --hard`, `gh` / `glab`, docker prune, dependency installs, writes outside the worktree, writes to never-edit or out-of-ownership files, overwriting other tasks' reports or the contract, stopping without a report; plus your project's protected containers, ports, scripts and commands |
+| **Guard hook** | Claude Code workers (plugin hook), and codex, agy, kiro, opencode, ZCode workers after `rein hooks install <task>`, Hermes workers after `rein hooks install <task> --vendors hermes` (one judge, one contract; vendor differences in [`docs/SETUP.md`](docs/SETUP.md) section 8) | `git push` / rebase / `reset --hard`, `gh` / `glab`, docker prune, dependency installs, writes outside the worktree, writes to never-edit or out-of-ownership files, overwriting other tasks' reports or the contract, stopping without a report; plus your project's protected containers, ports, scripts and commands |
 | **Drift check** | every vendor | a guard that never ran (`GUARD_INACTIVE`: hooks installed but no hook call in the seen log), out-of-scope or never-edit files in the diff (renames included), uncommitted work, scope items without a heading/status/evidence, files claimed but not changed, `TODO`/`.skip`/stubs, secrets, missing issue refs, size budget |
 
 The guard parses each Bash command with a real shell grammar ([mvdan.cc/sh](https://github.com/mvdan/sh)), so
@@ -52,6 +52,7 @@ to it.
 | **OpenAI Codex** | Task hooks | `.codex/hooks.json` | `rein hooks install <task> --vendors codex`; use the printed launch flags |
 | **AWS Kiro** | Agent Definition | `.kiro/agents/rein.json` | `rein hooks install <task> --vendors kiro`; launch with `--agent rein` |
 | **Hermes Agent** | Project plugin + task Hermes home | `<worktree>/.hermes/plugins/rein-guard/` | `rein hooks install <task> --vendors hermes`; start Hermes inside the worktree with `HERMES_ENABLE_PROJECT_PLUGINS=1` and the task's `HERMES_HOME` |
+| **ZCode** | Workspace configuration hooks | `<worktree>/.zcode/config.json` | `rein hooks install <task> --vendors zcode`; start zcode inside the worktree (the installer sets `hooks.enabled: true`, which ZCode requires for configuration-file hooks) |
 
 ### Quick NPX / Skills CLI Installation
 
@@ -162,14 +163,14 @@ orchestrator CLI, or a test script that drives docker) and `sandbox_allowed_doma
 `python -c` write outside the worktree, which the guard cannot see, fails with `Operation not permitted`.
 Native Windows has no Claude Code sandbox (use WSL2).
 
-**2c. Guard the other vendors** (codex, agy, kiro, opencode, hermes; after the worktree exists):
+**2c. Guard the other vendors** (codex, agy, kiro, opencode, hermes, zcode; after the worktree exists):
 
 ```sh
-rein hooks install fix-login            # --vendors codex,agy,kiro,opencode (default) | hermes,claude
+rein hooks install fix-login            # --vendors codex,agy,kiro,opencode (default) | hermes,claude,zcode
 ```
 
 This writes each CLI's project hook file inside the worktree (`.codex/hooks.json`, `.agents/hooks.json`,
-`.kiro/agents/rein.json`, `.opencode/plugins/rein/server.js`, `.hermes/plugins/rein-guard/`), every one calling the absolute path of this `rein` with
+`.kiro/agents/rein.json`, `.opencode/plugins/rein/server.js`, `.hermes/plugins/rein-guard/`, `.zcode/config.json`), every one calling the absolute path of this `rein` with
 `hook --vendor X`, keeps them out of git status, records the vendors in the contract, and prints the launch flags each
 vendor needs (codex: `--dangerously-bypass-hook-trust` plus `-c hooks...`; kiro: `--agent rein`; hermes: `HERMES_ENABLE_PROJECT_PLUGINS=1` and the task's `HERMES_HOME`). Every hook call
 inside a worktree appends a line to `<contracts dir>/seen/<task>.log`; `rein drift` reports `GUARD_INACTIVE` when no

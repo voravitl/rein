@@ -203,8 +203,8 @@ func judge(vendor string, a Action, c *contract.Contract, top, cwd string, w, st
 		logSeen(vendor, c, a)
 	}
 
-	// Handle PostToolUse for approval recording
-	if a.Event == "posttool" && vendor == "claude" && a.Tool == "AskUserQuestion" {
+	// Handle PostToolUse for approval recording (claude and zcode speak the same event format)
+	if a.Event == "posttool" && (vendor == "claude" || vendor == "zcode") && a.Tool == "AskUserQuestion" {
 		return judgePost(vendor, a, c, top, w, stderr)
 	}
 

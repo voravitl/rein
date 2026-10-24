@@ -38,6 +38,7 @@ func hookEnv(t *testing.T) (*coordEnv, string) {
 	writeFile(t, filepath.Join(wt, "src", "w.go"), "x\n")
 	writeFile(t, filepath.Join(wt, ".codex", "hooks.json"), `{"hooks":{}}`)
 	writeFile(t, filepath.Join(wt, ".claude", "settings.local.json"), `{}`)
+	writeFile(t, filepath.Join(wt, ".zcode", "config.json"), `{"hooks":{"enabled":true,"events":{}}}`)
 	if _, err := contract.New("task-h", 1, filepath.Join(e.outside, "run"), "src/**", "", "S1", filepath.Dir(wt), "", "", 0, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -57,6 +58,8 @@ func TestCoordAndWorkerCannotDisableGuard(t *testing.T) {
 		"rm -rf .codex",
 		"mv .codex/hooks.json /tmp/stolen.json",
 		"echo '{}' > .claude/settings.local.json",
+		`echo '{"hooks":{"enabled":false}}' > .zcode/config.json`, // ZCode's off switch
+		"rm -rf .zcode",
 		"find .codex -delete",
 	} {
 		e.expect(true, e.bash(cmd, map[string]any{"cwd": wt}), "worker: "+cmd)
@@ -80,7 +83,7 @@ func TestCoordAndWorkerCannotDisableGuard(t *testing.T) {
 	e.expect(false, e.tool("Edit", map[string]any{"file_path": filepath.Join(e.root, "docs", "note.md")}), "coordinator docs still writable")
 
 	// 4. The hook files are still on disk: nothing above was applied.
-	for _, f := range []string{".codex/hooks.json", ".claude/settings.local.json"} {
+	for _, f := range []string{".codex/hooks.json", ".claude/settings.local.json", ".zcode/config.json"} {
 		if _, err := os.Stat(filepath.Join(wt, filepath.FromSlash(f))); err != nil {
 			t.Errorf("guard file %s was removed: %v", f, err)
 		}

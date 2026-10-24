@@ -95,6 +95,8 @@ func TestApproveOutsideSessionHasNoProvenance(t *testing.T) {
 	root, sha := approveTestRepo(t)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CLAUDE_PID", "")
+	t.Setenv("ZCODE_APP_VERSION", "")
+	t.Setenv("ZCODE_PROCESS_LABEL", "")
 
 	code := cmdApprove([]string{"--mr", "32", "--sha", sha, "--repo", root, "--reason", "typed in terminal"})
 	if code != 0 {
@@ -111,5 +113,30 @@ func TestApproveOutsideSessionHasNoProvenance(t *testing.T) {
 	}
 	if len(records) != 1 || records[0].Via != "" || records[0].SessionID != "" {
 		t.Fatalf("direct terminal approval must carry no provenance, got %+v", records[0])
+	}
+}
+
+func TestApproveAsDirectedRecordsZcodeProvenance(t *testing.T) {
+	root, sha := approveTestRepo(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	t.Setenv("CLAUDE_PID", "")
+	t.Setenv("ZCODE_APP_VERSION", "3.16.3")
+	t.Setenv("ZCODE_PROCESS_LABEL", "local-1")
+
+	code := cmdApprove([]string{"--mr", "33", "--sha", sha, "--repo", root, "--as-directed", "--reason", "owner approved in a zcode chat"})
+	if code != 0 {
+		t.Fatalf("cmdApprove --as-directed in a zcode session = %d, want 0", code)
+	}
+
+	data, err := os.ReadFile(approvalsFile(root, 33))
+	if err != nil {
+		t.Fatalf("approval record missing: %v", err)
+	}
+	var records []verdict.ApprovalRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		t.Fatalf("approval record corrupt: %v", err)
+	}
+	if len(records) != 1 || records[0].Via != "zcode" || records[0].SessionID != "local-1" {
+		t.Fatalf("zcode provenance = %+v, want via zcode session local-1", records[0])
 	}
 }

@@ -250,6 +250,8 @@ func TestMutableRefsAreFrozenAndCannotApproveNextCommit(t *testing.T) {
 	// The terminal entry point must freeze explicit refs as well as its HEAD default.
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CLAUDE_PID", "")
+	t.Setenv("ZCODE_APP_VERSION", "")
+	t.Setenv("ZCODE_PROCESS_LABEL", "")
 	_, code = capture(t, func() int { return cmdApprove([]string{"--repo", root, "--mr", "42", "--sha", "HEAD"}) })
 	if code != 0 {
 		t.Fatalf("approve exit %d", code)
