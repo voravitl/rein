@@ -9,6 +9,13 @@
       "description": "Task contracts, a guard hook that parses shell commands, a vendor-neutral drift check, and the worktree-pipeline playbook (Orca + OMC) with its coordinator agents.",
       "category": "development",
       "tags": ["guardrails", "multi-agent", "worktree", "orca", "supervisor"]
+    },
+    {
+      "name": "crux",
+      "source": "plugins/crux",
+      "description": "Crux ADLC playbooks, scoped agents and clear Thai communication: the workflow layer over Rein's contracts, routing and approvals.",
+      "category": "development",
+      "tags": ["adlc", "playbooks", "multi-agent", "workflow", "thai"]
     }
   ]
 }
