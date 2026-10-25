@@ -52,7 +52,7 @@ to it.
 | **OpenAI Codex** | Task hooks | `.codex/hooks.json` | `rein hooks install <task> --vendors codex`; use the printed launch flags |
 | **AWS Kiro** | Agent Definition | `.kiro/agents/rein.json` | `rein hooks install <task> --vendors kiro`; launch with `--agent rein` |
 | **Hermes Agent** | Project plugin + task Hermes home | `<worktree>/.hermes/plugins/rein-guard/` | `rein hooks install <task> --vendors hermes`; start Hermes inside the worktree with `HERMES_ENABLE_PROJECT_PLUGINS=1` and the task's `HERMES_HOME` |
-| **ZCode** | Workspace configuration hooks | `<worktree>/.zcode/config.json` | `rein hooks install <task> --vendors zcode`; start zcode inside the worktree (the installer sets `hooks.enabled: true`, which ZCode requires for configuration-file hooks) |
+| **ZCode** | Workspace configuration hooks + native plugin | `<worktree>/.zcode/config.json` | Worker: `rein hooks install <task> --vendors zcode`, then **trust the hooks once**: `zcode hooks trust grant --workspace <worktree> --hook-digest <sha256>` (per declaration — see the printed digests via `zcode hooks trust review --workspace <worktree>`). Global (Desktop app / CLI, like Claude Code): `zcode plugins marketplace add <repo>` && `zcode plugins install rein@rein` — SessionStart builds the binary; hooks are silent outside a contracted worktree. Workspace configuration hooks also load only at session start, so start zcode inside the worktree AFTER installing |
 
 ### Quick NPX / Skills CLI Installation
 
