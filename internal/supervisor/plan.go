@@ -17,6 +17,10 @@ import (
 )
 
 type Task struct {
+	Kind             string              `json:"kind,omitempty"`
+	Action           *ActionSpec         `json:"action,omitempty"`
+	Inputs           []ArtifactInput     `json:"inputs,omitempty"`
+	Outputs          []ArtifactOutput    `json:"outputs,omitempty"`
 	Task             string              `json:"task"`
 	Attempt          string              `json:"attempt"`
 	CurrentAttempt   string              `json:"current_attempt"`
@@ -37,17 +41,18 @@ type Task struct {
 
 type Plan struct {
 	raw            []byte
-	Schema         int      `json:"schema"`
-	Run            string   `json:"run"`
-	Repo           string   `json:"repo"`
-	Terminal       string   `json:"terminal"`
-	Source         string   `json:"source"`
-	Version        string   `json:"version"`
-	MaxChecks      int      `json:"max_checks"`
-	TimeoutMS      int      `json:"timeout_ms"`
-	PollIntervalMS int      `json:"poll_interval_ms"`
-	Pools          []string `json:"pools"`
-	Tasks          []Task   `json:"tasks"`
+	Execution      *ExecutionPolicy `json:"execution,omitempty"`
+	Schema         int              `json:"schema"`
+	Run            string           `json:"run"`
+	Repo           string           `json:"repo"`
+	Terminal       string           `json:"terminal"`
+	Source         string           `json:"source"`
+	Version        string           `json:"version"`
+	MaxChecks      int              `json:"max_checks"`
+	TimeoutMS      int              `json:"timeout_ms"`
+	PollIntervalMS int              `json:"poll_interval_ms"`
+	Pools          []string         `json:"pools"`
+	Tasks          []Task           `json:"tasks"`
 }
 
 // Load binds authorization to the exact file bytes, including whitespace.
@@ -76,8 +81,8 @@ func Decode(b []byte) (Plan, string, error) {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return p, "", errors.New("plan must contain one JSON object")
 	}
-	if (p.Schema != 1 && p.Schema != 2) || !run.ValidName(p.Run) || !filepath.IsAbs(p.Repo) || filepath.Clean(p.Repo) != p.Repo {
-		return p, "", errors.New("plan requires schema 1 or 2, valid run and absolute clean repository")
+	if (p.Schema != 1 && p.Schema != 2 && p.Schema != 3) || !run.ValidName(p.Run) || !filepath.IsAbs(p.Repo) || filepath.Clean(p.Repo) != p.Repo {
+		return p, "", errors.New("plan requires schema 1, 2 or 3, valid run and absolute clean repository")
 	}
 	if strings.TrimSpace(p.Terminal) == "" || strings.TrimSpace(p.Source) == "" || strings.TrimSpace(p.Version) == "" {
 		return p, "", errors.New("terminal, source and version are required")
@@ -95,9 +100,30 @@ func Decode(b []byte) (Plan, string, error) {
 	if len(p.Tasks) == 0 || len(p.Tasks) > 1000 {
 		return p, "", errors.New("plan requires 1 to 1000 task bindings")
 	}
+	if p.Schema != 3 {
+		var fields map[string]json.RawMessage
+		_ = json.Unmarshal(b, &fields)
+		if _, present := fields["execution"]; present {
+			return p, "", errors.New("execution policy requires schema 3")
+		}
+		var taskFields []map[string]json.RawMessage
+		_ = json.Unmarshal(fields["tasks"], &taskFields)
+		for _, task := range taskFields {
+			for _, key := range []string{"kind", "action", "inputs", "outputs"} {
+				if _, present := task[key]; present {
+					return p, "", errors.New("action and artifact fields require schema 3")
+				}
+			}
+		}
+		for _, t := range p.Tasks {
+			if t.Kind != "" || t.Action != nil || len(t.Inputs) != 0 || len(t.Outputs) != 0 {
+				return p, "", errors.New("action and artifact fields require schema 3")
+			}
+		}
+	}
 	seen = map[string]bool{}
 	for _, t := range p.Tasks {
-		if p.Schema == 2 {
+		if p.Schema >= 2 {
 			break
 		}
 		if t.ProcessPolicy != "" || t.ContractHash != "" || t.ConfigPath != "" || len(t.Profile) > 0 || len(t.DependsOn) > 0 || len(t.Launches) > 0 || t.MaxAttempts != 0 || len(t.Verify) > 0 || t.ConfigDigest != "" || t.Base != "" || len(t.AllowedUntracked) > 0 {
@@ -115,6 +141,14 @@ func Decode(b []byte) (Plan, string, error) {
 	}
 	if p.Schema == 2 {
 		if err := validateGraph(p); err != nil {
+			return p, "", err
+		}
+	}
+	if p.Schema == 3 {
+		if err := validateDAGFields(b); err != nil {
+			return p, "", err
+		}
+		if err := validateDAG(p); err != nil {
 			return p, "", err
 		}
 	}

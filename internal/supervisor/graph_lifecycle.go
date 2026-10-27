@@ -65,7 +65,11 @@ func invocationBinding(p Plan, hash string) (repo, markerDigest string, log grap
 	if err != nil || !bytes.Equal(raw, current) {
 		return "", "", log, errors.New("invocation marker changed during observation")
 	}
-	return repo, digestBytes(raw), graphLog{path: loc.Marker + ".graph-" + hash + ".jsonl"}, nil
+	path := loc.Marker + ".graph-" + hash + ".jsonl"
+	if p.Schema == 3 {
+		path = dagJournalPath(loc.Marker, hash)
+	}
+	return repo, digestBytes(raw), graphLog{path: path}, nil
 }
 
 func digestBytes(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
@@ -99,6 +103,17 @@ func (l graphLog) invocations(p Plan, raw []byte) (map[string]*GraphInvocation, 
 		var event GraphInvocationEvent
 		if err := strictDecode(e.Data, &event); err != nil {
 			return nil, err
+		}
+		if p.Schema != 3 {
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(e.Data, &fields)
+			var resultFields map[string]json.RawMessage
+			_ = json.Unmarshal(fields["result"], &resultFields)
+			for _, key := range []string{"status", "failed", "blocked", "cancelled"} {
+				if _, present := resultFields[key]; present {
+					return nil, errors.New("DAG result fields require schema 3")
+				}
+			}
 		}
 		id := event.GraphInvocationIdentity
 		if !validDigest(id.InvocationID) || id.Run != p.Run || id.PlanHash != hash || id.Repo != repo || id.MarkerDigest != marker || id.PID <= 0 || id.PIDStart <= 0 {
@@ -154,6 +169,27 @@ func validateInvocationResult(p Plan, r GraphResult) error {
 			return errors.New("invalid invocation completed tasks")
 		}
 		seen[task] = true
+	}
+	if p.Schema == 3 {
+		switch r.Status {
+		case "verified", "partial", "reconciliation":
+		default:
+			return errors.New("invalid DAG aggregate status")
+		}
+		for _, list := range [][]TaskStatus{r.Failed, r.Blocked, r.Cancelled} {
+			for _, item := range list {
+				if !tasks[item.Task] || seen[item.Task] || item.Reason == "" {
+					return errors.New("invalid DAG task status identity")
+				}
+				seen[item.Task] = true
+			}
+		}
+		if r.Status == "verified" && (len(r.Completed) != len(p.Tasks) || len(r.Failed)+len(r.Blocked)+len(r.Cancelled) != 0) {
+			return errors.New("verified DAG has incomplete branches")
+		}
+		if r.Status == "reconciliation" && r.State != routing.WaitBlockedReconciliation {
+			return errors.New("DAG reconciliation state mismatch")
+		}
 	}
 	return nil
 }
@@ -221,6 +257,9 @@ func (l graphLog) returnInvocation(start *GraphInvocationEvent, c *run.Controlle
 // ReadGraphInvocation observes the existing journal without taking authority or
 // writing/fsyncing it. A returned record is not a claim that the process is gone.
 func ReadGraphInvocation(p Plan, hash, id string) (GraphInvocation, error) {
+	if p.Schema == 3 {
+		return readDAGInvocation(p, hash, id)
+	}
 	var empty GraphInvocation
 	if !validDigest(id) {
 		return empty, errors.New("invocation ID must be 64 lowercase hex characters")
