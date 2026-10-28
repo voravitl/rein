@@ -29,13 +29,13 @@ func appendDAGTime(journal string, seq int) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	f, err := openDAGTimingFile(path)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
+	if err != nil || !info.Mode().IsRegular() || !dagTimingSingleLink(f, info) {
 		return
 	}
 	current, err := os.Lstat(path)

@@ -166,7 +166,7 @@ func TestDAGStatusStateGoldensAndStrictReplayParity(t *testing.T) {
 		{"failed", []string{"failed", "blocked", "blocked"}, 0},
 		{"cancelled", []string{"cancelled", "blocked", "blocked"}, 1},
 		{"retry", []string{"retry", "pending", "pending"}, 1},
-		{"global_failure", []string{"failed", "failed", "failed"}, 0},
+		{"global_failure", []string{"blocked", "blocked", "blocked"}, 0},
 	} {
 		t.Run(tc.stage, func(t *testing.T) {
 			p, hash := dagStatusFixture(t, map[string][]string{"A": {}, "B": {"A"}, "C": {"B"}})
@@ -699,6 +699,364 @@ func TestDAGStatusNonRegularJournalFailsPromptly(t *testing.T) {
 			view, err := dagStatusReadPromptly(t, p, hash, nil)
 			if err == nil || !strings.Contains(err.Error(), "regular file") {
 				t.Fatalf("nonregular journal must fail promptly: %+v %v", view, err)
+			}
+		})
+	}
+}
+
+func dagStatusReconciliationBeforeAdmission(t *testing.T, p Plan, hash string) *dagLog {
+	t.Helper()
+	ops := fakeDAGOps(t, p)
+	ops.InvocationID = digestText("status reconciliation before admission")
+	ops.Authority = func(context.Context, *run.Controller) error {
+		return errors.New("authority temporarily unavailable before admission")
+	}
+	out, err := RunDAG(context.Background(), p, hash, ops)
+	if err == nil || out.Status != "reconciliation" || out.Checks != 0 {
+		t.Fatalf("expected reconciliation before task admission: %+v %v", out, err)
+	}
+	return dagStatusLog(t, p, hash)
+}
+
+func TestDAGStatusLaterActivityClearsReconciliationReturn(t *testing.T) {
+	p, hash := dagStatusFixture(t, map[string][]string{"A": {}})
+	l := dagStatusReconciliationBeforeAdmission(t, p, hash)
+	dagStatusIntent(t, l, "A", "prepare", "")
+	if _, err := l.read(p, hash, true); err != nil {
+		t.Fatalf("unlabelled resumed activity must pass strict replay: %v", err)
+	}
+	view, err := ReadDAGStatus(context.Background(), p, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Status != "ok" || view.Terminal() || view.Nodes[0].State != "preparing" {
+		t.Fatalf("later task activity must supersede reconciliation return: %+v", view)
+	}
+}
+
+func TestDAGStatusCheckBudgetExhaustionIsTerminal(t *testing.T) {
+	for _, retry := range []bool{false, true} {
+		name := "unstarted"
+		if retry {
+			name = "retry"
+		}
+		t.Run(name, func(t *testing.T) {
+			p, _ := dagStatusFixture(t, map[string][]string{"A": {}, "B": {}, "C": {"B"}})
+			p.MaxChecks = 1
+			p.Execution.MaxParallel = 1
+			p, hash := rebindDAGFixture(t, p)
+			ops := fakeDAGOps(t, p)
+			if retry {
+				execute, finalize := ops.Execute, ops.Finalize
+				ops.Execute = func(ctx context.Context, c *run.Controller, task Task, a PreparedAttempt) (ExecutionResult, error) {
+					r, err := execute(ctx, c, task, a)
+					r.Observation.State = Failed
+					return r, err
+				}
+				ops.Finalize = func(ctx context.Context, c *run.Controller, task Task, a PreparedAttempt, e ExecutionResult) (TerminalResult, error) {
+					r, err := finalize(ctx, c, task, a, e)
+					r.Retry = true
+					return r, err
+				}
+			}
+			out, err := RunDAG(context.Background(), p, hash, ops)
+			if err != nil || out.Status != "partial" || out.Checks != 1 {
+				t.Fatalf("real run must exhaust its check budget: %+v %v", out, err)
+			}
+			l := dagStatusLog(t, p, hash)
+			if _, err := l.read(p, hash, true); err != nil {
+				t.Fatalf("budget fixture must pass strict replay: %v", err)
+			}
+			view, err := ReadDAGStatus(context.Background(), p, hash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantA := "done"
+			if retry {
+				wantA = "blocked"
+			}
+			for i, want := range []string{wantA, "blocked", "blocked"} {
+				if view.Nodes[i].State != want {
+					t.Errorf("budget projection task %s: state=%s want=%s", view.Nodes[i].Task, view.Nodes[i].State, want)
+				}
+			}
+			if view.Status != "partial" || !view.Terminal() {
+				t.Errorf("exhausted run must be terminal partial: %+v", view)
+			}
+		})
+	}
+}
+
+func TestDAGTimingRejectsHardLinkedNonProtectedFile(t *testing.T) {
+	p, hash := dagStatusFixture(t, map[string][]string{"A": {}})
+	l := dagStatusLog(t, p, hash)
+	target := filepath.Join(filepath.Dir(l.path), "unrelated-authoritative-state.jsonl")
+	want := []byte("unrelated authoritative bytes\n")
+	if err := os.WriteFile(target, want, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(dagTimesPath(l.path)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(target, dagTimesPath(l.path)); err != nil {
+		t.Fatal(err)
+	}
+	dagStatusIntent(t, l, "A", "prepare", "")
+	if _, err := l.read(p, hash, true); err != nil {
+		t.Fatalf("advisory rejection must preserve journal append: %v", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("timing append mutated unrelated hardlink target: got=%q want=%q err=%v", got, want, err)
+	}
+}
+
+func TestDAGStatusOutstandingInvocationIsNotTerminal(t *testing.T) {
+	p, hash := dagStatusFixture(t, map[string][]string{"A": {}})
+	l := dagStatusReach(t, p, hash, "done")
+	c, err := run.AcquireController(p.Repo, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	if _, err := l.startInvocation(p, hash, digestText("outstanding status invocation"), c); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.read(p, hash, true); err != nil {
+		t.Fatalf("outstanding invocation must pass strict replay: %v", err)
+	}
+	view, err := ReadDAGStatus(context.Background(), p, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.Nodes[0].State != "done" || view.Terminal() || view.Status == "done" || view.Status == "partial" {
+		t.Fatalf("node completion must not finish an outstanding invocation: %+v", view)
+	}
+}
+
+func TestDAGStatusGlobalReconciliationDoesNotFailUnstartedNodes(t *testing.T) {
+	p, hash := dagStatusFixture(t, map[string][]string{"A": {}, "B": {"A"}})
+	l := dagStatusReconciliationBeforeAdmission(t, p, hash)
+	if _, err := l.read(p, hash, true); err != nil {
+		t.Fatalf("reconciliation fixture must pass strict replay: %v", err)
+	}
+	view, err := ReadDAGStatus(context.Background(), p, hash)
+	if err != nil || view.Status != "reconciliation" || !view.Terminal() {
+		t.Fatalf("global reconciliation summary: %+v %v", view, err)
+	}
+	for _, n := range view.Nodes {
+		if n.State != "blocked" || n.Attempt != 0 || n.Agent != nil || n.Model != nil || n.Effort != nil {
+			t.Errorf("unadmitted node must be blocked without an invented failed attempt: %+v", n)
+		}
+	}
+}
+
+func TestDAGStatusPendingRetryDoesNotShowPriorAttemptMetadata(t *testing.T) {
+	p, _ := dagStatusFixture(t, map[string][]string{"A": {}})
+	task := &p.Tasks[0]
+	task.Kind, task.Action, task.ProcessPolicy = "worker", nil, "non_detaching"
+	task.ConfigPath, task.ConfigDigest = filepath.Join(p.Repo, "providers.json"), digestText("{}")
+	task.Profile = []byte(`{"schema":1}`)
+	task.Launches = map[string][]string{"fake": {"worker", "{model}"}}
+	p, hash := rebindDAGFixture(t, p)
+	task = &p.Tasks[0]
+	ct, err := contract.Load(task.Task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := dagStatusLog(t, p, hash)
+	prepared := func(number int, model string) PreparedAttempt {
+		attempt, receipt := fmt.Sprintf("attempt-%d", number), fmt.Sprintf("receipt-%d", number)
+		a := PreparedAttempt{Number: number, Run: p.Run, PlanHash: hash, Task: task.Task, Kind: "worker", Attempt: attempt, ReceiptID: receipt, ContractHash: task.ContractHash, Worktree: ct.Worktree, SourceRevision: task.Base, SourceDigest: digestText("source"), InputDigest: InputDigest(nil)}
+		a.Worker = &routing.AutoResult{Attempt: attempt, Receipt: &routing.Decision{
+			Run: p.Run, Task: task.Task, Attempt: attempt, DecisionID: receipt,
+			ContractHash: task.ContractHash, ConfigPath: task.ConfigPath, ConfigHash: task.ConfigDigest,
+			Provider: "fake", Agent: "codex", Model: model, Effort: "low", Pool: "pool", Worktree: ct.Worktree,
+		}, Launch: &routing.Launch{Agent: "codex", Model: model, Effort: "high"}}
+		return a
+	}
+	assertMetadata := func(stage, state, model string, attempt int) {
+		t.Helper()
+		if _, err := l.read(p, hash, true); err != nil {
+			t.Fatalf("%s fixture must pass strict replay: %v", stage, err)
+		}
+		view, err := ReadDAGStatus(context.Background(), p, hash)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n := view.Nodes[0]
+		if n.State != state || n.Attempt != attempt {
+			t.Errorf("%s state/attempt: %+v", stage, n)
+		}
+		if model == "" {
+			if n.Agent != nil || n.Model != nil || n.Effort != nil {
+				t.Errorf("%s leaked prior attempt metadata: %+v", stage, n)
+			}
+		} else if n.Agent == nil || *n.Agent != "codex" || n.Model == nil || *n.Model != model || n.Effort == nil || *n.Effort != "high" {
+			t.Errorf("%s lost current prepared launch metadata: %+v", stage, n)
+		}
+	}
+	a := prepared(1, "first-model")
+	dagStatusResult(t, l, dagStatusIntent(t, l, task.Task, "prepare", ""), a)
+	assertMetadata("first prepared", "running", "first-model", 1)
+	e := ExecutionResult{Dispatch: Dispatch{Task: task.Task, Attempt: a.Attempt, Decision: a.ReceiptID, Dispatch: a.ReceiptID, Worktree: a.Worktree, OrcaTask: "fixture:" + a.Attempt, Pool: "pool"}, Observation: Observation{Quota, digestText("quota observation")}}
+	dagStatusResult(t, l, dagStatusIntent(t, l, task.Task, "execute", a.Attempt), e)
+	terminal := TerminalResult{Retry: true, Outcome: Outcome{State: routing.WaitQuota, Reason: "quota retry", ExecutionDigest: e.Observation.Evidence, CheckpointDigest: digestText("checkpoint")}}
+	dagStatusResult(t, l, dagStatusIntent(t, l, task.Task, "finalize", a.Attempt), terminal)
+	assertMetadata("retry", "retry", "", 1)
+	intent := dagStatusIntent(t, l, task.Task, "prepare", "")
+	assertMetadata("pending second prepare", "preparing", "", 1)
+	dagStatusResult(t, l, intent, prepared(2, "second-model"))
+	assertMetadata("second prepared", "running", "second-model", 2)
+}
+
+func dagTimingOpenPromptly(t *testing.T, path string, unblock func()) (*os.File, error) {
+	t.Helper()
+	type opened struct {
+		file *os.File
+		err  error
+	}
+	finished := make(chan opened, 1)
+	go func() {
+		f, err := openDAGTimingFile(path)
+		finished <- opened{f, err}
+	}()
+	select {
+	case got := <-finished:
+		return got.file, got.err
+	case <-time.After(500 * time.Millisecond):
+		if unblock != nil {
+			unblock()
+		}
+		select {
+		case got := <-finished:
+			if got.file != nil {
+				_ = got.file.Close()
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Error("timing opener remained blocked after cleanup release")
+		}
+		t.Fatal("timing opener exceeded 500ms")
+		return nil, nil
+	}
+}
+
+func TestDAGTimingOpenAppendsRegularFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ordinary.times.jsonl")
+	for _, line := range []string{"first\n", "second\n"} {
+		f, err := dagTimingOpenPromptly(t, path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n, writeErr := f.WriteString(line)
+		closeErr := f.Close()
+		if writeErr != nil || closeErr != nil || n != len(line) {
+			t.Fatalf("ordinary timing append: n=%d write=%v close=%v", n, writeErr, closeErr)
+		}
+	}
+	got, err := os.ReadFile(path)
+	if err != nil || string(got) != "first\nsecond\n" {
+		t.Fatalf("timing opener must create then append without truncating: %q %v", got, err)
+	}
+}
+
+func TestDAGStatusDurableFencesSurviveInvocationStart(t *testing.T) {
+	for _, stage := range []string{"global_failure", "failed"} {
+		t.Run(stage, func(t *testing.T) {
+			p, hash := dagStatusFixture(t, map[string][]string{"A": {}, "B": {}})
+			l := dagStatusReach(t, p, hash, stage)
+			c, err := run.AcquireController(p.Repo, hash)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			if _, err := l.startInvocation(p, hash, digestText("invocation after durable fence"), c); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := l.read(p, hash, true); err != nil {
+				t.Fatalf("fenced lifecycle fixture must pass strict observation: %v", err)
+			}
+			view, err := ReadDAGStatus(context.Background(), p, hash)
+			if err != nil || view.Status != "reconciliation" || view.Nodes[1].State != "blocked" {
+				t.Fatalf("lifecycle must not erase durable fences: %+v %v", view, err)
+			}
+			want := "blocked"
+			if stage == "failed" {
+				want = "failed"
+			}
+			if view.Nodes[0].State != want {
+				t.Errorf("must distinguish actual failure from unstarted global stop: %+v", view.Nodes[0])
+			}
+			dagStatusIntent(t, l, "B", "prepare", "")
+			_, replayErr := l.read(p, hash, true)
+			_, statusErr := ReadDAGStatus(context.Background(), p, hash)
+			if replayErr == nil || statusErr == nil || replayErr.Error() != statusErr.Error() {
+				t.Fatalf("durable admission fence must retain replay parity: replay=%v status=%v", replayErr, statusErr)
+			}
+		})
+	}
+}
+
+func TestDAGStatusCheckBudgetPreservesActiveAttempts(t *testing.T) {
+	for _, stage := range []string{"running", "finalizing", "pending_prepare"} {
+		t.Run(stage, func(t *testing.T) {
+			p, _ := dagStatusFixture(t, map[string][]string{"A": {}, "B": {}})
+			p.MaxChecks = 1
+			p, hash := rebindDAGFixture(t, p)
+			reach, task, want := stage, "A", stage
+			if stage == "pending_prepare" {
+				reach, task, want = "done", "B", "preparing"
+			}
+			l := dagStatusReach(t, p, hash, reach)
+			if stage == "pending_prepare" {
+				dagStatusIntent(t, l, task, "prepare", "")
+			}
+			if _, err := l.read(p, hash, true); err != nil {
+				t.Fatalf("active budget fixture must pass strict observation: %v", err)
+			}
+			view, err := ReadDAGStatus(context.Background(), p, hash)
+			if err != nil || view.Status != "ok" || view.Terminal() {
+				t.Fatalf("budget must not stop an existing active attempt: %+v %v", view, err)
+			}
+			for _, n := range view.Nodes {
+				if n.Task == task && n.State != want {
+					t.Errorf("active task %s at budget: state=%s want=%s", task, n.State, want)
+				}
+			}
+		})
+	}
+}
+
+func TestDAGStatusInvocationCompletionControls(t *testing.T) {
+	for _, labelled := range []bool{false, true} {
+		name := "unlabelled"
+		if labelled {
+			name = "returned"
+		}
+		t.Run(name, func(t *testing.T) {
+			p, hash := dagStatusFixture(t, map[string][]string{"A": {}})
+			l := dagStatusReach(t, p, hash, "done")
+			if labelled {
+				c, err := run.AcquireController(p.Repo, hash)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer c.Close()
+				start, err := l.startInvocation(p, hash, digestText("completed status invocation"), c)
+				if err != nil {
+					t.Fatal(err)
+				}
+				out := GraphResult{State: routing.WaitHuman, Status: "verified", Checks: 1, Completed: []string{"A"}, Reason: "fixture verified"}
+				if err := l.returnInvocation(start, c, out, nil); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := l.read(p, hash, true); err != nil {
+				t.Fatalf("completed invocation fixture must pass strict observation: %v", err)
+			}
+			view, err := ReadDAGStatus(context.Background(), p, hash)
+			if err != nil || view.InvocationActive || !view.Terminal() || view.Status != "done" || view.Nodes[0].State != "done" {
+				t.Fatalf("returned or unlabelled completion must remain terminal: %+v %v", view, err)
 			}
 		})
 	}

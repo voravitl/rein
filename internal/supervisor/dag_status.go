@@ -27,16 +27,17 @@ type DAGNodeStatus struct {
 }
 
 type DAGStatus struct {
-	Run      string          `json:"run"`
-	PlanHash string          `json:"plan_hash"`
-	Status   string          `json:"status"`
-	Nodes    []DAGNodeStatus `json:"nodes"`
+	Run              string          `json:"run"`
+	PlanHash         string          `json:"plan_hash"`
+	Status           string          `json:"status"`
+	Nodes            []DAGNodeStatus `json:"nodes"`
+	InvocationActive bool            `json:"invocation_active,omitempty"`
 }
 
-// Terminal deliberately excludes changing snapshots even if their complete
-// prefix contains terminal results: an unfinished append is still unknown.
+// Terminal excludes changing snapshots and outstanding invocations even when
+// every node is done: the controller's final outcome is still unknown.
 func (s DAGStatus) Terminal() bool {
-	if s.Status == "changing" {
+	if s.Status == "changing" || s.InvocationActive {
 		return false
 	}
 	if s.Status == "reconciliation" {
@@ -59,10 +60,11 @@ func dagStatusTerminal(state string) bool {
 }
 
 type dagStatusSnapshot struct {
-	states  map[string]*dagTaskState
-	pending map[string]dagEntry
-	entries []dagEntry
-	failed  bool
+	states           map[string]*dagTaskState
+	pending          map[string]dagEntry
+	entries          []dagEntry
+	failed           bool
+	invocationActive bool
 }
 
 // ReadDAGStatus observes an immutable byte snapshot without controller authority.
@@ -124,9 +126,13 @@ func readDAGStatus(ctx context.Context, p Plan, hash string, now func() time.Tim
 }
 
 func projectDAGStatus(p Plan, hash string, snapshot *dagStatusSnapshot) DAGStatus {
-	view := DAGStatus{Run: p.Run, PlanHash: hash, Status: "ok", Nodes: make([]DAGNodeStatus, len(p.Tasks))}
+	view := DAGStatus{Run: p.Run, PlanHash: hash, Status: "ok", Nodes: make([]DAGNodeStatus, len(p.Tasks)), InvocationActive: snapshot.invocationActive}
 	indices := map[string]int{}
 	taskErrors := map[string]bool{}
+	checks := 0
+	for _, s := range snapshot.states {
+		checks += s.Attempts
+	}
 	for _, e := range snapshot.entries {
 		if e.Phase == "error" {
 			taskErrors[e.Task] = true
@@ -143,7 +149,8 @@ func projectDAGStatus(p Plan, hash string, snapshot *dagStatusSnapshot) DAGStatu
 		case "executed":
 			n.State = "finalizing"
 		}
-		if pending := snapshot.pending[t.Task]; pending.Operation != "" {
+		pending := snapshot.pending[t.Task]
+		if pending.Operation != "" {
 			switch pending.Operation {
 			case "prepare":
 				n.State = "preparing"
@@ -153,10 +160,19 @@ func projectDAGStatus(p Plan, hash string, snapshot *dagStatusSnapshot) DAGStatu
 				n.State = "finalizing"
 			}
 		}
-		if taskErrors[t.Task] || (snapshot.failed && len(taskErrors) == 0 && !dagStatusTerminal(n.State)) {
-			n.State = "failed"
+		if checks >= p.MaxChecks && pending.Operation == "" && (n.State == "ready" || n.State == "retry") {
+			n.State = "blocked"
 		}
-		if w := s.Prepared.Worker; w != nil && w.Receipt != nil {
+		if taskErrors[t.Task] {
+			n.State = "failed"
+		} else if snapshot.failed && !dagStatusTerminal(n.State) {
+			if pending.Operation == "" && (s.Stage == "" || s.Stage == "retry") {
+				n.State = "blocked"
+			} else {
+				n.State = "failed"
+			}
+		}
+		if w := s.Prepared.Worker; w != nil && w.Receipt != nil && s.Stage != "retry" && pending.Operation != "prepare" {
 			agent, model, effort := w.Receipt.Agent, w.Receipt.Model, w.Receipt.Effort
 			if w.Launch != nil {
 				agent, model, effort = w.Launch.Agent, w.Launch.Model, w.Launch.Effort
@@ -333,19 +349,25 @@ func parseDAGStatus(p Plan, hash string, raw []byte) (*dagStatusSnapshot, error)
 		return nil, err
 	}
 	reconciliation := false
+	invocationActive := false
 	for _, e := range entries {
 		if e.Phase != "lifecycle" {
+			// Unlabelled resumed work supersedes a returned summary, never the
+			// durable control/error fences validated in the first pass.
+			reconciliation = false
 			continue
 		}
 		if e.Operation == "invocation_start" {
 			reconciliation = false
+			invocationActive = true
 		} else if e.Operation == "invocation_return" {
 			var event GraphInvocationEvent
 			if err := strictDecode(e.Data, &event); err != nil {
 				return nil, err
 			}
 			reconciliation = event.Result != nil && event.Result.Status == "reconciliation"
+			invocationActive = false
 		}
 	}
-	return &dagStatusSnapshot{states: states, pending: pending, entries: entries, failed: failed || reconciliation}, nil
+	return &dagStatusSnapshot{states: states, pending: pending, entries: entries, failed: failed || reconciliation, invocationActive: invocationActive}, nil
 }

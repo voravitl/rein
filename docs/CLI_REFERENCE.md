@@ -486,17 +486,25 @@ remain unchanged.
 supports schema 3 only. The default table shows task, state, kind, zero-based
 topological layer, completed prepare count / maximum attempts, agent/model:effort,
 elapsed time, tokens, and guard activity. `--json` returns `run`, `plan_hash`,
-`status`, and `nodes`; each node has `task`, `kind`, `layer`, `state`, `attempt`,
+`status`, and `nodes`, plus `invocation_active: true` while the latest recorded
+invocation has no return; each node has `task`, `kind`, `layer`, `state`, `attempt`,
 `max_attempts`, nullable `agent`, `model`, `effort`, `guard_line`, `elapsed_ms`, and
 `tokens`. Tokens are always unknown (JSON null, table em dash). Worker identity
-comes from the prepared launch/decision, never a predicted routing choice. Current
+comes from the prepared launch/decision, never a predicted routing choice. Retry
+and pending next-prepare states hide the previous attempt's agent/model/effort
+until the new prepare result binds them. Current
 seen logs lack attempt attribution, so guard activity remains unknown rather than
 showing a previous attempt's line. Before a prepare result, attempt count is zero.
 
 States are `pending`, `ready`, `preparing`, `running`, `finalizing`, `done`, `wait`,
 `failed`, `blocked`, `cancelled`, and `retry`. The top-level status is `ok` while
-active, `done` or `partial` when all nodes are terminal, or `reconciliation` after
-a journal error, cancellation fence, or recorded reconciliation return. An
+active, `done` or `partial` when all nodes are terminal and no recorded invocation
+is outstanding, or `reconciliation` after a journal error, cancellation fence,
+or current recorded reconciliation return. Later authoritative task activity can
+supersede a returned invocation summary; durable error/cancellation fences remain
+enforced. Global stops label untouched tasks `blocked`, without inventing failed
+attempts. Exhausted global check budgets block unadmitted ready/retry tasks and
+their dependents; active attempts retain their observed state. An
 unfinished intent remains observable as active work. A missing journal shows
 pending/ready nodes without creating a file. An incomplete final line is retried
 twice at 100ms intervals; a valid complete prefix then returns `changing` with exit
@@ -512,6 +520,10 @@ Timing is display-only telemetry in
 `<marker>.graph3-<plan_hash>.times.jsonl`: `{ "seq": N, "at": "RFC3339Nano UTC" }`.
 The controller attempts a sidecar append only after a successful durable journal
 append. Sidecar failures do not change the run result; replay never reads it.
+Unix timing writes use nonblocking/no-follow opens, then verify regular-file
+identity and a single hard link before appending. Existing journal/marker alias
+checks also remain enforced. Windows opens the reparse point itself and rejects
+reparse points; its descriptor link count must also be one.
 Status requires a complete, matching sequence of timestamps for its snapshot;
 missing, corrupt, incomplete, or unmatched telemetry yields unknown elapsed time.
 Timing reads accept only regular files, verify the opened file's identity, and
@@ -529,9 +541,14 @@ zero. Old journals with no telemetry remain replayable and show unknown elapsed.
 100ms). Terminal output is cleared before redraw on recognized Unix terminal
 devices; redirected output and unrecognized terminals use frames separated by a
 blank line. JSON watch prints one JSON document per frame. Watch exits 0 when all
-nodes are done/wait/failed/blocked/cancelled or the run requires reconciliation.
-`changing` never counts as terminal. SIGINT or SIGTERM exits 130. Agents that need
-a bounded observation should use a single `--json` call.
+nodes are done/wait/failed/blocked/cancelled or the run requires reconciliation,
+provided no recorded invocation is outstanding. `changing` never counts as
+terminal. SIGINT or SIGTERM exits 130, including during a blocked observation.
+At most one observation reader is in flight. Cancellation lets the CLI return;
+it cannot cancel a blocked kernel filesystem call. Such a reader may remain until
+the call returns or the process exits, and cannot emit a late frame or start
+another poll. Agents that need a bounded observation should use a single `--json`
+call.
 
 Checkpoint restore uses embedded Git objects and captured bytes; the source can be absent. Restore requires an existing destination parent. Existing destinations, mixed staged/unstaged edits to the same path, tracked deletions/renames/conflicts/submodules, hidden-index flags and unrepresentable checkout conversions are refused. It restores only the supported state into a fresh directory; it does not rewrite contracts, run markers, receipts or source evidence. Each checkpoint stores reachable Git history, so large repositories can produce large snapshots.
 

@@ -147,14 +147,31 @@ func waitSupervisorStatus(ctx context.Context, interval time.Duration) error {
 // Read and wait are injected only by Go callers; no CLI flag can bypass polling
 // or supply a fabricated frame. The production path always observes the journal.
 func supervisorStatusLoop(ctx context.Context, out, stderr io.Writer, options supervisorStatusOptions, read func(context.Context) (supervisor.DAGStatus, error), wait func(context.Context, time.Duration) error) int {
+	type observation struct {
+		view supervisor.DAGStatus
+		err  error
+	}
 	for frame := 0; ; frame++ {
 		if ctx.Err() != nil {
 			return 130
 		}
-		view, err := read(ctx)
+		// Only one reader is in flight. A blocked kernel read may outlive this
+		// loop; its buffered result never writes output or starts another poll.
+		finished := make(chan observation, 1)
+		go func() {
+			view, err := read(ctx)
+			finished <- observation{view, err}
+		}()
+		var got observation
+		select {
+		case <-ctx.Done():
+			return 130
+		case got = <-finished:
+		}
 		if ctx.Err() != nil {
 			return 130
 		}
+		view, err := got.view, got.err
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1

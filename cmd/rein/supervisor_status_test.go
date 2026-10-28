@@ -453,3 +453,60 @@ func TestSupervisorStatusWatchOSInterruptExit(t *testing.T) {
 		})
 	}
 }
+
+func TestSupervisorStatusInterruptDuringBlockedRead(t *testing.T) {
+	for _, watch := range []bool{false, true} {
+		name := "single"
+		if watch {
+			name = "watch"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			started, release, readFinished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			finished := make(chan int, 1)
+			var out, stderr bytes.Buffer
+			go func() {
+				finished <- supervisorStatusLoop(ctx, &out, &stderr, supervisorStatusOptions{watch: watch}, func(context.Context) (supervisor.DAGStatus, error) {
+					close(started)
+					// Model an uncancellable filesystem read. Only test cleanup can
+					// release it, so cancellation cannot accidentally unblock it.
+					<-release
+					close(readFinished)
+					return supervisor.DAGStatus{}, context.Canceled
+				}, waitSupervisorStatus)
+			}()
+			select {
+			case <-started:
+			case <-time.After(time.Second):
+				close(release)
+				t.Fatal("CLI observation did not enter injected reader")
+			}
+			cancel()
+			select {
+			case code := <-finished:
+				if code != 130 {
+					t.Errorf("interrupt during blocked observation: exit=%d want=130", code)
+				}
+				if out.Len() != 0 || stderr.Len() != 0 {
+					t.Errorf("interrupted observation emitted output: stdout=%q stderr=%q", out.String(), stderr.String())
+				}
+			case <-time.After(500 * time.Millisecond):
+				t.Error("interrupt must return 130 within 500ms while reader remains blocked")
+				close(release)
+				select {
+				case <-finished:
+				case <-time.After(time.Second):
+					t.Error("CLI loop did not finish after reader cleanup")
+				}
+				return
+			}
+			close(release)
+			select {
+			case <-readFinished:
+			case <-time.After(time.Second):
+				t.Error("injected reader did not finish after cleanup")
+			}
+		})
+	}
+}
