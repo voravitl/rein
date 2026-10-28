@@ -116,6 +116,7 @@ func (l *dagLog) append(e dagEntry) error {
 	}
 	if err == nil {
 		l.seq++
+		appendDAGTime(l.path, l.seq)
 	}
 	return err
 }
