@@ -21,6 +21,14 @@ import (
 func localDAGWorkerFixture(t *testing.T) (*e2eEnv, string, supervisor.Plan, string) {
 	t.Helper()
 	e, path, p := localGraphFixture(t, "printf 'fixed\\n' > src/a.go", "test \"$(cat src/a.go)\" = fixed")
+	// TempDir may have a symlinked prefix on macOS; controller mounts require
+	// canonical paths even though the fixture's existing files resolve either way.
+	root, err := filepath.EvalSymlinks(e.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.root = root
+	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "contracts"))
 	t.Cleanup(func() {
 		_ = filepath.WalkDir(e.root, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {

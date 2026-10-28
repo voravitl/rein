@@ -15,6 +15,29 @@ import (
 	"github.com/voravitl/rein/internal/supervisor"
 )
 
+func TestActionCanonicalMountRoots(t *testing.T) {
+	p, task, a, _ := policyFixture(t)
+	name := "rein-action-" + a.Attempt
+	if _, err := actionContainerArgs(p, task, a, name, task.Action.Argv, false); err != nil {
+		t.Fatalf("canonical mount roots positive control: %v", err)
+	}
+	index := os.Getenv("PIPELINE_CONTRACTS")
+	alias := filepath.Join(filepath.Dir(index), "contracts-alias")
+	if err := os.Symlink(index, alias); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PIPELINE_CONTRACTS", alias)
+	_, err := actionContainerArgs(p, task, a, name, task.Action.Argv, false)
+	if err == nil || err.Error() != "Docker mount roots must be canonical controller directories" {
+		t.Fatalf("symlinked mount root must fail canonical guard: %v", err)
+	}
+	// The same existing mount directories are accepted again via their real path.
+	t.Setenv("PIPELINE_CONTRACTS", index)
+	if _, err := actionContainerArgs(p, task, a, name, task.Action.Argv, false); err != nil {
+		t.Fatalf("restored canonical mount roots: %v", err)
+	}
+}
+
 func TestActionAggregateOutputBounds(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{"first", "second"} {
