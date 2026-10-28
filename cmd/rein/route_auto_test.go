@@ -209,6 +209,7 @@ func newE2EAgent(t *testing.T, workerLaunch, workerAgent string) *e2eEnv {
 }
 
 func TestRouteAutoLaunchAndSettleEndToEnd(t *testing.T) {
+	fixtureOwnerTerminal(t, true)
 	e := newE2E(t, "shell")
 	root, wt, cfgPath, profile, hash, pj, c, w, r := e.root, e.wt, e.cfgPath, e.profile, e.hash, e.pj, e.c, e.w, e.r
 	_, _, _ = hash, c, r
@@ -578,6 +579,7 @@ func mustLoad(t *testing.T) []ledger.Row {
 // Reconcile releases reserved funds. The hold's owner is the already-exited `route auto`, so its exit proves nothing about the
 // worker: a task whose checkout still has a writer keeps its holds.
 func TestReconcileRefusesWhileTheTaskHasAWriter(t *testing.T) {
+	fixtureOwnerTerminal(t, true)
 	root := t.TempDir()
 	t.Setenv("PIPELINE_CONTRACTS", filepath.Join(root, "contracts"))
 	t.Setenv("PIPELINE_LEDGER", filepath.Join(root, "ledger.jsonl"))
@@ -634,6 +636,7 @@ func TestReconcileRefusesWhileTheTaskHasAWriter(t *testing.T) {
 // A successful launcher without a ready receipt cannot establish worker readiness
 // or termination: fail the launch, retain the fence, and claim no duration.
 func TestOrcaUnconfirmedDispatchHoldsTheTaskUntilSettle(t *testing.T) {
+	fixtureOwnerTerminal(t, true)
 	e := newE2EAgent(t, "orca", "claude")
 	root, wt := e.root, e.wt
 	out, code := capture(t, func() int {

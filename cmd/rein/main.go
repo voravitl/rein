@@ -113,10 +113,10 @@ func usage() {
   rein run start [repo] --run NAME [--profile P] [--session S --pid N]    (coordinator guard on; owner from CLAUDE_CODE_SESSION_ID / CLAUDE_PID)
   rein run end [repo] [--pinned sha,..] | rein run audit [repo] [--pinned sha,..] [--json]   (exit 1 = COORDINATOR_DRIFT)
   rein run resume [repo] [--session S --pid N]
-  rein run allow [repo] (--task T | --commit SHA) --reason R | rein run end [repo] --abandon --reason R    (user-only: refused inside Claude Code)
+  rein run allow [repo] (--task T | --commit SHA) --reason R | rein run end [repo] --abandon --reason R    (user-only: interactive stdin, no detected AI session)
   rein run tick [repo]    single-flight periodic health check (waiter-driven, flock)
   rein budget check [--task T] [--run R]    exits 0 (ok), 1 (soft limit), 2 (hard cap or round cap)
-  rein budget raise [--pool P] [--amount N] --reason R    user-only: refused inside Claude Code
+  rein budget raise [--pool P] [--amount N] --reason R    user-only: interactive stdin, no detected AI session
   rein task status <task>    reports HEALTHY / BUSY / SLOW / STUCK / THRASHING / DEAD / UNKNOWN
   rein ledger add --task T --type backend --worker codex:gpt-6.1-sol --rounds 3 [--approved] ...
   rein ledger call --role critic --provider codex --model gpt-6.1-sol [--tokens N] [--credits X] [--cost-usd X]
@@ -770,9 +770,7 @@ func cmdBudgetCheck(args []string) int {
 }
 
 func cmdBudgetRaise(args []string) int {
-	// User-only command: refuse inside Claude Code
-	if runpkg.UnderClaude() {
-		fmt.Fprintln(os.Stderr, "[budget raise] this command must be run by the user in their own terminal, not by Claude Code")
+	if !requireOwner("rein budget raise") {
 		return 2
 	}
 

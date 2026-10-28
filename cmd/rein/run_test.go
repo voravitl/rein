@@ -21,6 +21,7 @@ func gitIn(t *testing.T, dir string, args ...string) {
 }
 
 func TestRunUserOnlyCommandsRefuseUnderClaude(t *testing.T) {
+	fixtureOwnerTerminal(t, true)
 	root := contract.Real(t.TempDir())
 	gitIn(t, root, "init", "-q", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "a.md"), []byte("x"), 0o644); err != nil {
@@ -78,6 +79,7 @@ func TestRunUserOnlyCommandsRefuseUnderClaude(t *testing.T) {
 }
 
 func TestRunStartNeedsAnOwner(t *testing.T) {
+	clearAgentMarkers(t)
 	root := contract.Real(t.TempDir())
 	gitIn(t, root, "init", "-q", "-b", "main")
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")

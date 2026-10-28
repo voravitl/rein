@@ -16,6 +16,7 @@ import (
 
 func approveTestRepo(t *testing.T) (root, sha string) {
 	t.Helper()
+	clearAgentMarkers(t)
 	root = contract.Real(t.TempDir())
 	gitIn(t, root, "init", "-q", "-b", "main")
 	if err := os.WriteFile(filepath.Join(root, "a.md"), []byte("x"), 0o644); err != nil {

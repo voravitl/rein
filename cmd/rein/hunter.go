@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/voravitl/rein/internal/hunter"
+	"github.com/voravitl/rein/internal/run"
 )
 
 func cmdHunter(args []string) int {
@@ -189,6 +190,6 @@ func cmdHunter(args []string) int {
 // pipe; the production value never treats a pipe or an agent session as the
 // owner.
 var ownerTerminal = func() bool {
-	info, err := os.Stdin.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0 && !inAISession() && os.Getenv("CODEX_THREAD_ID") == ""
+	kind, _ := run.AgentSession()
+	return kind == "" && run.InteractiveStdin()
 }

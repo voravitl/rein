@@ -390,9 +390,9 @@ func OwnerFromEnv() (Owner, error) {
 	return Owner{SessionID: s, PID: pid}, nil
 }
 
-// UnderClaude reports whether this process runs inside a Claude Code tool call. User-only commands refuse then.
+// UnderClaude is the legacy Claude-only predicate. Owner-only CLI gates use AgentSession.
 func UnderClaude() bool {
-	return os.Getenv("CLAUDE_CODE_SESSION_ID") != "" || os.Getenv("CLAUDE_PID") != ""
+	return os.Getenv("CLAUDE_CODE_SESSION_ID") != "" || os.Getenv("CLAUDE_PID") != "" || os.Getenv("CLAUDECODE") != ""
 }
 
 var nameRx = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
