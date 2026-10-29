@@ -144,9 +144,28 @@ func lintSpec(s *Spec) (errs, warns []Finding) {
 			if n.Action != nil {
 				add(CodeInvalidKind, n.ID, "worker node must not carry an action")
 			}
+			if n.KindProfile != "" && !validWorkerKind(n.KindProfile) {
+				add(CodeInvalidKind, n.ID, "kind_profile %q must be one of backend, frontend, fullstack, docs, mechanical", n.KindProfile)
+			}
+			if n.ExpectedContextTokens < 0 {
+				add(CodeInvalidSpec, n.ID, "expected_context_tokens must be non-negative")
+			}
+			for _, cap := range n.RequiredCapabilities {
+				if strings.TrimSpace(cap) == "" {
+					add(CodeInvalidSpec, n.ID, "required_capabilities must not contain empty strings")
+				}
+			}
+			for _, r := range n.Rationale {
+				if strings.TrimSpace(r.Path) == "" || strings.TrimSpace(r.Reason) == "" {
+					add(CodeInvalidSpec, n.ID, "rationale entry must have non-empty path and reason")
+				}
+			}
 		case "action":
 			if n.Action == nil || !validImage(n.Action.Image) {
 				add(CodeActionMissingImage, n.ID, "action node requires action.image as sha256:<64 lowercase hex>")
+			}
+			if n.KindProfile != "" || len(n.RequiredCapabilities) > 0 || n.ExpectedContextTokens > 0 || len(n.Rationale) > 0 {
+				add(CodeInvalidKind, n.ID, "action node must not carry worker routing fields")
 			}
 		default:
 			add(CodeInvalidKind, n.ID, "kind %q must be worker or action", n.Kind)
@@ -367,4 +386,13 @@ func (g *graph) longestPath() int {
 		best = max(best, depth(a))
 	}
 	return best
+}
+
+func validWorkerKind(k string) bool {
+	switch k {
+	case "backend", "frontend", "fullstack", "docs", "mechanical":
+		return true
+	default:
+		return false
+	}
 }

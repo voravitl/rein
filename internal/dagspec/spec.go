@@ -44,6 +44,19 @@ type Node struct {
 	Inputs    []Input    `json:"inputs"`
 	Outputs   []Output   `json:"outputs"`
 	Action    *Action    `json:"action"`
+
+	// Optional routing fields for worker nodes (used by `rein dag compile`
+	// to build a valid routing.TaskProfile).
+	KindProfile           string           `json:"kind_profile,omitempty"`
+	RequiredCapabilities  []string         `json:"required_capabilities,omitempty"`
+	ExpectedContextTokens int              `json:"expected_context_tokens,omitempty"`
+	Rationale             []RationaleEntry `json:"rationale,omitempty"`
+}
+
+// RationaleEntry describes why a path is planned for modification.
+type RationaleEntry struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
 }
 
 // Prompt holds the five mandatory prompt sections.
@@ -97,9 +110,11 @@ var specShape = func() *shape {
 	action := obj(map[string]*shape{"argv": nil, "image": nil, "timeout_ms": nil})
 	input := obj(map[string]*shape{"producer": nil, "name": nil, "as": nil})
 	output := obj(map[string]*shape{"name": nil, "path": nil, "max_bytes": nil})
+	rationale := obj(map[string]*shape{"path": nil, "reason": nil})
 	node := obj(map[string]*shape{
 		"id": nil, "kind": nil, "title": nil, "write": nil, "depends_on": nil, "prompt": prompt,
 		"verify": nil, "providers": nil, "inputs": arr(input), "outputs": arr(output), "action": action,
+		"kind_profile": nil, "required_capabilities": nil, "expected_context_tokens": nil, "rationale": arr(rationale),
 	})
 	return obj(map[string]*shape{
 		"schema": nil, "run": nil, "repo": nil, "base": nil, "goal": nil, "max_parallel": nil, "nodes": arr(node),

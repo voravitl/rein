@@ -29,7 +29,7 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | `rein checkpoint` | Controller | Finalize, verify or restore a snapshot | Safe recovery boundary | `0` = success, `1` = refused/error, `2` = bad arguments |
 | `rein hunter` | Investigator / Reviewer / Owner | Report, reproduce, verify, review and approve findings | Evidence-based bug workflow | `0` = recorded, `1` = refused/error, `2` = bad arguments |
 | `rein supervisor` | Controller / read-only observer | Validate, execute, or observe bounded plans | Explicit supervised runs; schema-3 status | `0` = result/status, `1` = blocked/error, `2` = bad arguments, `130` = interrupted status |
-| `rein dag lint` | Coordinator / Crux | Validate a `rein_dag_spec/v1` graph | Before writing a supervisor plan | `0` = valid, `1` = refused, `2` = usage |
+| `rein dag` | Coordinator / Crux | Validate and compile a `rein_dag_spec/v1` graph into schema-3 plan | Pre-execution DAG compilation and validation | `0` = valid/compiled, `1` = refused, `2` = usage |
 | `rein version` | Anyone | Print binary version | Verification / diagnostics | `0` = ok |
 
 ---
@@ -741,8 +741,11 @@ Orca structured launch uses exact `worker-show --dispatch` identity (task/run/as
 
 ---
 
-## 17. `rein dag lint` — DAG Spec Linter
+## 17. `rein dag` — DAG Spec Lint and Compile
 
+Validates an agent-written `rein_dag_spec/v1` graph and compiles it into an executable schema-3 supervisor plan (`plan.json`) and human-readable plan summary (`plan.md`).
+
+### `rein dag lint`
 Checks an agent-written `rein_dag_spec/v1` graph before anyone turns it into a supervisor plan. It reads the file only; it creates no worktree, contract or plan.
 
 ```sh
@@ -754,7 +757,26 @@ rein dag lint --spec /path/to/spec.json --json   # {"valid":bool,"errors":[{code
 - Refusal codes (stable): `invalid_spec`, `unknown_field`, `duplicate_id`, `invalid_id`, `unknown_dependency`, `self_dependency`, `cycle`, `too_many_nodes`, `write_overlap`, `missing_verification`, `empty_verify`, `missing_prompt_section`, `invalid_base`, `invalid_max_parallel`, `invalid_kind`, `action_missing_image`. Warning: `serial_graph`.
 - Owner-only fields (`launches`, `profile`, `config_path`, `config_digest`, `process_policy`, `contract_hash`) are refused anywhere in the spec.
 - `max_parallel` must be 1..32 and no larger than the node count, matching schema-3 plan validation.
-- `rein dag compile` (spec → schema-3 plan) is not in this release.
+
+### `rein dag compile`
+Compiles a `rein_dag_spec/v1` graph using owner configuration (`providers.json`) and owner profile (`profile.json`) into an executable schema-3 supervisor plan.
+
+```sh
+# Dry run: generate plan.json and plan.md in --out directory without modifying repository
+rein dag compile --spec /path/to/spec.json --config /path/to/providers.json --profile /path/to/profile.json --out /abs/path/to/out
+
+# Materialize execution environment: create worktrees, save contracts, install hooks, re-hash, and validate plan in-process
+rein dag compile --spec /path/to/spec.json --config /path/to/providers.json --profile /path/to/profile.json --out /abs/path/to/out --apply
+```
+
+- Exit `0` compiled/applied, `1` validation or compilation refusal, `2` usage error.
+- `--out DIR` must be an absolute, clean path outside the contract index directory.
+- With `--apply`, the compiler:
+  1. Materializes dedicated git worktrees for each task at `spec.base`.
+  2. Saves task contracts (`~/.rein/contracts/<task>.json`) with exact task scope, allow/deny lists, and owner sensitive paths.
+  3. Installs vendor hooks (`rein hooks install`) for worker harnesses (`claude`, `codex`, `agy`, `opencode`, `hermes`).
+  4. Generates and binds `TaskProfile` with task routing fields and post-hook contract hash.
+  5. Validates the resulting plan with `validateLocalDAGPlan` in-process before exiting.
 
 ---
 
