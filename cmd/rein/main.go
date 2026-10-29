@@ -86,6 +86,8 @@ func main() {
 		os.Exit(cmdSupervisor(os.Args[2:]))
 	case "checkpoint":
 		os.Exit(cmdCheckpoint(os.Args[2:]))
+	case "dag":
+		os.Exit(cmdDag(os.Args[2:]))
 	case "hunter":
 		os.Exit(cmdHunter(os.Args[2:]))
 	case "version", "--version", "-v":
@@ -98,6 +100,7 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage: rein <config|hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|route|verdict|approve|advise|orca|checkpoint|hunter|supervisor|e2e|version> [args]
+  rein dag lint --spec FILE [--json]                    lint a rein_dag_spec/v1 graph (exit 0 valid, 1 refused, 2 usage)
   rein supervisor validate|run --plan FILE             bounded authorized monitor (no auto dispatch/settle)
   rein supervisor invocation <plan> ...                native Crux/Claude/Codex/Agy launch-argument validation
   rein checkpoint finalize|verify|restore              durable local snapshot and restore into a new directory

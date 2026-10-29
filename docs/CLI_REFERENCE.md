@@ -29,6 +29,8 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | `rein checkpoint` | Controller | Finalize, verify or restore a snapshot | Safe recovery boundary | `0` = success, `1` = refused/error, `2` = bad arguments |
 | `rein hunter` | Investigator / Reviewer / Owner | Report, reproduce, verify, review and approve findings | Evidence-based bug workflow | `0` = recorded, `1` = refused/error, `2` = bad arguments |
 | `rein supervisor` | Authorized controller | Validate and execute bounded plans | Explicit supervised runs | `0` = verified/waiting result, `1` = blocked/error, `2` = bad arguments |
+| `rein dag lint` | Coordinator / Crux | Validate `rein_dag_spec/v1` graph | Before compiling or scheduling | `0` = valid, `1` = refused, `2` = usage |
+| `rein dag compile` | Coordinator / Crux | Compile spec into schema-3 plan and contracts | Before supervised start | `0` = compiled, `1` = error/tampered, `2` = usage |
 | `rein version` | Anyone | Print binary version | Verification / diagnostics | `0` = ok |
 
 ---
@@ -513,6 +515,25 @@ The legacy waiter uses `rein run controller-exec REPO --run R -- <check-options>
 
 Orca structured launch uses exact `worker-show --dispatch` identity (task/run/assignee/worker), not terminal existence. `worker_handle` is emitted for supervised workers; `terminal_handle` is absent for structured workers without a PTY. Close accepts dispatch identity without a terminal; send/read still require a terminal. These launch/close compatibility checks do not enable Orca graph recovery. Installed Orca 1.4.224 lacks a retained process-tree termination proof after session eviction; unsupported recovery remains fenced.
 
+---
+
+## 17. `rein dag` — DAG Spec Lint and Compile
+
+Validates declarative multi-node agent DAG specifications (`rein_dag_spec/v1`) and compiles them into schema-3 supervisor plans with deterministic contracts and approval commands.
+
+```sh
+# Lint a graph spec (checks duplicates, cycles, globs, verifications)
+rein dag lint --spec /path/to/spec.json
+rein dag lint --spec /path/to/spec.json --json
+
+# Compile spec to schema-3 plan.json and plan.md
+rein dag compile --spec /path/to/spec.json --out /path/to/out --owner-config /path/to/owner.json
+
+# Compile and apply: create detached worktrees, save contracts, validate in-process
+rein dag compile --spec /path/to/spec.json --out /path/to/out --owner-config /path/to/owner.json --apply
+```
+
+---
 
 ## Crux provider configuration
 
