@@ -158,6 +158,22 @@ func TestDAGLintRefusals(t *testing.T) {
 		{CodeInvalidSpec,
 			func(s *Spec) { s.Schema = "rein_dag_spec/v2" },
 			func(s *Spec) { s.Schema = SchemaV1 }},
+		{CodeInvalidSpec, // run name above 64 characters would overflow the derived task name
+			func(s *Spec) { s.Run = strings.Repeat("r", 65) },
+			func(s *Spec) { s.Run = strings.Repeat("r", 64) }},
+		{CodeInvalidSpec, // the same dependency listed twice
+			func(s *Spec) { s.Nodes[2].DependsOn = []string{"api", "cli", "api"} },
+			func(s *Spec) { s.Nodes[2].DependsOn = []string{"api", "cli"} }},
+		{CodeInvalidKind, // a worker must not carry an action block
+			func(s *Spec) {
+				s.Nodes[0].Action = &Action{Argv: []string{"/bin/true"}, Image: testImage, TimeoutMS: 1000}
+			},
+			func(s *Spec) { s.Nodes[0].Action = nil }},
+		{CodeActionMissingImage, // image digests are canonical lowercase hex
+			func(s *Spec) {
+				s.Nodes[2].Action.Image = "sha256:" + strings.ToUpper(strings.TrimPrefix(testImage, "sha256:"))
+			},
+			func(s *Spec) { s.Nodes[2].Action.Image = testImage }},
 	}
 	for i, c := range cases {
 		t.Run(fmt.Sprintf("%02d-%s", i, c.code), func(t *testing.T) {
@@ -247,17 +263,22 @@ func TestDAGSpecUnknownAndForbiddenFields(t *testing.T) {
 
 func TestDAGSpecStructuralRefusals(t *testing.T) {
 	good := string(encode(t, validSpec()))
-	for name, raw := range map[string]string{
-		"not-json":      `{"schema":`,
-		"array":         `[]`,
-		"trailing":      good + `{}`,
-		"wrong-type":    strings.Replace(good, `"max_parallel":2`, `"max_parallel":"2"`, 1),
-		"duplicate-key": strings.Replace(good, `"run":"r1"`, `"run":"r1","run":"r2"`, 1),
-		"nested-object": strings.Replace(good, `"verify":[["go","test","./..."]]`, `"verify":[[{"launches":1}]]`, 1),
+	for name, c := range map[string]struct{ raw, reason string }{
+		"not-json":      {`{"schema":`, "decode"},
+		"array":         {`[]`, "must be a JSON object"},
+		"trailing":      {good + `{}`, "trailing data after spec object"},
+		"wrong-type":    {strings.Replace(good, `"max_parallel":2`, `"max_parallel":"2"`, 1), "decode"},
+		"duplicate-key": {strings.Replace(good, `"run":"r1"`, `"run":"r1","run":"r2"`, 1), `duplicate key "run" at $`},
+		"nested-object": {strings.Replace(good, `"verify":[["go","test","./..."]]`, `"verify":[[{"launches":1}]]`, 1), "decode"},
 	} {
-		s, res := Lint([]byte(raw))
+		s, res := Lint([]byte(c.raw))
 		if s != nil || res.Valid || !reflect.DeepEqual(codes(res.Errors), []string{CodeInvalidSpec}) {
 			t.Fatalf("%s: want one invalid_spec, got %+v", name, res)
+		}
+		// The reason pins which check refused it, so a weaker check that still
+		// fails for another reason does not pass this test.
+		if !strings.Contains(res.Errors[0].Message, c.reason) {
+			t.Fatalf("%s: reason %q does not contain %q", name, res.Errors[0].Message, c.reason)
 		}
 	}
 }
