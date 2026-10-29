@@ -12,6 +12,7 @@ import (
 )
 
 func TestRunSupervisedOptInAndLegacyCheck(t *testing.T) {
+	fixtureOwnerTerminal(t, true)
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
 	t.Setenv("CLAUDE_PID", "")
 	root := t.TempDir()

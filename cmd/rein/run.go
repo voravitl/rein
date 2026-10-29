@@ -14,8 +14,6 @@ import (
 	"github.com/voravitl/rein/internal/supervisor"
 )
 
-const userOnlyMsg = "[run] %s is for the user: run it in your own terminal, not from a Claude Code session (the coordinator never authorizes itself)\n"
-
 // splitRepo takes the optional leading <repo> argument (default "."), so both `run start <repo> --run x` and
 // `run start --run x <repo>` work.
 func splitRepo(args []string) (string, []string) {
@@ -36,7 +34,7 @@ func csv(s string) []string {
 }
 
 // cmdRun is `rein run start|end|resume|allow|audit` (ADR 0002 B0). allow and end --abandon are user-only: they
-// refuse when this process runs inside a Claude Code tool call.
+// require an interactive owner terminal outside any detected AI session.
 func cmdRun(args []string) int {
 	if len(args) == 0 {
 		usage()
@@ -81,6 +79,9 @@ func cmdRun(args []string) int {
 			fmt.Fprintln(os.Stderr, "[run] --run is required")
 			return 2
 		}
+		if *supervisorPlan != "" && !requireOwner("rein run start --supervisor-plan") {
+			return 2
+		}
 		prof, err := contract.LoadProfile(*profile)
 		if err != nil {
 			return fail(fmt.Errorf("profile: %w", err))
@@ -100,10 +101,6 @@ func cmdRun(args []string) int {
 		}
 		var m *run.Marker
 		if *supervisorPlan != "" {
-			if run.UnderClaude() {
-				fmt.Fprintf(os.Stderr, userOnlyMsg, "rein run start --supervisor-plan")
-				return 2
-			}
 			plan, hash, planErr := supervisor.Load(*supervisorPlan)
 			if planErr != nil {
 				return fail(planErr)
@@ -154,8 +151,7 @@ func cmdRun(args []string) int {
 		}
 		fmt.Printf("[run] %s now follows session %s\n", m.Run, m.SessionID)
 	case "allow":
-		if run.UnderClaude() {
-			fmt.Fprintf(os.Stderr, userOnlyMsg, "rein run allow")
+		if !requireOwner("rein run allow") {
 			return 2
 		}
 		var m *run.Marker
@@ -173,8 +169,7 @@ func cmdRun(args []string) int {
 		}
 		fmt.Printf("[run] %s: %d allowance(s) recorded\n", m.Run, len(m.Allowed))
 	case "audit", "end":
-		if sub == "end" && *abandon && run.UnderClaude() {
-			fmt.Fprintf(os.Stderr, userOnlyMsg, "rein run end --abandon")
+		if sub == "end" && *abandon && !requireOwner("rein run end --abandon") {
 			return 2
 		}
 		o := run.AuditOptions{Pinned: csv(*pinned)}

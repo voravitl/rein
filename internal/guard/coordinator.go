@@ -29,10 +29,27 @@ import (
 const coordHow = "the coordinator does not edit code or implement through subagents: write the task spec, then " +
 	"`rein contract new` -> `orca worktree create` -> `rein hooks install` -> `orca orchestration worker-start --worktree path:<worktree>`"
 
-// coordinate judges one Claude Code event from a directory that is not a worker. It stays silent (0, no output)
-// unless the directory is in a repo with a run marker AND the event comes from that run's live owner session.
+// coordinate applies only the owner-command shell policy to other vendors in a
+// run repo. Claude's full coordinator protocol also requires the live owner session.
 func coordinate(vendor string, a Action, cwd string, w, stderr io.Writer) int {
 	if vendor != "claude" {
+		if a.Event != "pretool" || a.Kind != "bash" {
+			return 0
+		}
+		loc, found := findRun(a, cwd)
+		if !found && a.Anchor != "" {
+			loc, found = run.Find(a.Anchor)
+		}
+		if !found {
+			return 0
+		}
+		m, err := run.Load(loc.Marker)
+		if errors.Is(err, run.ErrNoRun) || (err == nil && !loc.Belongs(m)) {
+			return 0
+		}
+		if reason := userOnlyShell(a.Command, cwd); reason != "" {
+			return emit(vendor, w, stderr, a.Event, "run", reason)
+		}
 		return 0
 	}
 	switch a.Hook {

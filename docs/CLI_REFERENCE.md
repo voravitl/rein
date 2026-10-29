@@ -136,7 +136,7 @@ rein run end [repo] [--pinned sha,..]
 # Resume after disconnect only while the original owner process is still alive
 rein run resume [repo] [--session <ID> --pid <PID>]
 
-# Allow exception for a task or commit (User-only; refused inside Claude Code)
+# Allow exception for a task or commit (User-only; interactive stdin and no detected AI session)
 rein run allow [repo] (--task <ID> | --commit <SHA>) --reason "<REASON>"
 
 # Single-flight periodic tick (flock protected)
@@ -144,6 +144,33 @@ rein run tick [repo]
 ```
 
 `rein run resume` rebinds the session only for the same live owner process (same PID and process-start identity). A new process cannot take over by supplying the old PID. If the coordinator dies, the supervisor must verify the repository and recorded run identity, execute `rein run end <repo>`, then `rein run start <repo> --run <new-run> --session <new-session> --pid <new-owner-pid>`. Preserve the previous run's evidence and reconcile outstanding workers before redispatching; resume is not crash failover.
+
+`rein run start --supervisor-plan`, `rein run allow`, `rein run end --abandon`,
+`rein budget raise` and `rein route reconcile` require interactive terminal stdin
+and no detected AI agent session. They refuse with exit 2 before changing state
+when either condition fails. Pipes, files, `/dev/null` and closed stdin are refused;
+the terminal check uses the OS terminal API. Unknown platforms fail closed.
+Plain `run start`, clean `run end`, `run audit` and `run resume` remain available to agents.
+
+Detection matches any non-empty value, in this order:
+
+| Agent | Markers |
+|---|---|
+| Claude Code | `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDECODE` |
+| ZCode | `ZCODE_APP_VERSION`, `ZCODE_PROCESS_LABEL` |
+| Codex | `CODEX_THREAD_ID` |
+| Hermes | `HERMES_SESSION_ID` |
+| Antigravity / AGY | `ANTIGRAVITY_AGENT`, `ANTIGRAVITY_CONVERSATION_ID`, `GEMINI_CLI` |
+| OpenCode | `OPENCODE`, `OPENCODE_PID` |
+
+Refusals name the command and detected agent kind, never marker values. A user
+terminal inheriting a marker must use a clean interactive terminal. These refusal
+checks do not prove that a human is present. The parsed shell guard remains a
+seatbelt, not a security boundary: it also refuses owner-only commands in worker
+hooks and in non-Claude shell events in repositories with run markers, without
+enabling Claude's coordinator lifecycle protocol for other vendors.
+`rein approve` retains its existing `--as-directed` human-direction provenance
+path with the expanded detector and has no new terminal requirement.
 
 - **Rule:** `COORDINATOR_DRIFT` is raised if coordinator writes code outside `coordinator_writable` allowlist.
 
@@ -319,7 +346,7 @@ rein route launch --task <T> --run <R> -- <argv>        # unchanged command; for
 rein route check --task <T> --run <R> --agent A --model M --effort E --phase review --worktree P   # a review launch (advise.sh does this): binds the effort, spends the receipt
 rein route settle --attempt <A>           # after the outcome and the charges are recorded: close the reservations and end the attempt
 rein route holds                          # reservations still held (JSON)
-rein route reconcile --hold <H> --reason <evidence> [--used pool=amount ...]   # USER ONLY (refused inside Claude Code and by the coordinator guard)
+rein route reconcile --hold <H> --reason <evidence> [--used pool=amount ...]   # USER ONLY (interactive stdin and no detected AI session; also refused by the shell guard)
 rein route calibrate --task <T> --run <R> --provider <P> --amount <N> [--calls 1] [--config F]
 rein route calibrate --task <T> --run <R> --provider <P> --amount <N> --prepare --profile-file <task-profile.json> [--config F]
 rein route discover [--config F] [--timeout 60s] [--dir D] [--json]            # refresh and print every harness inventory; exits 1 if any would be excluded

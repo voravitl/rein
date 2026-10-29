@@ -48,6 +48,7 @@ type ctx struct {
 	pipeRHS     map[*syntax.Stmt]bool // statements that read a pipe
 	specChecked bool                  // current direct call has an adjacent successful source preflight
 	coord       *coordPolicy          // set when the coordinator's Bash is judged (coordinator.go): other rules apply
+	userOnly    bool                  // inspect only owner-only commands for non-Claude run sessions
 	ipc         bool                  // the line contains an allowlisted `orca orchestration` IPC call
 	other       bool                  // the line also runs something else, so it is not IPC-only
 }
@@ -195,6 +196,9 @@ func (x *ctx) script(src string) string {
 			x.specChecked = preflight[n]
 			reason = x.call(args)
 		}
+		if x.userOnly && !strings.Contains(reason, "is for the user") {
+			reason = "" // the narrow policy does not activate worker or Claude coordinator rules
+		}
 		return reason == ""
 	})
 	return reason
@@ -295,12 +299,18 @@ func (x *ctx) call(args []string) string {
 	prof := &x.c.Profile
 	name := base(args[0])
 	rest := args[1:]
+	if reason := userOnlyCall(args[0], name, rest); reason != "" {
+		return reason
+	}
+	if x.userOnly && !wrappers[name] && name != "xargs" && name != "bash" && name != "sh" && name != "zsh" && name != "dash" && name != "ksh" && name != "eval" && name != "find" && name != "npx" && name != "bunx" && name != "pnpx" {
+		return ""
+	}
 	x.classify(name, args)
 	if x.coord != nil { // the coordinator pushes, merges and drives gh/glab: only its own rules apply
 		if r := x.coordCall(args[0], name, rest); r != "" {
 			return r
 		}
-	} else {
+	} else if !x.userOnly {
 		if (isOrca(name) && strings.Contains(strings.Join(rest, " "), "worker-start")) || harnessLaunch(name, rest) || (name == "rein" && len(rest) >= 2 && rest[0] == "route" && rest[1] == "launch") {
 			if r := x.contractedRouteCall(args[0], name, rest); r != "" {
 				return r
@@ -815,6 +825,9 @@ func tempDirs() []string {
 
 // write judges every shell write target, including new paths and deletions.
 func (x *ctx) write(target string) string {
+	if x.userOnly {
+		return ""
+	}
 	if target == "" || target == "/dev/null" || strings.HasPrefix(target, "/dev/fd/") ||
 		target == "/dev/stdout" || target == "/dev/stderr" {
 		return ""

@@ -100,10 +100,26 @@ Each item records what the first draft assumed and what was found:
      - its prompt names `rein-task: <t>` and the user recorded `rein run allow --task <t>`.
    - Orca `worker-start` or `terminal send` aimed at an uncontracted worktree.
    - Bash in the owner session that runs a user-only command (rule 6).
-6. **User-only commands.** These must be run by the user in their own terminal: `rein run allow`,
-   `rein run end --abandon`, `rein budget raise`, `rein approve`. The hook matches the command text (including
-   `env -u …` and variable indirection the parser resolves), and the CLI refuses when it detects it runs under
-   Claude Code. `rein run start`, `rein run end` (clean) and `rein contract new` stay coordinator commands.
+6. **User-only commands.** `rein run start --supervisor-plan`, `rein run allow`,
+   `rein run end --abandon`, `rein budget raise` and `rein route reconcile` refuse
+   with exit 2 before state changes inside any detected AI agent session or without
+   interactive terminal stdin. Detection uses non-empty markers for Claude Code
+   (`CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDECODE`), ZCode (`ZCODE_APP_VERSION`,
+   `ZCODE_PROCESS_LABEL`), Codex (`CODEX_THREAD_ID`), Hermes (`HERMES_SESSION_ID`),
+   Antigravity / AGY (`ANTIGRAVITY_AGENT`, `ANTIGRAVITY_CONVERSATION_ID`, `GEMINI_CLI`)
+   and OpenCode (`OPENCODE`, `OPENCODE_PID`), in that precedence order. Refusals name
+   the command and agent kind, never marker values. The OS terminal API rejects
+   pipes, files, `/dev/null` and closed stdin; unknown platforms fail closed.
+   These checks are a refusal gate, not proof that a human is present.
+   The hook remains a seatbelt, not a security boundary: its shell parser refuses
+   these commands (including wrappers, `env -u` and resolved variable indirection)
+   for workers of every supported vendor and for non-Claude coordinating shell
+   events in a repo with a run marker. Other vendors do not inherit the rest of
+   Claude's coordinator lifecycle protocol. Plain `rein run start`, clean `rein run end`,
+   `rein run audit`, `rein run resume` and `rein contract new` stay coordinator commands.
+   `rein approve` keeps its existing `--as-directed` provenance path using the shared
+   detector; this change adds no terminal requirement to it. The shell guard still
+   treats `rein approve` as user-only.
 7. **Subagent binding.** Tool calls from a subagent carry `agent_id`/`agent_type` (Claude Code hook docs).
    - `PreToolUse(Agent)` records a pending (session, task).
    - `SubagentStart` binds the `agent_id` to it. It carries only `agent_id`/`agent_type` (no `tool_use_id`, no
