@@ -12,6 +12,7 @@ import (
 )
 
 func TestApprovePromptTerminalContext(t *testing.T) {
+	clearAgentMarkers(t)
 	for _, mode := range []string{"absolute run", "relative run", "repo storage"} {
 		t.Run(mode, func(t *testing.T) {
 			base := t.TempDir()

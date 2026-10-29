@@ -28,7 +28,7 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | `rein spec check` | Coordinator | Lint task spec & tier | Before spawning worker | `0` = pass, `1` = lint fail, `2` = error |
 | `rein checkpoint` | Controller | Finalize, verify or restore a snapshot | Safe recovery boundary | `0` = success, `1` = refused/error, `2` = bad arguments |
 | `rein hunter` | Investigator / Reviewer / Owner | Report, reproduce, verify, review and approve findings | Evidence-based bug workflow | `0` = recorded, `1` = refused/error, `2` = bad arguments |
-| `rein supervisor` | Authorized controller | Validate and execute bounded plans | Explicit supervised runs | `0` = verified/waiting result, `1` = blocked/error, `2` = bad arguments |
+| `rein supervisor` | Controller / read-only observer | Validate, execute, or observe bounded plans | Explicit supervised runs; schema-3 status | `0` = result/status, `1` = blocked/error, `2` = bad arguments, `130` = interrupted status |
 | `rein dag lint` | Coordinator / Crux | Validate a `rein_dag_spec/v1` graph | Before writing a supervisor plan | `0` = valid, `1` = refused, `2` = usage |
 | `rein version` | Anyone | Print binary version | Verification / diagnostics | `0` = ok |
 
@@ -137,7 +137,7 @@ rein run end [repo] [--pinned sha,..]
 # Resume after disconnect only while the original owner process is still alive
 rein run resume [repo] [--session <ID> --pid <PID>]
 
-# Allow exception for a task or commit (User-only; refused inside Claude Code)
+# Allow exception for a task or commit (User-only; interactive stdin and no detected AI session)
 rein run allow [repo] (--task <ID> | --commit <SHA>) --reason "<REASON>"
 
 # Single-flight periodic tick (flock protected)
@@ -145,6 +145,33 @@ rein run tick [repo]
 ```
 
 `rein run resume` rebinds the session only for the same live owner process (same PID and process-start identity). A new process cannot take over by supplying the old PID. If the coordinator dies, the supervisor must verify the repository and recorded run identity, execute `rein run end <repo>`, then `rein run start <repo> --run <new-run> --session <new-session> --pid <new-owner-pid>`. Preserve the previous run's evidence and reconcile outstanding workers before redispatching; resume is not crash failover.
+
+`rein run start --supervisor-plan`, `rein run allow`, `rein run end --abandon`,
+`rein budget raise` and `rein route reconcile` require interactive terminal stdin
+and no detected AI agent session. They refuse with exit 2 before changing state
+when either condition fails. Pipes, files, `/dev/null` and closed stdin are refused;
+the terminal check uses the OS terminal API. Unknown platforms fail closed.
+Plain `run start`, clean `run end`, `run audit` and `run resume` remain available to agents.
+
+Detection matches any non-empty value, in this order:
+
+| Agent | Markers |
+|---|---|
+| Claude Code | `CLAUDE_CODE_SESSION_ID`, `CLAUDE_PID`, `CLAUDECODE` |
+| ZCode | `ZCODE_APP_VERSION`, `ZCODE_PROCESS_LABEL` |
+| Codex | `CODEX_THREAD_ID` |
+| Hermes | `HERMES_SESSION_ID` |
+| Antigravity / AGY | `ANTIGRAVITY_AGENT`, `ANTIGRAVITY_CONVERSATION_ID`, `GEMINI_CLI` |
+| OpenCode | `OPENCODE`, `OPENCODE_PID` |
+
+Refusals name the command and detected agent kind, never marker values. A user
+terminal inheriting a marker must use a clean interactive terminal. These refusal
+checks do not prove that a human is present. The parsed shell guard remains a
+seatbelt, not a security boundary: it also refuses owner-only commands in worker
+hooks and in non-Claude shell events in repositories with run markers, without
+enabling Claude's coordinator lifecycle protocol for other vendors.
+`rein approve` retains its existing `--as-directed` human-direction provenance
+path with the expanded detector and has no new terminal requirement.
 
 - **Rule:** `COORDINATOR_DRIFT` is raised if coordinator writes code outside `coordinator_writable` allowlist.
 
@@ -320,7 +347,7 @@ rein route launch --task <T> --run <R> -- <argv>        # unchanged command; for
 rein route check --task <T> --run <R> --agent A --model M --effort E --phase review --worktree P   # a review launch (advise.sh does this): binds the effort, spends the receipt
 rein route settle --attempt <A>           # after the outcome and the charges are recorded: close the reservations and end the attempt
 rein route holds                          # reservations still held (JSON)
-rein route reconcile --hold <H> --reason <evidence> [--used pool=amount ...]   # USER ONLY (refused inside Claude Code and by the coordinator guard)
+rein route reconcile --hold <H> --reason <evidence> [--used pool=amount ...]   # USER ONLY (interactive stdin and no detected AI session; also refused by the shell guard)
 rein route calibrate --task <T> --run <R> --provider <P> --amount <N> [--calls 1] [--config F]
 rein route calibrate --task <T> --run <R> --provider <P> --amount <N> --prepare --profile-file <task-profile.json> [--config F]
 rein route discover [--config F] [--timeout 60s] [--dir D] [--json]            # refresh and print every harness inventory; exits 1 if any would be excluded
@@ -462,6 +489,11 @@ rein supervisor validate --plan approved-plan.json
 rein run start /absolute/repo --run R --session S --pid PID --supervisor-plan approved-plan.json
 rein supervisor run --plan approved-plan.json
 rein supervisor invocation --plan approved-plan.json --invocation INVOCATION_ID
+rein supervisor status --plan approved-plan.json [--json] [--watch[=2s]]
+rein supervisor status --plan approved-plan.json --view graph [--watch[=2s]]
+rein supervisor status --plan approved-plan.json --view graph --seq N
+rein supervisor status [--plan approved-plan.json] --view statusline [--lines N]
+rein supervisor status --plan approved-plan.json --view tui [--watch[=2s]]
 ```
 
 Schema 3 opts into bounded parallel DAG execution with
@@ -481,6 +513,199 @@ the existing `run start --supervisor-plan` and `run allow` commands.
 Schema-3 results add `status`, `failed`, `blocked` and `cancelled`; a waiting result
 does not imply success of every branch. Schema-1/2 encoding and execution defaults
 remain unchanged.
+
+`rein supervisor status --plan FILE` validates the exact plan like `validate` and
+supports schema 3 only. The default table shows task, state, kind, zero-based
+topological layer, completed prepare count / maximum attempts, agent/model:effort,
+elapsed time, tokens, and guard activity. `--json` returns `run`, `plan_hash`,
+`status`, and `nodes`, plus `invocation_active: true` while the latest recorded
+invocation has no return; each node has `task`, `kind`, `layer`, `state`, `attempt`,
+`max_attempts`, nullable `agent`, `model`, `effort`, `guard_line`, `elapsed_ms`, and
+`tokens`. Tokens are always unknown (JSON null, table em dash). Worker identity
+comes from the prepared launch/decision, never a predicted routing choice. Retry
+and pending next-prepare states hide the previous attempt's agent/model/effort
+until the new prepare result binds them. Current
+seen logs lack attempt attribution, so guard activity remains unknown rather than
+showing a previous attempt's line. Before a prepare result, attempt count is zero.
+
+States are `pending`, `ready`, `preparing`, `running`, `finalizing`, `done`, `wait`,
+`failed`, `blocked`, `cancelled`, and `retry`. The top-level status is `ok` while
+active, `done` or `partial` when all nodes are terminal and no recorded invocation
+is outstanding, or `reconciliation` after a journal error, cancellation fence,
+or current recorded reconciliation return. Later authoritative task activity can
+supersede a returned invocation summary; durable error/cancellation fences remain
+enforced. Global stops label untouched tasks `blocked`, without inventing failed
+attempts. Exhausted global check budgets block unadmitted ready/retry tasks and
+their dependents; active attempts retain their observed state. An
+unfinished intent remains observable as active work. A missing journal shows
+pending/ready nodes without creating a file. An incomplete final line is retried
+twice at 100ms intervals; a valid complete prefix then returns `changing` with exit
+0, even if that prefix contains terminal results. Malformed completed content,
+including corruption before an incomplete tail, is an error with exit 1.
+
+Status does not acquire controller authority, execute work, approve tasks, reserve
+quota, sync or modify the journal, or write marker/source state. It can run while
+the execution controller holds its lock. Observation is a snapshot, not a grant
+of execution authority or proof that external side effects have finished.
+
+### DAG status inside agent CLIs: `--view statusline` and `--view tui`
+
+`--view statusline` prints a compact colored DAG for status-line hosts such
+as Claude Code and AGY. Line 1 is the header: run, status, a progress bar sized
+to the width, and done/total. Each following line is one DAG layer of
+`<glyph> <task>` items: `✓` done, `✗` failed, `⊘` blocked, `◌` pending,
+`○` ready, and a Braille spinner (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) for
+preparing/running/finalizing. The spinner frame is `(unix_ms / 100) % 10`.
+`REIN_NOW_UNIX_MS` overrides the clock for reproducible output.
+
+- Plan: `--plan PATH`, else the `REIN_PLAN` environment variable. There is no
+  auto-discovery. Only the statusline may omit `--plan`.
+- Height: at most `--lines N` lines (default 4, positive integer). On
+  overflow the window starts at the first layer that is not fully done, and
+  the last line reads `+k more`.
+- Width: a positive `COLUMNS`, then a positive `terminal_width` from the
+  host's JSON on stdin, then 80. No line is wider.
+- stdin: optional host JSON. It is read only when stdin is not a terminal,
+  capped at 64 KiB and 500 ms. Any other content (unknown fields, wrong types,
+  invalid JSON, oversized payloads, or no input) is ignored.
+- Color: 256-color SGR is forced on because hosts capture the output. Set
+  `NO_COLOR` to disable it. The output never moves the cursor or clears the
+  screen, and labels are sanitized.
+- Failure safety: a non-zero exit blanks a host's status line. Plan or
+  journal errors therefore exit 0 with a single `rein: <reason>` line (at most
+  80 characters). A missing journal renders the normal ready/pending view.
+  Invalid options still exit 2 before reading anything: `--lines` that is not
+  a positive integer, `--json`, `--watch`, or `--seq`.
+
+`--view tui` is the full-screen card view for a split pane or a separate
+terminal. On a real TTY it switches to the alternate screen and hides the
+cursor. It redraws every 100 ms to animate the spinner and re-reads the
+journal at the `--watch` interval (default 2s). When the run reaches a
+terminal state it restores the screen, prints a final frame on the normal
+screen and exits 0. Ctrl-C or SIGTERM restores the screen and exits 130.
+`NO_COLOR` disables color. When stdout is not a TTY, `--view tui` prints
+exactly the `--view graph` output. `--json` and `--seq` are rejected.
+
+Both views are read-only, like every status view. They take no controller
+lock and can run while `rein supervisor run` holds it.
+
+Rein does not install host settings. Copy the snippets below yourself.
+
+Claude Code: project `.claude/settings.local.json`. The command runs in the
+project directory, and `REIN_PLAN` must be an absolute path to the approved
+plan.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "REIN_PLAN=/absolute/approved-plan.json rein supervisor status --view statusline",
+    "refreshInterval": 1
+  }
+}
+```
+
+AGY: user-level `~/.gemini/antigravity-cli/settings.json`. With
+`stack_with_default: true`, AGY keeps its built-in status line and shows
+Rein's line below it; without it, Rein's line replaces the built-in one. The
+key placement follows the AGY statusline docs; Rein has not been run against
+a live AGY.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "REIN_PLAN=/absolute/approved-plan.json rein supervisor status --view statusline",
+    "stack_with_default": true
+  }
+}
+```
+
+Codex CLI has no custom status line. Run the TUI in a tmux or terminal split
+pane instead:
+
+```sh
+tmux split-window -h 'rein supervisor status --plan /absolute/approved-plan.json --view tui'
+```
+
+Limits:
+- Claude Code refreshes at most once per second (`refreshInterval` ≥ 1). It
+  hides the status line during permission prompts and requires workspace
+  trust.
+- AGY redraws only on agent events, so the spinner and states advance only
+  when the agent does something.
+- Only `--view tui` animates at 100 ms.
+
+Timing is display-only telemetry in
+`<marker>.graph3-<plan_hash>.times.jsonl`: `{ "seq": N, "at": "RFC3339Nano UTC" }`.
+The controller attempts a sidecar append only after a successful durable journal
+append. Sidecar failures do not change the run result; replay never reads it.
+Unix timing writes use nonblocking/no-follow opens, then verify regular-file
+identity and a single hard link before appending. Existing journal/marker alias
+checks also remain enforced. Windows opens the reparse point itself and rejects
+reparse points; its descriptor link count must also be one.
+Status requires a complete, matching sequence of timestamps for its snapshot;
+missing, corrupt, incomplete, or unmatched telemetry yields unknown elapsed time.
+Timing reads accept only regular files, verify the opened file's identity, and
+allow 128 bytes per journal entry, capped at 4 MiB (at most one extra byte is read
+to detect growth); oversized or nonregular sidecars yield unknown elapsed time.
+Unix opens use nonblocking/no-follow flags
+so replacing a sidecar with a FIFO cannot hang status. Status also rejects a
+nonregular journal promptly with an error. Journal snapshots stop at the regular
+file's observed size; replay and existing marker reads are unchanged.
+Elapsed time spans the first prepare intent through the node's terminal result
+(including retries), or the current time while active. Backwards clocks clamp to
+zero. Old journals with no telemetry remain replayable and show unknown elapsed.
+
+`--watch` refreshes every 2s; `--watch=500ms` chooses another duration (minimum
+100ms). Terminal output is cleared before redraw on recognized Unix terminal
+devices; redirected output and unrecognized terminals use frames separated by a
+blank line. JSON watch prints one JSON document per frame. Watch exits 0 when all
+nodes are done/wait/failed/blocked/cancelled or the run requires reconciliation,
+provided no recorded invocation is outstanding. `changing` never counts as
+terminal. SIGINT or SIGTERM exits 130, including during a blocked observation.
+At most one observation reader is in flight. Cancellation lets the CLI return;
+it cannot cancel a blocked kernel filesystem call. Such a reader may remain until
+the call returns or the process exits, and cannot emit a late frame or start
+another poll. Agents that need a bounded observation should use a single `--json`
+call.
+
+`--view table` is the default and prints the table above byte-for-byte.
+`--view graph` prints the same snapshot as a plain-text terminal graph, meant for
+the terminal or transcript of the CLI session that runs it (Claude Code, AGY,
+Codex or a plain shell). It is ordinary command output; Rein does not embed
+widgets or live panels inside those vendor UIs. The graph shows a header line
+(run, status, node and edge counts, `invocation active` when applicable), then
+one block per topological layer from top to bottom, joined by `|`/`v` arrows.
+Each node card shows the task, state, kind, `attempt N/M` (same counter as the
+table), agent/model:effort when bound, `<-` the tasks it depends on and `->` its
+direct dependents (`none` for roots and leaves). Every plan dependency appears on
+both of its cards. Layers are sorted by number and cards by task name, so an
+unchanged snapshot renders identical bytes. Output is ASCII without color or
+cursor escapes; labels show control bytes, DEL, invalid UTF-8 and non-ASCII as
+visible `\xNN`/`\uNNNN` escapes, with `\` doubled. Width comes from the
+kernel terminal size when stdout is a Linux/macOS terminal, else a positive
+`COLUMNS`, else 80 (minimum 16). Cards are 30 columns wide (narrower when the
+width is smaller), wrap side by side within a layer, and long labels wrap onto
+more lines, so no line exceeds the width and no node or edge is dropped.
+`--view graph --json` is refused.
+
+`--view graph --watch` reuses the same polling, terminal-exit and SIGINT/SIGTERM
+130 behaviour. Live redraw (clear and repaint) happens only when stdout is a
+recognized terminal device. Agent tool calls usually capture stdout through a
+pipe, so they see plain frames separated by a blank line without escape
+sequences, and the frame updates only appear when the call returns; use a single
+non-watch call when a bounded observation is needed.
+
+`--seq N` replays the graph from the strict journal prefix of complete entries
+`1..N`, counting the header and lifecycle rows. It reads the journal once, never
+retries, and never reports `changing`; it equals live status for that exact
+prefix except that elapsed time is unknown. N must be a positive integer within
+the complete entries; an unterminated final row does not count. A missing
+journal, N beyond the complete entries, invalid N, `--seq` without
+`--view graph`, and `--seq` with `--json` or `--watch` are refused before any
+output, with exit 2 for flag errors and 1 for journal errors. Replay is
+read-only, acquires no controller and writes no frames or files.
 
 Checkpoint restore uses embedded Git objects and captured bytes; the source can be absent. Restore requires an existing destination parent. Existing destinations, mixed staged/unstaged edits to the same path, tracked deletions/renames/conflicts/submodules, hidden-index flags and unrepresentable checkout conversions are refused. It restores only the supported state into a fresh directory; it does not rewrite contracts, run markers, receipts or source evidence. Each checkpoint stores reachable Git history, so large repositories can produce large snapshots.
 

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/voravitl/rein/internal/contract"
+	"github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/tier"
 	"github.com/voravitl/rein/internal/verdict"
 )
@@ -449,20 +450,9 @@ func getChangedFiles(repoPath, base, head string) ([]string, error) {
 	return files, nil
 }
 
-// aiSession reports whether rein is running inside an AI coding session, and
-// which one: "claude-code" (CLAUDE_CODE_SESSION_ID / CLAUDE_PID) or "zcode"
-// (ZCODE_APP_VERSION / ZCODE_PROCESS_LABEL). kind is empty in a user terminal.
+// aiSession shares detection with owner-only commands while retaining approval provenance.
 func aiSession() (kind, sessionID string) {
-	if v := os.Getenv("CLAUDE_CODE_SESSION_ID"); v != "" {
-		return "claude-code", v
-	}
-	if v := os.Getenv("CLAUDE_PID"); v != "" {
-		return "claude-code", v
-	}
-	if os.Getenv("ZCODE_APP_VERSION") != "" || os.Getenv("ZCODE_PROCESS_LABEL") != "" {
-		return "zcode", os.Getenv("ZCODE_PROCESS_LABEL")
-	}
-	return "", ""
+	return run.AgentSession()
 }
 
 func inAISession() bool {

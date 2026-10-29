@@ -228,6 +228,7 @@ func TestGetVerdictSummary_MatchesCheckAfterUnchangedRebase(t *testing.T) {
 }
 
 func TestMutableRefsAreFrozenAndCannotApproveNextCommit(t *testing.T) {
+	clearAgentMarkers(t)
 	root := contract.Real(t.TempDir())
 	gitIn(t, root, "init", "-q", "-b", "main")
 	path := filepath.Join(root, "a.txt")

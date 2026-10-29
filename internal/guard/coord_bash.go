@@ -199,6 +199,8 @@ func userOnly(name string, rest []string) string {
 	}
 	nf := nonFlags(rest)
 	switch {
+	case len(nf) >= 2 && nf[0] == "run" && nf[1] == "start" && hasFlag(rest, "supervisor-plan"):
+		return "rein run start --supervisor-plan"
 	case len(nf) >= 2 && nf[0] == "run" && nf[1] == "allow":
 		return "rein run allow"
 	case len(nf) >= 2 && nf[0] == "run" && nf[1] == "end" && hasFlag(rest, "abandon"):
@@ -213,8 +215,8 @@ func userOnly(name string, rest []string) string {
 	return ""
 }
 
-// coordCall applies the coordinator-only rules to one command: user-only commands and Orca spawns.
-func (x *ctx) coordCall(raw, name string, rest []string) string {
+// userOnlyCall is shared by worker and coordinator shell policies.
+func userOnlyCall(raw, name string, rest []string) string {
 	cmd, via := userOnly(name, rest), ""
 	if cmd == "" && strings.Contains(raw, "$?") { // a command name that expands at run time could be rein
 		if cmd = userOnly("rein", rest); cmd != "" {
@@ -224,6 +226,11 @@ func (x *ctx) coordCall(raw, name string, rest []string) string {
 	if cmd != "" {
 		return fmt.Sprintf("`%s` is for the user%s: run it in your own terminal; the coordinator never authorizes itself", cmd, via)
 	}
+	return ""
+}
+
+// coordCall applies the coordinator-only rules to one command.
+func (x *ctx) coordCall(raw, name string, rest []string) string {
 	if name == "unset" {
 		for _, a := range rest {
 			if r := x.coordEnvName(a); r != "" {

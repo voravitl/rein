@@ -159,8 +159,7 @@ func (u usedFlag) Set(s string) error {
 }
 
 func cmdRouteReconcile(args []string) int {
-	if run.UnderClaude() {
-		fmt.Fprintln(os.Stderr, "[route reconcile] this command releases reserved funds: the user runs it in their own terminal, not Claude Code")
+	if !requireOwner("rein route reconcile") {
 		return 2
 	}
 	fs := flag.NewFlagSet("route reconcile", flag.ContinueOnError)
