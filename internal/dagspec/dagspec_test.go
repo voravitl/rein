@@ -137,9 +137,12 @@ func TestDAGLintRefusals(t *testing.T) {
 		{CodeInvalidBase, // uppercase hex is not canonical
 			func(s *Spec) { s.Base = strings.ToUpper(testBase) },
 			func(s *Spec) { s.Base = testBase }},
-		{CodeInvalidMaxParallel,
-			func(s *Spec) { s.MaxParallel = 33 },
-			func(s *Spec) { s.MaxParallel = 32 }},
+		{CodeInvalidMaxParallel, // upper bound 32, with enough nodes that the count bound is not the cause
+			func(s *Spec) { manyNodes(s, 40); s.MaxParallel = 33 },
+			func(s *Spec) { manyNodes(s, 40); s.MaxParallel = 32 }},
+		{CodeInvalidMaxParallel, // schema-3 plans refuse max_parallel above the task count
+			func(s *Spec) { s.MaxParallel = 4 },
+			func(s *Spec) { s.MaxParallel = 3 }},
 		{CodeInvalidMaxParallel,
 			func(s *Spec) { s.MaxParallel = 0 },
 			func(s *Spec) { s.MaxParallel = 1 }},

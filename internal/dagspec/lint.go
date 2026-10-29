@@ -115,6 +115,9 @@ func lintSpec(s *Spec) (errs, warns []Finding) {
 	}
 	if s.MaxParallel < 1 || s.MaxParallel > 32 {
 		add(CodeInvalidMaxParallel, "", "max_parallel %d must be within 1..32", s.MaxParallel)
+	} else if len(s.Nodes) > 0 && s.MaxParallel > len(s.Nodes) {
+		// Schema-3 plan validation refuses max_parallel above the task count.
+		add(CodeInvalidMaxParallel, "", "max_parallel %d exceeds the node count %d", s.MaxParallel, len(s.Nodes))
 	}
 	if len(s.Nodes) == 0 {
 		add(CodeInvalidSpec, "", "nodes must not be empty")

@@ -6,20 +6,17 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/voravitl/rein/internal/dagspec"
 )
 
-// dagSubcommands maps `rein dag <sub>` to its handler.
+// dagSubcommands maps `rein dag <sub>` to its handler. `compile` will
+// register here when it lands.
 var dagSubcommands = map[string]func([]string) int{
-	"lint":    cmdDagLint,
-	"compile": cmdDagCompile,
+	"lint": cmdDagLint,
 }
 
-const dagUsage = `usage:
-  rein dag lint --spec FILE [--json]
-  rein dag compile --spec FILE --out DIR [--owner-config PATH] [--apply]`
+const dagUsage = "usage: rein dag lint --spec FILE [--json]    exits 0 (valid), 1 (refused), 2 (usage or unreadable spec)"
 
 func cmdDag(args []string) int {
 	if len(args) == 0 {
@@ -69,77 +66,6 @@ func cmdDagLint(args []string) int {
 	if !res.Valid {
 		return 1
 	}
-	return 0
-}
-
-func cmdDagCompile(args []string) int {
-	fs := flag.NewFlagSet("dag compile", flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
-	spec := fs.String("spec", "", "rein_dag_spec/v1 JSON file")
-	outDir := fs.String("out", "", "output directory for compiled plan.json and plan.md")
-	ownerConfig := fs.String("owner-config", "", "path to owner config JSON (defaults to $REIN_DAG_OWNER_CONFIG)")
-	apply := fs.Bool("apply", false, "materialize worktrees and contracts and validate plan in-process")
-
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *spec == "" || *outDir == "" {
-		fmt.Fprintln(os.Stderr, dagUsage)
-		return 2
-	}
-
-	ownerPath := *ownerConfig
-	if ownerPath == "" {
-		ownerPath = os.Getenv("REIN_DAG_OWNER_CONFIG")
-	}
-	if ownerPath == "" {
-		fmt.Fprintln(os.Stderr, "[dag compile] missing --owner-config and REIN_DAG_OWNER_CONFIG not set")
-		return 2
-	}
-
-	specData, err := readDagSpec(*spec)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "[dag compile] read spec:", err)
-		return 2
-	}
-
-	ownerData, err := os.ReadFile(ownerPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "[dag compile] read owner config:", err)
-		return 2
-	}
-
-	absOut, err := filepath.Abs(*outDir)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "[dag compile] out path:", err)
-		return 2
-	}
-	absOut = filepath.Clean(absOut)
-
-	absOwnerPath, err := filepath.Abs(ownerPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "[dag compile] owner path:", err)
-		return 2
-	}
-	absOwnerPath = filepath.Clean(absOwnerPath)
-
-	compiled, err := dagspec.Compile(specData, ownerData, absOut, absOwnerPath)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "[dag compile] compile error:", err)
-		return 1
-	}
-
-	if *apply {
-		if err := compiled.Apply(); err != nil {
-			fmt.Fprintln(os.Stderr, "[dag compile] apply error:", err)
-			return 1
-		}
-		fmt.Printf("compiled and applied: %s\n", absOut)
-	} else {
-		if err := compiled.WriteOutputs(); err != nil {
-			fmt.Fprintln(os.Stderr, "[dag compile] write outputs error:", err)
-			return 1
-		}
-		fmt.Printf("compiled: %s\n", absOut)
-	}
-
 	return 0
 }
 

@@ -99,7 +99,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `usage: rein <config|hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|route|verdict|approve|advise|orca|checkpoint|hunter|supervisor|e2e|version> [args]
+	fmt.Fprintln(os.Stderr, `usage: rein <config|hook|hooks|contract|spec|sandbox|drift|run|budget|task|ledger|providers|route|verdict|approve|advise|orca|checkpoint|hunter|supervisor|dag|e2e|version> [args]
   rein dag lint --spec FILE [--json]                    lint a rein_dag_spec/v1 graph (exit 0 valid, 1 refused, 2 usage)
   rein supervisor validate|run --plan FILE             bounded authorized monitor (no auto dispatch/settle)
   rein supervisor invocation <plan> ...                native Crux/Claude/Codex/Agy launch-argument validation
