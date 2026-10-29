@@ -10,13 +10,15 @@ import (
 	"github.com/voravitl/rein/internal/dagspec"
 )
 
-// dagSubcommands maps `rein dag <sub>` to its handler. `compile` will
-// register here when it lands.
+// dagSubcommands maps `rein dag <sub>` to its handler.
 var dagSubcommands = map[string]func([]string) int{
-	"lint": cmdDagLint,
+	"lint":    cmdDagLint,
+	"compile": cmdDagCompile,
 }
 
-const dagUsage = "usage: rein dag lint --spec FILE [--json]    exits 0 (valid), 1 (refused), 2 (usage or unreadable spec)"
+const dagUsage = `usage:
+  rein dag lint --spec FILE [--json]
+  rein dag compile --spec FILE --out DIR --config PATH --profile PATH [--apply]`
 
 func cmdDag(args []string) int {
 	if len(args) == 0 {

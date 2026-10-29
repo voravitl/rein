@@ -362,3 +362,47 @@ func TestDAGSpecGlobIntersect(t *testing.T) {
 		}
 	}
 }
+
+func TestDAGLintOptionalWorkerFields(t *testing.T) {
+	good := validSpec()
+	good.Nodes[0].KindProfile = "backend"
+	good.Nodes[0].RequiredCapabilities = []string{"read", "write"}
+	good.Nodes[0].ExpectedContextTokens = 4000
+	good.Nodes[0].Rationale = []RationaleEntry{{Path: "internal/api/x.go", Reason: "add endpoint"}}
+	_, res := Lint(encode(t, good))
+	if !res.Valid {
+		t.Fatalf("expected valid with optional worker fields, got errors: %+v", res.Errors)
+	}
+
+	// Invalid kind_profile
+	b1 := validSpec()
+	b1.Nodes[0].KindProfile = "invalid-kind"
+	_, res1 := Lint(encode(t, b1))
+	if res1.Valid || !hasCode(res1.Errors, CodeInvalidKind) {
+		t.Fatalf("want invalid_kind, got: %+v", res1)
+	}
+
+	// Action node carrying worker routing fields
+	b2 := validSpec()
+	b2.Nodes[2].KindProfile = "backend"
+	_, res2 := Lint(encode(t, b2))
+	if res2.Valid || !hasCode(res2.Errors, CodeInvalidKind) {
+		t.Fatalf("want invalid_kind on action carrying worker routing, got: %+v", res2)
+	}
+
+	// Empty capability
+	b3 := validSpec()
+	b3.Nodes[0].RequiredCapabilities = []string{"read", " "}
+	_, res3 := Lint(encode(t, b3))
+	if res3.Valid || !hasCode(res3.Errors, CodeInvalidSpec) {
+		t.Fatalf("want invalid_spec for empty capability, got: %+v", res3)
+	}
+
+	// Empty rationale
+	b4 := validSpec()
+	b4.Nodes[0].Rationale = []RationaleEntry{{Path: "", Reason: "something"}}
+	_, res4 := Lint(encode(t, b4))
+	if res4.Valid || !hasCode(res4.Errors, CodeInvalidSpec) {
+		t.Fatalf("want invalid_spec for empty rationale path, got: %+v", res4)
+	}
+}
