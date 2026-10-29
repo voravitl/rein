@@ -127,6 +127,21 @@ class LocalSupervisorTests(unittest.TestCase):
         args = SimpleNamespace(receipt=str(root / "receipt.json"), rein=str(rein), plan=str(plan), orca="/offline/orca", timeout=10)
         return bridge.Transport(args), OfflineOrca(repo, plan, fault)
 
+    def test_schema_3_plan_accepted_and_schema_4_refused(self):
+        transport, offline = self.fixture()
+        # Test schema 3 accepted
+        Path(transport.args.plan).write_text(json.dumps({"schema": 3, "run": "r1", "repo": str(offline.repo)}))
+        with patch.object(bridge.subprocess, "run", offline):
+            result = transport.dispatch()
+        self.assertEqual(result["status"], "dispatched")
+
+        # Test schema 4 refused
+        transport2, offline2 = self.fixture()
+        Path(transport2.args.plan).write_text(json.dumps({"schema": 4, "run": "r1", "repo": str(offline2.repo)}))
+        with patch.object(bridge.subprocess, "run", offline2):
+            with self.assertRaisesRegex(ValueError, "requires a schema-2 or schema-3 plan"):
+                transport2.dispatch()
+
     def test_default_has_zero_subprocess_actions(self):
         with patch.object(bridge.subprocess, "run", side_effect=AssertionError("no process allowed")):
             self.assertEqual(bridge.main([]), 0)

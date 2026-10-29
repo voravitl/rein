@@ -77,7 +77,9 @@ func setupTestGitRepo(t *testing.T) (string, string) {
 	}
 	exec.Command("git", "-C", dir, "config", "user.email", "test@test.local").Run()
 	exec.Command("git", "-C", dir, "config", "user.name", "Test").Run()
+	exec.Command("git", "-C", dir, "config", "core.hooksPath", "").Run()
 
+	os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("graphify-out/\n"), 0644)
 	f := filepath.Join(dir, "README.md")
 	os.WriteFile(f, []byte("# Test Repo\n"), 0644)
 	exec.Command("git", "-C", dir, "add", ".").Run()

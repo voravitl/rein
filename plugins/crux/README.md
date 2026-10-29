@@ -2,7 +2,7 @@
 
 **Shared engineering workflows. Explicit handoffs. One execution authority.**
 
-`crux-mode` is the main coordination mode for ADLC, multi-agent work, Rein and Orca in the Rein repository. Its 55 skills and 23 playbooks provide reusable engineering guidance across harnesses. Rein owns contracts, routing, checkpoints and approval evidence; Orca provides supported worker transport. Crux conducts the lifecycle, assigns bounded agent work, coordinates supported Orca operations through Rein, verifies results and prepares context for agent/provider handoffs. The plugin uses `crux-mode` in place of the upstream mode name.
+`crux-mode` is the main coordination mode for ADLC, multi-agent work, Rein and Orca in the Rein repository. Its 56 skills and 23 playbooks provide reusable engineering guidance across harnesses. Rein owns contracts, routing, checkpoints and approval evidence; Orca provides supported worker transport. Crux conducts the lifecycle, assigns bounded agent work, coordinates supported Orca operations through Rein, verifies results and prepares context for agent/provider handoffs. The plugin uses `crux-mode` in place of the upstream mode name.
 
 This is an independent, evolving fork of pstack, not an upstream product. See [upstream attribution](UPSTREAM.md) and the preserved [MIT license](LICENSE).
 
