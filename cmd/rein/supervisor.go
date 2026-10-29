@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -22,18 +23,28 @@ func cmdSupervisor(args []string) int {
 		return cmdGraphInvocation(args[1:])
 	}
 	if len(args) == 0 || (args[0] != "validate" && args[0] != "run" && args[0] != "status") {
-		fmt.Fprintln(os.Stderr, "usage: rein supervisor <validate|run|status> --plan file [--json] [--watch[=2s]]")
+		fmt.Fprintln(os.Stderr, "usage: rein supervisor <validate|run|status> --plan file [--json] [--view table|graph] [--watch[=2s]] [--seq N]")
 		return 2
 	}
 	fs := flag.NewFlagSet("supervisor "+args[0], flag.ContinueOnError)
 	path := fs.String("plan", "", "explicitly approved supervisor plan")
 	var asJSON bool
 	watch := supervisorWatchFlag{interval: 2 * time.Second}
+	view, seqText := "table", ""
 	if args[0] == "status" {
 		fs.BoolVar(&asJSON, "json", false, "render status as JSON")
 		fs.Var(&watch, "watch", "refresh status (default 2s; minimum 100ms)")
+		fs.StringVar(&view, "view", "table", "render status as table or graph")
+		fs.StringVar(&seqText, "seq", "", "render the graph from complete journal entries 1..N")
 	}
 	if err := fs.Parse(args[1:]); err != nil || *path == "" || fs.NArg() != 0 {
+		return 2
+	}
+	seqSet := false
+	fs.Visit(func(f *flag.Flag) { seqSet = seqSet || f.Name == "seq" })
+	seq, err := supervisorStatusViewOptions(view, asJSON, watch.enabled, seqSet, seqText)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 	p, hash, err := supervisor.Load(*path)
@@ -64,11 +75,29 @@ func cmdSupervisor(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if args[0] == "status" {
-		return supervisorStatusLoop(ctx, os.Stdout, os.Stderr, supervisorStatusOptions{
-			json: asJSON, watch: watch.enabled, interval: watch.interval, terminal: supervisorStatusTerminal(os.Stdout),
-		}, func(ctx context.Context) (supervisor.DAGStatus, error) {
+		read := func(ctx context.Context) (supervisor.DAGStatus, error) {
 			return supervisor.ReadDAGStatus(ctx, p, hash)
-		}, waitSupervisorStatus)
+		}
+		if seq > 0 {
+			read = func(ctx context.Context) (supervisor.DAGStatus, error) {
+				return supervisor.ReadDAGStatusAt(ctx, p, hash, seq)
+			}
+		}
+		options := supervisorStatusOptions{
+			json: asJSON, watch: watch.enabled, interval: watch.interval, terminal: supervisorStatusTerminal(os.Stdout),
+		}
+		if view == "graph" {
+			caption := ""
+			if seq > 0 {
+				caption = fmt.Sprintf("replay: complete journal entries 1..%d", seq)
+			}
+			// Width is re-detected per frame so a resized terminal reflows on redraw.
+			options.render = func(out io.Writer, status supervisor.DAGStatus) error {
+				width := supervisor.DAGTerminalColumns(os.Stdout, os.Getenv("COLUMNS"))
+				return supervisor.RenderDAGGraph(out, p, status, supervisor.DAGGraphOptions{Width: width, Caption: caption})
+			}
+		}
+		return supervisorStatusLoop(ctx, os.Stdout, os.Stderr, options, read, waitSupervisorStatus)
 	}
 	if p.Schema == 3 {
 		result, err := supervisor.RunDAG(ctx, p, hash, dagOperations(p, hash))
@@ -131,6 +160,35 @@ type supervisorStatusOptions struct {
 	watch    bool
 	terminal bool
 	interval time.Duration
+	render   func(io.Writer, supervisor.DAGStatus) error
+}
+
+// supervisorStatusViewOptions validates the display flags before the plan,
+// journal or any output is touched, and returns the replay sequence (0 = live).
+func supervisorStatusViewOptions(view string, asJSON, watch, seqSet bool, seqText string) (int, error) {
+	if view != "table" && view != "graph" {
+		return 0, fmt.Errorf("invalid --view %q: want table or graph", view)
+	}
+	if view == "graph" && asJSON {
+		return 0, fmt.Errorf("--view graph cannot be combined with --json")
+	}
+	if !seqSet {
+		return 0, nil
+	}
+	if asJSON {
+		return 0, fmt.Errorf("--seq cannot be combined with --json")
+	}
+	if watch {
+		return 0, fmt.Errorf("--seq cannot be combined with --watch")
+	}
+	if view != "graph" {
+		return 0, fmt.Errorf("--seq requires --view graph")
+	}
+	seq, err := strconv.Atoi(seqText)
+	if err != nil || seq < 1 {
+		return 0, fmt.Errorf("invalid --seq %q: want a positive integer", seqText)
+	}
+	return seq, nil
 }
 
 func waitSupervisorStatus(ctx context.Context, interval time.Duration) error {
@@ -186,6 +244,8 @@ func supervisorStatusLoop(ctx context.Context, out, stderr io.Writer, options su
 		if err == nil {
 			if options.json {
 				err = json.NewEncoder(out).Encode(view)
+			} else if options.render != nil {
+				err = options.render(out, view)
 			} else {
 				err = writeSupervisorStatusTable(out, view)
 			}
