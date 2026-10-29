@@ -23,29 +23,52 @@ func cmdSupervisor(args []string) int {
 		return cmdGraphInvocation(args[1:])
 	}
 	if len(args) == 0 || (args[0] != "validate" && args[0] != "run" && args[0] != "status") {
-		fmt.Fprintln(os.Stderr, "usage: rein supervisor <validate|run|status> --plan file [--json] [--view table|graph] [--watch[=2s]] [--seq N]")
+		fmt.Fprintln(os.Stderr, "usage: rein supervisor <validate|run|status> --plan file [--json] [--view table|graph|statusline|tui] [--watch[=2s]] [--seq N] [--lines N]")
 		return 2
 	}
 	fs := flag.NewFlagSet("supervisor "+args[0], flag.ContinueOnError)
 	path := fs.String("plan", "", "explicitly approved supervisor plan")
 	var asJSON bool
 	watch := supervisorWatchFlag{interval: 2 * time.Second}
-	view, seqText := "table", ""
+	view, seqText, linesText := "table", "", ""
 	if args[0] == "status" {
 		fs.BoolVar(&asJSON, "json", false, "render status as JSON")
 		fs.Var(&watch, "watch", "refresh status (default 2s; minimum 100ms)")
-		fs.StringVar(&view, "view", "table", "render status as table or graph")
+		fs.StringVar(&view, "view", "table", "render status as table, graph, statusline or tui")
 		fs.StringVar(&seqText, "seq", "", "render the graph from complete journal entries 1..N")
+		fs.StringVar(&linesText, "lines", "", "statusline height cap (default 4)")
 	}
-	if err := fs.Parse(args[1:]); err != nil || *path == "" || fs.NArg() != 0 {
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() != 0 {
 		return 2
 	}
-	seqSet := false
-	fs.Visit(func(f *flag.Flag) { seqSet = seqSet || f.Name == "seq" })
+	// Only the statusline may take its plan from REIN_PLAN instead of --plan.
+	statusline := args[0] == "status" && view == "statusline"
+	if *path == "" && !statusline {
+		return 2
+	}
+	seqSet, linesSet := false, false
+	fs.Visit(func(f *flag.Flag) {
+		seqSet = seqSet || f.Name == "seq"
+		linesSet = linesSet || f.Name == "lines"
+	})
 	seq, err := supervisorStatusViewOptions(view, asJSON, watch.enabled, seqSet, seqText)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
+	}
+	lines, err := supervisorStatusLines(view, linesSet, linesText)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if statusline {
+		planPath := *path
+		if planPath == "" {
+			planPath = os.Getenv("REIN_PLAN")
+		}
+		host := supervisor.ReadDAGStatuslineHost(os.Stdin, supervisorStatuslineHostLimit, supervisorStatuslineHostBudget)
+		_, _ = io.WriteString(os.Stdout, supervisorStatusline(planPath, lines, host))
+		return 0
 	}
 	p, hash, err := supervisor.Load(*path)
 	if err != nil {
@@ -86,7 +109,7 @@ func cmdSupervisor(args []string) int {
 		options := supervisorStatusOptions{
 			json: asJSON, watch: watch.enabled, interval: watch.interval, terminal: supervisorStatusTerminal(os.Stdout),
 		}
-		if view == "graph" {
+		if view == "graph" || (view == "tui" && !options.terminal) {
 			caption := ""
 			if seq > 0 {
 				caption = fmt.Sprintf("replay: complete journal entries 1..%d", seq)
@@ -96,6 +119,24 @@ func cmdSupervisor(args []string) int {
 				width := supervisor.DAGTerminalColumns(os.Stdout, os.Getenv("COLUMNS"))
 				return supervisor.RenderDAGGraph(out, p, status, supervisor.DAGGraphOptions{Width: width, Caption: caption})
 			}
+		}
+		if view == "tui" && options.terminal {
+			color := os.Getenv("NO_COLOR") == ""
+			render := func(out io.Writer, status supervisor.DAGStatus, final bool) error {
+				height := 0
+				if !final {
+					height = supervisor.DAGTerminalRows(os.Stdout)
+				}
+				return supervisor.RenderDAGTUI(out, p, status, supervisor.DAGTUIOptions{
+					Width:    supervisor.DAGTerminalColumns(os.Stdout, os.Getenv("COLUMNS")),
+					Height:   height,
+					Color:    color,
+					NowMS:    time.Now().UnixMilli(),
+					Interval: watch.interval,
+					Final:    final,
+				})
+			}
+			return supervisorTUILoop(ctx, os.Stdout, os.Stderr, watch.interval, supervisorTUITick, read, render)
 		}
 		return supervisorStatusLoop(ctx, os.Stdout, os.Stderr, options, read, waitSupervisorStatus)
 	}
@@ -166,11 +207,17 @@ type supervisorStatusOptions struct {
 // supervisorStatusViewOptions validates the display flags before the plan,
 // journal or any output is touched, and returns the replay sequence (0 = live).
 func supervisorStatusViewOptions(view string, asJSON, watch, seqSet bool, seqText string) (int, error) {
-	if view != "table" && view != "graph" {
-		return 0, fmt.Errorf("invalid --view %q: want table or graph", view)
+	switch view {
+	case "table", "graph", "statusline", "tui":
+	default:
+		return 0, fmt.Errorf("invalid --view %q: want table, graph, statusline or tui", view)
 	}
-	if view == "graph" && asJSON {
-		return 0, fmt.Errorf("--view graph cannot be combined with --json")
+	if view != "table" && asJSON {
+		return 0, fmt.Errorf("--view %s cannot be combined with --json", view)
+	}
+	// tui uses --watch as its journal re-read interval; statusline is one shot.
+	if view == "statusline" && watch {
+		return 0, fmt.Errorf("--view statusline cannot be combined with --watch")
 	}
 	if !seqSet {
 		return 0, nil
@@ -325,4 +372,164 @@ func supervisorStatusTerminal(out *os.File) bool {
 		}
 	}
 	return false
+}
+
+const (
+	// The host payload (Claude Code session JSON, AGY state JSON) is small;
+	// anything larger is ignored. The budget bounds a host that keeps stdin
+	// open without writing.
+	supervisorStatuslineHostLimit  = 64 << 10
+	supervisorStatuslineHostBudget = 500 * time.Millisecond
+	// supervisorStatuslineReadBudget bounds the journal snapshot read.
+	supervisorStatuslineReadBudget = 2 * time.Second
+	supervisorTUITick              = 100 * time.Millisecond
+)
+
+// supervisorStatusLines validates --lines before any plan or journal read.
+// Without --lines the statusline keeps four lines.
+func supervisorStatusLines(view string, set bool, text string) (int, error) {
+	if !set {
+		return 4, nil
+	}
+	if view != "statusline" {
+		return 0, fmt.Errorf("--lines requires --view statusline")
+	}
+	n, err := strconv.Atoi(text)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("invalid --lines %q: want a positive integer", text)
+	}
+	return n, nil
+}
+
+// supervisorStatusline renders the host status-line frame. It never fails:
+// a status-line host blanks its line on a non-zero exit, so every plan or
+// journal problem becomes one short "rein: <reason>" line instead.
+func supervisorStatusline(planPath string, lines int, host []byte) string {
+	fail := func(reason string) string {
+		return supervisor.DAGStatuslineFallback(reason) + "\n"
+	}
+	if planPath == "" {
+		return fail("no plan; set --plan or REIN_PLAN")
+	}
+	p, hash, err := supervisor.Load(planPath)
+	if err != nil {
+		return fail("plan: " + err.Error())
+	}
+	if p.Schema != 3 {
+		return fail("status requires a schema 3 plan")
+	}
+	if err := validateLocalDAGPlan(p); err != nil {
+		return fail("plan: " + err.Error())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), supervisorStatuslineReadBudget)
+	defer cancel()
+	status, err := supervisor.ReadDAGStatus(ctx, p, hash)
+	if err != nil {
+		return fail("status: " + err.Error())
+	}
+	var b strings.Builder
+	err = supervisor.RenderDAGStatusline(&b, p, status, supervisor.DAGStatuslineOptions{
+		Width: supervisor.DAGStatuslineWidth(os.Getenv("COLUMNS"), host),
+		Lines: lines,
+		Color: os.Getenv("NO_COLOR") == "",
+		NowMS: supervisor.DAGStatuslineNowMS(os.Getenv("REIN_NOW_UNIX_MS"), time.Now()),
+	})
+	if err != nil {
+		return fail("status: " + err.Error())
+	}
+	return b.String()
+}
+
+// supervisorTUILoop drives the full-screen view on a real terminal: it enters
+// the alternate screen with a hidden cursor, redraws every tick (spinner) and
+// re-reads the journal every interval with at most one reader in flight. The
+// terminal is restored on every exit path; a terminal snapshot is printed
+// once more on the normal screen. Interrupt (SIGINT/SIGTERM via ctx) returns 130.
+func supervisorTUILoop(ctx context.Context, out, stderr io.Writer, interval, tick time.Duration, read func(context.Context) (supervisor.DAGStatus, error), render func(io.Writer, supervisor.DAGStatus, bool) error) int {
+	type observation struct {
+		view supervisor.DAGStatus
+		err  error
+	}
+	if _, err := io.WriteString(out, "\x1b[?1049h\x1b[?25l"); err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	restored := false
+	restore := func() {
+		if !restored {
+			restored = true
+			_, _ = io.WriteString(out, "\x1b[?25h\x1b[?1049l")
+		}
+	}
+	defer restore()
+	start := func() chan observation {
+		finished := make(chan observation, 1)
+		go func() {
+			view, err := read(ctx)
+			finished <- observation{view, err}
+		}()
+		return finished
+	}
+	fail := func(err error) int {
+		restore()
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	draw := func(view supervisor.DAGStatus) error {
+		var frame strings.Builder
+		if err := render(&frame, view, false); err != nil {
+			return err
+		}
+		// Home, overwrite each line, clear the rest: no full-screen flash.
+		_, err := io.WriteString(out, "\x1b[H"+strings.ReplaceAll(frame.String(), "\n", "\x1b[K\n")+"\x1b[J")
+		return err
+	}
+	ticker := time.NewTicker(tick)
+	defer ticker.Stop()
+	reread := time.NewTimer(interval)
+	reread.Stop()
+	defer reread.Stop()
+	pending := start()
+	var next <-chan time.Time
+	var view supervisor.DAGStatus
+	have := false
+	for {
+		select {
+		case <-ctx.Done():
+			restore()
+			return 130
+		case got := <-pending:
+			pending = nil
+			if ctx.Err() != nil {
+				restore()
+				return 130
+			}
+			if got.err != nil {
+				return fail(got.err)
+			}
+			view, have = got.view, true
+			if view.Terminal() {
+				restore()
+				if err := render(out, view, true); err != nil {
+					fmt.Fprintln(stderr, err)
+					return 1
+				}
+				return 0
+			}
+			if err := draw(view); err != nil {
+				return fail(err)
+			}
+			reread.Reset(interval)
+			next = reread.C
+		case <-next:
+			next = nil
+			pending = start()
+		case <-ticker.C:
+			if have {
+				if err := draw(view); err != nil {
+					return fail(err)
+				}
+			}
+		}
+	}
 }
