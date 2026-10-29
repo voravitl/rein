@@ -1,0 +1,202 @@
+{
+  "schema": 3,
+  "run": "dag-demo",
+  "repo": "/absolute/repository",
+  "terminal": "local-controller",
+  "source": "approved-local-plan",
+  "version": "1",
+  "max_checks": 4,
+  "timeout_ms": 60000,
+  "poll_interval_ms": 10,
+  "pools": [],
+  "execution": {
+    "max_parallel": 2,
+    "failure_policy": "isolate_known"
+  },
+  "tasks": [
+    {
+      "task": "dag-A",
+      "kind": "action",
+      "contract_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "base": "0000000000000000000000000000000000000000",
+      "max_attempts": 1,
+      "action": {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "set -eu; printf 'alpha\\n' > /out/value.txt"
+        ],
+        "timeout_ms": 5000,
+        "max_output_bytes": 4096,
+        "max_output_files": 8,
+        "max_output_total_bytes": 65536,
+        "idempotent": true,
+        "sandbox": {
+          "backend": "docker",
+          "image": "sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af"
+        }
+      },
+      "verify": [
+        [
+          "/bin/sh",
+          "-c",
+          "set -eu; test \"$(cat /out/value.txt)\" = alpha"
+        ]
+      ],
+      "outputs": [
+        {
+          "name": "value",
+          "path": "value.txt",
+          "max_bytes": 4096
+        }
+      ]
+    },
+    {
+      "task": "dag-B",
+      "kind": "action",
+      "depends_on": [
+        "dag-A"
+      ],
+      "contract_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "base": "0000000000000000000000000000000000000000",
+      "max_attempts": 1,
+      "inputs": [
+        {
+          "producer": "dag-A",
+          "name": "value",
+          "as": "a"
+        }
+      ],
+      "action": {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "set -eu; cat /inputs/a > /out/value.txt; printf 'B\\n' >> /out/value.txt"
+        ],
+        "timeout_ms": 5000,
+        "max_output_bytes": 4096,
+        "max_output_files": 8,
+        "max_output_total_bytes": 65536,
+        "idempotent": true,
+        "sandbox": {
+          "backend": "docker",
+          "image": "sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af"
+        }
+      },
+      "verify": [
+        [
+          "/bin/sh",
+          "-c",
+          "set -eu; test \"$(head -n 1 /out/value.txt)\" = alpha; test \"$(tail -n 1 /out/value.txt)\" = B"
+        ]
+      ],
+      "outputs": [
+        {
+          "name": "value",
+          "path": "value.txt",
+          "max_bytes": 4096
+        }
+      ]
+    },
+    {
+      "task": "dag-C",
+      "kind": "action",
+      "depends_on": [
+        "dag-A"
+      ],
+      "contract_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "base": "0000000000000000000000000000000000000000",
+      "max_attempts": 1,
+      "inputs": [
+        {
+          "producer": "dag-A",
+          "name": "value",
+          "as": "a"
+        }
+      ],
+      "action": {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "set -eu; cat /inputs/a > /out/value.txt; printf 'C\\n' >> /out/value.txt"
+        ],
+        "timeout_ms": 5000,
+        "max_output_bytes": 4096,
+        "max_output_files": 8,
+        "max_output_total_bytes": 65536,
+        "idempotent": true,
+        "sandbox": {
+          "backend": "docker",
+          "image": "sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af"
+        }
+      },
+      "verify": [
+        [
+          "/bin/sh",
+          "-c",
+          "set -eu; test \"$(head -n 1 /out/value.txt)\" = alpha; test \"$(tail -n 1 /out/value.txt)\" = C"
+        ]
+      ],
+      "outputs": [
+        {
+          "name": "value",
+          "path": "value.txt",
+          "max_bytes": 4096
+        }
+      ]
+    },
+    {
+      "task": "dag-D",
+      "kind": "action",
+      "depends_on": [
+        "dag-B",
+        "dag-C"
+      ],
+      "contract_hash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "base": "0000000000000000000000000000000000000000",
+      "max_attempts": 1,
+      "inputs": [
+        {
+          "producer": "dag-B",
+          "name": "value",
+          "as": "b"
+        },
+        {
+          "producer": "dag-C",
+          "name": "value",
+          "as": "c"
+        }
+      ],
+      "action": {
+        "argv": [
+          "/bin/sh",
+          "-c",
+          "set -eu; cat /inputs/b /inputs/c > /out/joined.txt"
+        ],
+        "timeout_ms": 5000,
+        "max_output_bytes": 4096,
+        "max_output_files": 8,
+        "max_output_total_bytes": 65536,
+        "idempotent": true,
+        "sandbox": {
+          "backend": "docker",
+          "image": "sha256:632dff7351799a5a9954a48dc06670ade72ee44e8c351cdc0e5a57af2fea21af"
+        }
+      },
+      "verify": [
+        [
+          "/bin/sh",
+          "-c",
+          "set -eu; test \"$(wc -l < /out/joined.txt)\" -eq 4"
+        ]
+      ],
+      "outputs": [
+        {
+          "name": "joined",
+          "path": "joined.txt",
+          "max_bytes": 8192
+        }
+      ]
+    }
+  ]
+}

@@ -463,6 +463,24 @@ rein supervisor run --plan approved-plan.json
 rein supervisor invocation --plan approved-plan.json --invocation INVOCATION_ID
 ```
 
+Schema 3 opts into bounded parallel DAG execution with
+`execution: {"max_parallel": 2, "failure_policy": "isolate_known"}` and explicit
+`kind: "worker"` or `kind: "action"` tasks. Known failures block descendants while
+independent branches continue; uncertain liveness, accounting, authority or journal
+state stops the whole run. Actions use pinned existing local Docker images and
+fixed containment policy without model routing or paid reservations. Declared
+`outputs` and direct-dependency `inputs` pass copied, verified SHA256-bound data.
+Worker source commits and contract/config identities remain mandatory. See
+[DAG and lightweight workflows](DAG_LIGHTWEIGHT_WORKFLOWS.md) for schema fields,
+runtime bounds, cancellation/replay rules and the A -> (B,C) -> D local example.
+The example JSON is a binding template: its repository path and zero source and
+contract hashes must be replaced using the guide's explicit setup. Use the exact
+ID of an existing local image; Rein does not pull it. Owner authorization uses
+the existing `run start --supervisor-plan` and `run allow` commands.
+Schema-3 results add `status`, `failed`, `blocked` and `cancelled`; a waiting result
+does not imply success of every branch. Schema-1/2 encoding and execution defaults
+remain unchanged.
+
 Checkpoint restore uses embedded Git objects and captured bytes; the source can be absent. Restore requires an existing destination parent. Existing destinations, mixed staged/unstaged edits to the same path, tracked deletions/renames/conflicts/submodules, hidden-index flags and unrepresentable checkout conversions are refused. It restores only the supported state into a fresh directory; it does not rewrite contracts, run markers, receipts or source evidence. Each checkpoint stores reachable Git history, so large repositories can produce large snapshots.
 
 `triage`, `authorize-fix` and `start-fix` move a finding through the controller, owner and worker gates. Each step records the acting identity and the separately approved fix task; the lifecycle still cannot skip reproduction, independent review or owner approval. A controller cannot authorize its own fix, and a worker cannot start a task that the owner did not approve.

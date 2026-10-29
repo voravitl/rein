@@ -66,6 +66,10 @@ type Outcome struct {
 }
 
 type GraphResult struct {
+	Status    string            `json:"status,omitempty"`
+	Failed    []TaskStatus      `json:"failed,omitempty"`
+	Blocked   []TaskStatus      `json:"blocked,omitempty"`
+	Cancelled []TaskStatus      `json:"cancelled,omitempty"`
 	State     routing.WaitState `json:"state"`
 	Reason    string            `json:"reason"`
 	Checks    int               `json:"checks"`
@@ -209,6 +213,9 @@ func graphAuthority(ctx context.Context, c *run.Controller, p Plan) error {
 		wc, err := filepath.EvalSymlinks(work.Common)
 		if err != nil || wc != common {
 			return errors.New("task contract belongs to another repository")
+		}
+		if p.Schema == 3 && t.Kind == "action" {
+			continue
 		}
 		b, err := os.ReadFile(t.ConfigPath)
 		if err != nil {

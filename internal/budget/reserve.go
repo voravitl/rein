@@ -152,9 +152,8 @@ func readHolds(path string) (map[string]*Hold, error) {
 }
 
 // ponytail: every mutation rewrites the whole file and settled holds are never pruned, so cost grows with the number of holds
-// ever made (fine to a few thousand); archive closed holds when that matters. There is no directory fsync after the rename: a
-// power loss may revert the last mutation, but the launched work dies with the machine. A crash between CreateTemp and Rename
-// leaves a stray .holds-*.tmp that nothing sweeps.
+// ever made (fine to a few thousand); archive closed holds when that matters.
+// A crash between CreateTemp and Rename leaves a stray .holds-*.tmp.
 func writeHolds(dir, path string, holds map[string]*Hold) error {
 	b, err := json.MarshalIndent(holds, "", "  ")
 	if err != nil {
@@ -175,7 +174,22 @@ func writeHolds(dir, path string, holds map[string]*Hold) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), path)
+	if err := os.Rename(tmp.Name(), path); err != nil {
+		return err
+	}
+	return syncHoldsDirectory(dir)
+}
+
+var syncHoldsDirectory = func(dir string) error {
+	parent, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	err = parent.Sync()
+	if closeErr := parent.Close(); err == nil {
+		err = closeErr
+	}
+	return err
 }
 
 func newID(taken map[string]*Hold) (string, error) {

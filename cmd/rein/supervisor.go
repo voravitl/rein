@@ -13,6 +13,9 @@ import (
 )
 
 func cmdSupervisor(args []string) int {
+	if len(args) > 0 && args[0] == "invocation" {
+		return cmdGraphInvocation(args[1:])
+	}
 	if len(args) == 0 || (args[0] != "validate" && args[0] != "run") {
 		fmt.Fprintln(os.Stderr, "usage: rein supervisor <validate|run> --plan file")
 		return 2
@@ -33,12 +36,27 @@ func cmdSupervisor(args []string) int {
 			return 2
 		}
 	}
+	if p.Schema == 3 {
+		if err := validateLocalDAGPlan(p); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+	}
 	if args[0] == "validate" {
 		json.NewEncoder(os.Stdout).Encode(map[string]any{"valid": true, "plan_hash": hash, "run": p.Run})
 		return 0
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	if p.Schema == 3 {
+		result, err := supervisor.RunDAG(ctx, p, hash, dagOperations(p, hash))
+		json.NewEncoder(os.Stdout).Encode(result)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		return 0
+	}
 	if p.Schema == 2 {
 		result, err := supervisor.RunGraph(ctx, p, hash, graphOperations(p))
 		json.NewEncoder(os.Stdout).Encode(result)
