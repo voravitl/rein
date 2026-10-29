@@ -464,6 +464,8 @@ rein supervisor invocation --plan approved-plan.json --invocation INVOCATION_ID
 rein supervisor status --plan approved-plan.json [--json] [--watch[=2s]]
 rein supervisor status --plan approved-plan.json --view graph [--watch[=2s]]
 rein supervisor status --plan approved-plan.json --view graph --seq N
+rein supervisor status [--plan approved-plan.json] --view statusline [--lines N]
+rein supervisor status --plan approved-plan.json --view tui [--watch[=2s]]
 ```
 
 Schema 3 opts into bounded parallel DAG execution with
@@ -517,6 +519,94 @@ Status does not acquire controller authority, execute work, approve tasks, reser
 quota, sync or modify the journal, or write marker/source state. It can run while
 the execution controller holds its lock. Observation is a snapshot, not a grant
 of execution authority or proof that external side effects have finished.
+
+### DAG status inside agent CLIs: `--view statusline` and `--view tui`
+
+`--view statusline` prints a compact colored DAG for status-line hosts such
+as Claude Code and AGY. Line 1 is the header: run, status, a progress bar sized
+to the width, and done/total. Each following line is one DAG layer of
+`<glyph> <task>` items: `✓` done, `✗` failed, `⊘` blocked, `◌` pending,
+`○` ready, and a Braille spinner (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) for
+preparing/running/finalizing. The spinner frame is `(unix_ms / 100) % 10`.
+`REIN_NOW_UNIX_MS` overrides the clock for reproducible output.
+
+- Plan: `--plan PATH`, else the `REIN_PLAN` environment variable. There is no
+  auto-discovery. Only the statusline may omit `--plan`.
+- Height: at most `--lines N` lines (default 4, positive integer). On
+  overflow the window starts at the first layer that is not fully done, and
+  the last line reads `+k more`.
+- Width: a positive `COLUMNS`, then a positive `terminal_width` from the
+  host's JSON on stdin, then 80. No line is wider.
+- stdin: optional host JSON. It is read only when stdin is not a terminal,
+  capped at 64 KiB and 500 ms. Any other content (unknown fields, wrong types,
+  invalid JSON, oversized payloads, or no input) is ignored.
+- Color: 256-color SGR is forced on because hosts capture the output. Set
+  `NO_COLOR` to disable it. The output never moves the cursor or clears the
+  screen, and labels are sanitized.
+- Failure safety: a non-zero exit blanks a host's status line. Plan or
+  journal errors therefore exit 0 with a single `rein: <reason>` line (at most
+  80 characters). A missing journal renders the normal ready/pending view.
+  Invalid options still exit 2 before reading anything: `--lines` that is not
+  a positive integer, `--json`, `--watch`, or `--seq`.
+
+`--view tui` is the full-screen card view for a split pane or a separate
+terminal. On a real TTY it switches to the alternate screen and hides the
+cursor. It redraws every 100 ms to animate the spinner and re-reads the
+journal at the `--watch` interval (default 2s). When the run reaches a
+terminal state it restores the screen, prints a final frame on the normal
+screen and exits 0. Ctrl-C or SIGTERM restores the screen and exits 130.
+`NO_COLOR` disables color. When stdout is not a TTY, `--view tui` prints
+exactly the `--view graph` output. `--json` and `--seq` are rejected.
+
+Both views are read-only, like every status view. They take no controller
+lock and can run while `rein supervisor run` holds it.
+
+Rein does not install host settings. Copy the snippets below yourself.
+
+Claude Code: project `.claude/settings.local.json`. The command runs in the
+project directory, and `REIN_PLAN` must be an absolute path to the approved
+plan.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "REIN_PLAN=/absolute/approved-plan.json rein supervisor status --view statusline",
+    "refreshInterval": 1
+  }
+}
+```
+
+AGY: user-level `~/.gemini/antigravity-cli/settings.json`. With
+`stack_with_default: true`, AGY keeps its built-in status line and shows
+Rein's line below it; without it, Rein's line replaces the built-in one. The
+key placement follows the AGY statusline docs; Rein has not been run against
+a live AGY.
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "REIN_PLAN=/absolute/approved-plan.json rein supervisor status --view statusline",
+    "stack_with_default": true
+  }
+}
+```
+
+Codex CLI has no custom status line. Run the TUI in a tmux or terminal split
+pane instead:
+
+```sh
+tmux split-window -h 'rein supervisor status --plan /absolute/approved-plan.json --view tui'
+```
+
+Limits:
+- Claude Code refreshes at most once per second (`refreshInterval` ≥ 1). It
+  hides the status line during permission prompts and requires workspace
+  trust.
+- AGY redraws only on agent events, so the spinner and states advance only
+  when the agent does something.
+- Only `--view tui` animates at 100 ms.
 
 Timing is display-only telemetry in
 `<marker>.graph3-<plan_hash>.times.jsonl`: `{ "seq": N, "at": "RFC3339Nano UTC" }`.
