@@ -29,6 +29,7 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | `rein checkpoint` | Controller | Finalize, verify or restore a snapshot | Safe recovery boundary | `0` = success, `1` = refused/error, `2` = bad arguments |
 | `rein hunter` | Investigator / Reviewer / Owner | Report, reproduce, verify, review and approve findings | Evidence-based bug workflow | `0` = recorded, `1` = refused/error, `2` = bad arguments |
 | `rein supervisor` | Controller / read-only observer | Validate, execute, or observe bounded plans | Explicit supervised runs; schema-3 status | `0` = result/status, `1` = blocked/error, `2` = bad arguments, `130` = interrupted status |
+| `rein dag lint` | Coordinator / Crux | Validate a `rein_dag_spec/v1` graph | Before writing a supervisor plan | `0` = valid, `1` = refused, `2` = usage |
 | `rein version` | Anyone | Print binary version | Verification / diagnostics | `0` = ok |
 
 ---
@@ -738,6 +739,24 @@ The legacy waiter uses `rein run controller-exec REPO --run R -- <check-options>
 
 Orca structured launch uses exact `worker-show --dispatch` identity (task/run/assignee/worker), not terminal existence. `worker_handle` is emitted for supervised workers; `terminal_handle` is absent for structured workers without a PTY. Close accepts dispatch identity without a terminal; send/read still require a terminal. These launch/close compatibility checks do not enable Orca graph recovery. Installed Orca 1.4.224 lacks a retained process-tree termination proof after session eviction; unsupported recovery remains fenced.
 
+---
+
+## 17. `rein dag lint` — DAG Spec Linter
+
+Checks an agent-written `rein_dag_spec/v1` graph before anyone turns it into a supervisor plan. It reads the file only; it creates no worktree, contract or plan.
+
+```sh
+rein dag lint --spec /path/to/spec.json          # one line per finding, then valid/refused
+rein dag lint --spec /path/to/spec.json --json   # {"valid":bool,"errors":[{code,node,message}],"warnings":[...]}
+```
+
+- Exit `0` valid (warnings allowed), `1` refused, `2` usage error or unreadable/oversized file (8 MiB cap).
+- Refusal codes (stable): `invalid_spec`, `unknown_field`, `duplicate_id`, `invalid_id`, `unknown_dependency`, `self_dependency`, `cycle`, `too_many_nodes`, `write_overlap`, `missing_verification`, `empty_verify`, `missing_prompt_section`, `invalid_base`, `invalid_max_parallel`, `invalid_kind`, `action_missing_image`. Warning: `serial_graph`.
+- Owner-only fields (`launches`, `profile`, `config_path`, `config_digest`, `process_policy`, `contract_hash`) are refused anywhere in the spec.
+- `max_parallel` must be 1..32 and no larger than the node count, matching schema-3 plan validation.
+- `rein dag compile` (spec → schema-3 plan) is not in this release.
+
+---
 
 ## Crux provider configuration
 
