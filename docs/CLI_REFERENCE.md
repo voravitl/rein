@@ -462,6 +462,8 @@ rein run start /absolute/repo --run R --session S --pid PID --supervisor-plan ap
 rein supervisor run --plan approved-plan.json
 rein supervisor invocation --plan approved-plan.json --invocation INVOCATION_ID
 rein supervisor status --plan approved-plan.json [--json] [--watch[=2s]]
+rein supervisor status --plan approved-plan.json --view graph [--watch[=2s]]
+rein supervisor status --plan approved-plan.json --view graph --seq N
 ```
 
 Schema 3 opts into bounded parallel DAG execution with
@@ -549,6 +551,43 @@ it cannot cancel a blocked kernel filesystem call. Such a reader may remain unti
 the call returns or the process exits, and cannot emit a late frame or start
 another poll. Agents that need a bounded observation should use a single `--json`
 call.
+
+`--view table` is the default and prints the table above byte-for-byte.
+`--view graph` prints the same snapshot as a plain-text terminal graph, meant for
+the terminal or transcript of the CLI session that runs it (Claude Code, AGY,
+Codex or a plain shell). It is ordinary command output; Rein does not embed
+widgets or live panels inside those vendor UIs. The graph shows a header line
+(run, status, node and edge counts, `invocation active` when applicable), then
+one block per topological layer from top to bottom, joined by `|`/`v` arrows.
+Each node card shows the task, state, kind, `attempt N/M` (same counter as the
+table), agent/model:effort when bound, `<-` the tasks it depends on and `->` its
+direct dependents (`none` for roots and leaves). Every plan dependency appears on
+both of its cards. Layers are sorted by number and cards by task name, so an
+unchanged snapshot renders identical bytes. Output is ASCII without color or
+cursor escapes; labels show control bytes, DEL, invalid UTF-8 and non-ASCII as
+visible `\xNN`/`\uNNNN` escapes, with `\` doubled. Width comes from the
+kernel terminal size when stdout is a Linux/macOS terminal, else a positive
+`COLUMNS`, else 80 (minimum 16). Cards are 30 columns wide (narrower when the
+width is smaller), wrap side by side within a layer, and long labels wrap onto
+more lines, so no line exceeds the width and no node or edge is dropped.
+`--view graph --json` is refused.
+
+`--view graph --watch` reuses the same polling, terminal-exit and SIGINT/SIGTERM
+130 behaviour. Live redraw (clear and repaint) happens only when stdout is a
+recognized terminal device. Agent tool calls usually capture stdout through a
+pipe, so they see plain frames separated by a blank line without escape
+sequences, and the frame updates only appear when the call returns; use a single
+non-watch call when a bounded observation is needed.
+
+`--seq N` replays the graph from the strict journal prefix of complete entries
+`1..N`, counting the header and lifecycle rows. It reads the journal once, never
+retries, and never reports `changing`; it equals live status for that exact
+prefix except that elapsed time is unknown. N must be a positive integer within
+the complete entries; an unterminated final row does not count. A missing
+journal, N beyond the complete entries, invalid N, `--seq` without
+`--view graph`, and `--seq` with `--json` or `--watch` are refused before any
+output, with exit 2 for flag errors and 1 for journal errors. Replay is
+read-only, acquires no controller and writes no frames or files.
 
 Checkpoint restore uses embedded Git objects and captured bytes; the source can be absent. Restore requires an existing destination parent. Existing destinations, mixed staged/unstaged edits to the same path, tracked deletions/renames/conflicts/submodules, hidden-index flags and unrepresentable checkout conversions are refused. It restores only the supported state into a fresh directory; it does not rewrite contracts, run markers, receipts or source evidence. Each checkpoint stores reachable Git history, so large repositories can produce large snapshots.
 
