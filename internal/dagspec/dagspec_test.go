@@ -406,3 +406,33 @@ func TestDAGLintOptionalWorkerFields(t *testing.T) {
 		t.Fatalf("want invalid_spec for empty rationale path, got: %+v", res4)
 	}
 }
+
+func TestDAGLintCalibrationWorker(t *testing.T) {
+	good := validSpec()
+	good.Nodes[0].Calibration = &Calibration{Amount: 2}
+	if _, res := Lint(encode(t, good)); !res.Valid {
+		t.Fatalf("valid calibration worker refused: %+v", res.Errors)
+	}
+	for name, change := range map[string]func(*Spec){
+		"zero amount": func(s *Spec) { s.Nodes[0].Calibration = &Calibration{Amount: 0} },
+		"negative":    func(s *Spec) { s.Nodes[0].Calibration = &Calibration{Amount: -1} },
+		"two providers": func(s *Spec) {
+			s.Nodes[0].Calibration, s.Nodes[0].Providers = &Calibration{Amount: 1}, []string{"claude", "codex"}
+		},
+	} {
+		s := validSpec()
+		change(&s)
+		if _, res := Lint(encode(t, s)); res.Valid || !hasCode(res.Errors, CodeInvalidSpec) {
+			t.Fatalf("%s: want invalid_spec, got %+v", name, res)
+		}
+	}
+	a := validSpec()
+	a.Nodes[2].Calibration = &Calibration{Amount: 1}
+	if _, res := Lint(encode(t, a)); res.Valid || !hasCode(res.Errors, CodeInvalidKind) {
+		t.Fatalf("action with calibration: want invalid_kind, got %+v", res)
+	}
+	raw := strings.Replace(string(encode(t, good)), `"amount":2`, `"amount":2,"provider":"codex"`, 1)
+	if _, res := Lint([]byte(raw)); res.Valid || !hasCode(res.Errors, CodeUnknownField) {
+		t.Fatalf("unknown calibration key: want unknown_field, got %+v", res)
+	}
+}

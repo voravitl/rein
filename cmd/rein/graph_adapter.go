@@ -198,6 +198,19 @@ func graphOperations(p supervisor.Plan) supervisor.Operations {
 			if err != nil {
 				return nil, err
 			}
+			if t.Calibration != nil {
+				// Owner-pinned worker without qualifying evidence: the capped,
+				// unscored calibration lane, never a scored selection.
+				provider := ""
+				for name := range t.Launches {
+					provider = name
+				}
+				d, err := routing.PrepareCalibration(routing.CalibrationInput{Contract: c, Run: p.Run, ConfigPath: t.ConfigPath, Owner: owner, Budget: prof, MarkerPath: marker, Provider: provider, Amount: t.Calibration.Amount, Calls: 1}, t.Profile)
+				if err != nil {
+					return nil, err
+				}
+				return routing.CalibrationResult(d), nil
+			}
 			return routing.PrepareAuto(ctx, routing.AutoInput{Contract: c, Run: p.Run, TaskProfile: t.Profile, ConfigPath: t.ConfigPath, Owner: owner, Budget: prof, MarkerPath: marker, Base: t.Base, Timeout: time.Duration(p.TimeoutMS) * time.Millisecond})
 		},
 		Launch: func(ctx context.Context, control *run.Controller, t supervisor.Task, d *routing.Decision, argv []string) (supervisor.Dispatch, error) {

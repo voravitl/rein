@@ -136,6 +136,16 @@ func PrepareCalibration(in CalibrationInput, profile []byte) (_ *Decision, resul
 	return d, nil
 }
 
+// CalibrationResult wraps a calibration execution receipt in the result shape
+// the supervised graph journals for a prepared worker. It carries no ranking,
+// comparison or exclusions: nothing was scored.
+func CalibrationResult(d *Decision) *AutoResult {
+	if d == nil {
+		return nil
+	}
+	return &AutoResult{Attempt: d.Attempt, Decision: d.DecisionID, SelectionMode: d.SelectionMode, Receipt: d, Launch: launchOf(d), Rounds: []*Round{}}
+}
+
 func validateCalibration(c *contract.Contract, d *Decision, cfg *providers.Config) error {
 	if d.SelectionMode != modeCalibration || d.DecisionID == "" || d.Attempt == "" || d.Hold == "" || d.ExpiresAt == nil || time.Now().After(*d.ExpiresAt) {
 		return errors.New("incomplete or expired calibration receipt")

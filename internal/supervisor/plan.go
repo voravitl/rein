@@ -37,6 +37,16 @@ type Task struct {
 	Launches         map[string][]string `json:"launches,omitempty"`
 	MaxAttempts      int                 `json:"max_attempts,omitempty"`
 	Verify           [][]string          `json:"verify,omitempty"`
+	// Calibration pins a schema-3 worker to its single launch provider through
+	// the owner-authorized calibration lane (unscored, capped), for workers that
+	// have no qualifying ledger evidence yet. Nil means scored selection.
+	Calibration *TaskCalibration `json:"calibration,omitempty"`
+}
+
+// TaskCalibration is the declared worst case of the one worker call, in the
+// provider's billing unit. The owner's selection.calibration caps bound it.
+type TaskCalibration struct {
+	Amount float64 `json:"amount"`
 }
 
 type Plan struct {
@@ -109,14 +119,14 @@ func Decode(b []byte) (Plan, string, error) {
 		var taskFields []map[string]json.RawMessage
 		_ = json.Unmarshal(fields["tasks"], &taskFields)
 		for _, task := range taskFields {
-			for _, key := range []string{"kind", "action", "inputs", "outputs"} {
+			for _, key := range []string{"kind", "action", "inputs", "outputs", "calibration"} {
 				if _, present := task[key]; present {
 					return p, "", errors.New("action and artifact fields require schema 3")
 				}
 			}
 		}
 		for _, t := range p.Tasks {
-			if t.Kind != "" || t.Action != nil || len(t.Inputs) != 0 || len(t.Outputs) != 0 {
+			if t.Kind != "" || t.Action != nil || len(t.Inputs) != 0 || len(t.Outputs) != 0 || t.Calibration != nil {
 				return p, "", errors.New("action and artifact fields require schema 3")
 			}
 		}
