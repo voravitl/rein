@@ -12,6 +12,14 @@ import (
 	"github.com/voravitl/rein/internal/supervisor"
 )
 
+// graphEditPermission is the one edit-permission flag and value each harness may
+// carry in an approved graph argv, so a print-mode worker can write its worktree.
+var graphEditPermission = map[string]struct{ flag, value string }{
+	"claude": {"--permission-mode", "acceptEdits"},
+	"codex":  {"--sandbox", "workspace-write"},
+	"agy":    {"--mode", "accept-edits"},
+}
+
 // Only literal-prompt forms are accepted; unknown options could change input or resume semantics.
 func graphPromptSlot(argv []string) (int, error) {
 	if len(argv) == 0 {
@@ -39,6 +47,7 @@ func graphPromptSlot(argv []string) (int, error) {
 	}
 	slot := -1
 	selectionFlags := map[string]bool{}
+	permissionFlag := false
 	for i := start; i < len(argv); i++ {
 		arg := argv[i]
 		if arg == "--" {
@@ -88,6 +97,17 @@ func graphPromptSlot(argv []string) (int, error) {
 			continue
 		}
 		valueFlag := arg == "--model" || arg == "-m" || arg == "-C" || arg == "--cd" || arg == "--cwd" || arg == "--directory"
+		// Edit permission for a noninteractive worker: only the mode that lets
+		// the CLI edit files without a prompt while every tool call still goes
+		// through the Rein hook. Bypass, auto and full-access modes stay refused.
+		if editMode, ok := graphEditPermission[name]; ok && arg == editMode.flag {
+			if permissionFlag || i+1 >= len(argv) || argv[i+1] != editMode.value {
+				return 0, fmt.Errorf("graph %s accepts only %s %s", name, editMode.flag, editMode.value)
+			}
+			permissionFlag = true
+			i++
+			continue
+		}
 		if (name == "claude" || name == "agy") && arg == "--effort" {
 			valueFlag = true
 		}

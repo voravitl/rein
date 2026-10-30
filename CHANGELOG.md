@@ -11,6 +11,11 @@
 
 ### Fixed
 
+- `rein dag compile` launched print-mode workers with no edit permission, so with no one to answer a prompt
+  Claude Code could not edit and Codex fell back to its read-only sandbox. Compiled launches now carry the
+  worktree-scoped edit mode (`claude --permission-mode acceptEdits`, `codex exec --sandbox workspace-write`,
+  `agy --mode accept-edits`); the Rein hook still judges every tool call. The approved-argv parser accepts exactly
+  that one flag and value per harness and keeps refusing bypass, auto, dontAsk and full-access modes.
 - A schema-3 DAG worker that edited files without committing left a dirty worktree, so `rein dag integrate`
   refused it. After a successful worker exits, the supervisor now commits its edits itself (fixed author, repository
   hooks bypassed, literal pathspecs) before the checkpoint, so every agent leaves the same integrable shape. Any changed

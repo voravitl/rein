@@ -520,7 +520,7 @@ func renderDAGPrompt(p *dagspec.Prompt) string {
 func buildDAGLaunchArgv(prov providers.Provider, promptText string) ([]string, error) {
 	switch prov.Agent {
 	case "claude":
-		argv := []string{"claude", "-p"}
+		argv := []string{"claude", "-p", "--permission-mode", "acceptEdits"}
 		if prov.Model != "" {
 			argv = append(argv, "--model", prov.Model)
 		}
@@ -530,7 +530,7 @@ func buildDAGLaunchArgv(prov providers.Provider, promptText string) ([]string, e
 		argv = append(argv, "--", promptText)
 		return argv, nil
 	case "agy", "antigravity":
-		argv := []string{"agy", "-p"}
+		argv := []string{"agy", "-p", "--mode", "accept-edits"}
 		if prov.Model != "" {
 			argv = append(argv, "--model", prov.Model)
 		}
@@ -540,7 +540,7 @@ func buildDAGLaunchArgv(prov providers.Provider, promptText string) ([]string, e
 		argv = append(argv, "--", promptText)
 		return argv, nil
 	case "codex":
-		argv := []string{"codex", "exec"}
+		argv := []string{"codex", "exec", "--sandbox", "workspace-write"}
 		if prov.Model != "" {
 			argv = append(argv, "-m", prov.Model)
 		}
