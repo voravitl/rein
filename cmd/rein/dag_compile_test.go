@@ -415,12 +415,12 @@ func TestDagCmdCompileCalibrationWorker(t *testing.T) {
 	if md, _ := os.ReadFile(filepath.Join(outDir, "plan.md")); !strings.Contains(string(md), "calibration, unscored, worst case 2") {
 		t.Fatalf("plan.md does not show the calibration worker:\n%s", md)
 	}
-	for name, prof := range map[string]string{
-		"no caps":      writeTestProfile(t, t.TempDir(), []string{".env"}),
-		"over the cap": calibrationProfile(t, t.TempDir(), 1),
+	for name, tc := range map[string]struct{ prof, want string }{
+		"no caps":      {writeTestProfile(t, t.TempDir(), []string{".env"}), "no selection.calibration authorization"},
+		"over the cap": {calibrationProfile(t, t.TempDir(), 1), "exceeds the owner's calibration cap"},
 	} {
-		args := []string{"compile", "--spec", writeDagSpec(t, spec), "--config", cfgPath, "--profile", prof, "--out", filepath.Join(t.TempDir(), "o")}
-		if out, code := captureBoth(t, func() int { return cmdDag(args) }); code != 1 || !strings.Contains(out, "calibration") {
+		args := []string{"compile", "--spec", writeDagSpec(t, spec), "--config", cfgPath, "--profile", tc.prof, "--out", filepath.Join(t.TempDir(), "o")}
+		if out, code := captureBoth(t, func() int { return cmdDag(args) }); code != 1 || !strings.Contains(out, tc.want) {
 			t.Fatalf("%s: exit %d %q", name, code, out)
 		}
 	}

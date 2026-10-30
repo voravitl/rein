@@ -52,7 +52,7 @@ func TestDAGCalibrationWorkerPlanValidation(t *testing.T) {
 
 	// Calibration is a schema-3 field.
 	g.Tasks[0].Calibration = &TaskCalibration{Amount: 1}
-	if _, _, err := Decode(mustJSON(g)); err == nil {
-		t.Fatal("schema 2 accepted calibration")
+	if _, _, err := Decode(mustJSON(g)); err == nil || !strings.Contains(err.Error(), "require schema 3") {
+		t.Fatalf("schema 2 calibration: want schema 3 refusal, got %v", err)
 	}
 }
