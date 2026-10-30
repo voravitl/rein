@@ -228,6 +228,11 @@ func TestDagCmdCompileDryRun(t *testing.T) {
 			t.Fatalf("plan.md missing %q:\n%s", want, md)
 		}
 	}
+	// A literal <placeholder> pasted into a shell is a redirection.
+	block := string(md)[strings.Index(string(md), "```sh"):]
+	if strings.ContainsAny(block, "<>") {
+		t.Fatalf("plan.md owner commands contain < or >, which a shell parses as redirection:\n%s", block)
+	}
 	for _, task := range p.Tasks {
 		if !strings.Contains(string(md), "rein run allow "+p.Repo+" --task "+task.Task+" ") {
 			t.Fatalf("plan.md missing run allow for %s:\n%s", task.Task, md)

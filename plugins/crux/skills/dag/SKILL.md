@@ -65,7 +65,8 @@ Ask the repository owner to run the commands printed in `plan.md` in their own i
 ```bash
 # Example owner commands shown in plan.md:
 rein supervisor validate --plan <output-dir>/plan.json
-rein run start <repo> --run <run-id> --session <owner-session> --pid $$ --supervisor-plan <output-dir>/plan.json
+OWNER_SESSION="owner-$(id -un)-$$"
+rein run start <repo> --run <run-id> --session "$OWNER_SESSION" --pid $$ --supervisor-plan <output-dir>/plan.json
 rein run allow <repo> --task <run>-<id> --reason '<why>'   # once per task
 rein supervisor run --plan <output-dir>/plan.json
 ```

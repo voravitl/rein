@@ -630,15 +630,20 @@ func renderPlanMD(p supervisor.Plan, s *dagspec.Spec, outDir string) []byte {
 	fmt.Fprintln(&b, "\n## Human Approval & Supervisor Execution")
 	fmt.Fprintln(&b, "Run these in your own interactive terminal, not from an agent session: `run start --supervisor-plan` and `run allow` refuse agent sessions and non-TTY input.")
 	fmt.Fprintln(&b, "```sh")
+	// Placeholders are shell variables with working defaults: a literal <name>
+	// pasted into a shell is parsed as a redirection.
+	fmt.Fprintln(&b, "# 0. Your owner session id and the new integration branch (edit if you like)")
+	fmt.Fprintln(&b, `OWNER_SESSION="owner-$(id -un)-$$"`)
+	fmt.Fprintf(&b, "INTEGRATION_BRANCH=%s\n\n", planShellQuote("dag/"+p.Run))
 	fmt.Fprintf(&b, "# 1. Validate the compiled plan\nrein supervisor validate --plan %s\n\n", plan)
-	fmt.Fprintf(&b, "# 2. Start the supervised run (owner gate); outside Claude Code pass your own session id and shell pid\nrein run start %s --run %s --session <owner-session> --pid $$ --supervisor-plan %s\n\n", repo, planShellQuote(p.Run), plan)
+	fmt.Fprintf(&b, "# 2. Start the supervised run (owner gate) with your session id and shell pid\nrein run start %s --run %s --session \"$OWNER_SESSION\" --pid $$ --supervisor-plan %s\n\n", repo, planShellQuote(p.Run), plan)
 	fmt.Fprintln(&b, "# 3. Authorize each task of this plan")
 	for _, t := range p.Tasks {
 		fmt.Fprintf(&b, "rein run allow %s --task %s --reason %s\n", repo, planShellQuote(t.Task), planShellQuote("approved DAG plan "+p.Run))
 	}
 	fmt.Fprintf(&b, "\n# 4. Execute the DAG under supervision\nrein supervisor run --plan %s\n\n", plan)
 	fmt.Fprintf(&b, "# 5. Observe progress (single-shot JSON for agents; add --watch in a terminal)\nrein supervisor status --plan %s --json\n\n", plan)
-	fmt.Fprintf(&b, "# 6. After every task is done, integrate into a new branch\nrein dag integrate --plan %s --branch <new-branch>\n", plan)
+	fmt.Fprintf(&b, "# 6. After every task is done, integrate into a new branch\nrein dag integrate --plan %s --branch \"$INTEGRATION_BRANCH\"\n", plan)
 	fmt.Fprintln(&b, "```")
 
 	return b.Bytes()
