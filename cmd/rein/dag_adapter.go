@@ -597,7 +597,28 @@ func dagOperations(p supervisor.Plan, hash string) supervisor.DAGOperations {
 				if e.Cancelled {
 					observation.State = supervisor.Failed
 				}
+				// A successful worker's edits become one supervisor commit before
+				// the checkpoint, so integration sees the same shape for every agent.
+				// A refused commit goes through the normal failure path, so the
+				// checkpoint and accounting still settle, and keeps its own reason.
+				commitRefusal := ""
+				if observation.State == supervisor.Completed {
+					c, err := contract.Load(t.Task)
+					if err != nil {
+						return terminal, err
+					}
+					if err := graphLaunchAuthority(control, c, p.Run); err != nil {
+						return terminal, err
+					}
+					if _, err := commitDAGWorkerResult(c, e.Dispatch.Worktree, t.Task, a.Attempt); err != nil {
+						commitRefusal = err.Error()
+						observation.State = supervisor.Failed
+					}
+				}
 				out, err = finishGraphLocal(ctx, control, p, t, e.Dispatch, observation)
+				if err == nil && commitRefusal != "" {
+					out.Reason = commitRefusal
+				}
 			}
 			if err != nil {
 				return supervisor.TerminalResult{}, err

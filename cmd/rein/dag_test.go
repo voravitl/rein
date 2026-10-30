@@ -92,6 +92,17 @@ func TestDAGCLIWorkerRoutingCheckpointAndReplay(t *testing.T) {
 	if code != 0 || result.Status != "verified" || len(result.Completed) != 1 || result.Completed[0] != "task" {
 		t.Fatalf("CLI %d %+v", code, result)
 	}
+	// The worker only edited src/a.go; the supervisor committed it on top of base
+	// before the checkpoint, so the task worktree is clean and integrable.
+	if got := dagGitOut(t, e.wt, "status", "--porcelain", "--untracked-files=no"); got != "" {
+		t.Fatalf("worker worktree not committed:\n%s", got)
+	}
+	if got := dagGitOut(t, e.wt, "log", "-1", "--format=%an|%s"); !strings.HasPrefix(got, "rein-supervisor|rein: task result (") {
+		t.Fatalf("worker result commit = %q", got)
+	}
+	if got := dagGitOut(t, e.wt, "show", "HEAD:src/a.go"); got != "fixed" {
+		t.Fatalf("committed src/a.go = %q", got)
+	}
 	holds, err := budget.Outstanding()
 	if err != nil || len(holds) != 0 {
 		t.Fatalf("unsettled %+v %v", holds, err)

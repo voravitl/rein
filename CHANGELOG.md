@@ -11,6 +11,12 @@
 
 ### Fixed
 
+- A schema-3 DAG worker that edited files without committing left a dirty worktree, so `rein dag integrate`
+  refused it. After a successful worker exits, the supervisor now commits its edits itself (fixed author, repository
+  hooks bypassed, literal pathspecs) before the checkpoint, so every agent leaves the same integrable shape. Any changed
+  path outside the contract's allow globs or inside its deny globs refuses the commit, leaves the tree untouched and
+  ends the attempt for a human with the exact path. A worker that committed its own work and left the tree clean is
+  not committed again.
 - `plan.md` from `rein dag compile` pointed the owner commands at `<repo>/plan.json`, which compile never writes, and
   omitted the per-task `rein run allow` the supervisor needs. It now prints commands against `<out>/plan.json`,
   shell-quoted, with one `run allow` per task and the `dag integrate` step.

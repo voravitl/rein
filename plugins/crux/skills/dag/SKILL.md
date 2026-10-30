@@ -72,6 +72,8 @@ rein supervisor run --plan <output-dir>/plan.json
 ```
 **CRITICAL**: Do NOT execute these commands yourself or claim human approval. Wait for the owner to start the supervisor.
 
+Workers do not need to commit. When a worker exits successfully, the supervisor commits its edits on the task branch before taking the checkpoint. A changed path outside the node's `write` globs stops the attempt for a human instead.
+
 ### Phase 5: Observe Execution
 Monitor DAG execution with bounded single-shot status checks. Do NOT use `--watch` from an agent shell tool: it never returns until the run ends:
 ```bash
