@@ -1,8 +1,7 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -12,9 +11,12 @@ import (
 
 	"github.com/voravitl/rein/internal/contract"
 	"github.com/voravitl/rein/internal/routing"
-	"github.com/voravitl/rein/internal/run"
 	"github.com/voravitl/rein/internal/supervisor"
 )
+
+// readDAGTerminals replays the supervisor journal; unit tests of the
+// integration steps substitute recorded terminal states.
+var readDAGTerminals = supervisor.ReadDAGTerminals
 
 type integrateOpts struct {
 	PlanPath string
@@ -65,15 +67,10 @@ func runDagIntegrate(opts integrateOpts) error {
 		return fmt.Errorf("invalid branch name %q: %w", opts.Branch, err)
 	}
 
-	// 3. Locate journal and read terminal outcomes
-	journalPath, err := findDAGJournal(p, planHash)
+	// 3. Replay the supervisor journal with the supervisor's own validation
+	taskOutcomes, err := readDAGTerminals(context.Background(), p, planHash)
 	if err != nil {
-		return fmt.Errorf("cannot locate supervisor journal: %w", err)
-	}
-
-	taskOutcomes, err := readJournalTerminalOutcomes(journalPath, planHash)
-	if err != nil {
-		return fmt.Errorf("failed to read journal outcomes: %w", err)
+		return fmt.Errorf("cannot read supervisor journal: %w", err)
 	}
 
 	// 4. Verify each task is done and validate checkpoints
@@ -83,11 +80,11 @@ func runDagIntegrate(opts integrateOpts) error {
 			taskBase = t.Base
 		}
 		term, ok := taskOutcomes[t.Task]
-		if !ok {
+		if !ok || term.State == "ready" || term.State == "pending" {
 			return fmt.Errorf("task %q has not completed (no terminal result in journal)", t.Task)
 		}
-		if term.Outcome.State != "done" {
-			return fmt.Errorf("task %q is not done (state: %s, reason: %s)", t.Task, term.Outcome.State, term.Outcome.Reason)
+		if term.State != "done" {
+			return fmt.Errorf("task %q is not done (state: %s, reason: %s)", t.Task, term.State, term.Outcome.Reason)
 		}
 
 		if t.Kind == "worker" {
@@ -97,9 +94,6 @@ func runDagIntegrate(opts integrateOpts) error {
 
 			// Load and verify checkpoint
 			attempt := term.Attempt
-			if attempt == "" {
-				attempt = t.CurrentAttempt
-			}
 			cp, err := routing.LoadCheckpoint(t.Task, attempt)
 			if err != nil {
 				return fmt.Errorf("failed to load checkpoint for task %q: %w", t.Task, err)
@@ -199,7 +193,11 @@ func runDagIntegrate(opts integrateOpts) error {
 		commits := strings.Fields(strings.TrimSpace(string(revOut)))
 
 		for _, commit := range commits {
+			// The committer is rein, as for the supervisor's result commits; the
+			// author of each commit is preserved. A fresh machine may have no git
+			// identity at all, and integration must not depend on one.
 			cpCmd := exec.Command("git", "-C", wtDir, "cherry-pick", commit)
+			cpCmd.Env = append(os.Environ(), "GIT_COMMITTER_NAME="+dagCommitAuthor, "GIT_COMMITTER_EMAIL="+dagCommitEmail)
 			if cpOut, err := cpCmd.CombinedOutput(); err != nil {
 				// Non-zero exit: leave state for inspection, do NOT commit or push
 				return fmt.Errorf("cherry-pick conflict applying commit %s from task %q: %s", commit, t.Task, strings.TrimSpace(string(cpOut)))
@@ -277,69 +275,6 @@ func verifyHeadDescendsFromBase(wt, base string) error {
 	head := strings.TrimSpace(string(out))
 	cmd := exec.Command("git", "-C", wt, "merge-base", "--is-ancestor", base, head)
 	return cmd.Run()
-}
-
-type terminalInfo struct {
-	Attempt string
-	Outcome supervisor.Outcome
-}
-
-func findDAGJournal(p supervisor.Plan, planHash string) (string, error) {
-	loc, err := run.Locate(p.Repo)
-	if err != nil {
-		return "", err
-	}
-	marker := loc.Marker
-	jPath := marker + ".graph3-" + planHash + ".jsonl"
-	if fi, err := os.Stat(jPath); err == nil && !fi.IsDir() {
-		return jPath, nil
-	}
-	return "", fmt.Errorf("journal file not found at %s", jPath)
-}
-
-func readJournalTerminalOutcomes(journalPath, planHash string) (map[string]terminalInfo, error) {
-	f, err := os.Open(journalPath)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	outcomes := make(map[string]terminalInfo)
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-		var entry struct {
-			Phase     string          `json:"phase"`
-			Operation string          `json:"operation"`
-			Task      string          `json:"task"`
-			Attempt   string          `json:"attempt"`
-			Data      json.RawMessage `json:"data"`
-		}
-		if err := json.Unmarshal(line, &entry); err != nil {
-			continue
-		}
-		if entry.Phase == "result" && entry.Operation == "terminal" {
-			var term struct {
-				Outcome supervisor.Outcome `json:"outcome"`
-			}
-			if err := json.Unmarshal(entry.Data, &term); err == nil {
-				outcomes[entry.Task] = terminalInfo{
-					Attempt: entry.Attempt,
-					Outcome: term.Outcome,
-				}
-			}
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return outcomes, nil
 }
 
 func topologicalSortTasks(tasks []supervisor.Task) ([]supervisor.Task, error) {

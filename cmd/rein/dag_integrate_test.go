@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -166,13 +167,38 @@ func setupIntegrateFixture(t *testing.T) integrateFixture {
 	}
 }
 
+// writeJournal stubs the supervisor journal reader with recorded terminal
+// states, so these tests cover the integration steps (checkpoints, cherry-pick,
+// conflicts, refusals) alone. The real journal path is covered by
+// TestDagIntegrateAfterRealSupervisorRun. Each entry is a compact
+// {"task","attempt","data":{"outcome":{...}}} record.
 func writeJournal(t *testing.T, marker, planHash string, entries []string) {
 	t.Helper()
-	jPath := marker + ".graph3-" + planHash + ".jsonl"
-	data := strings.Join(entries, "\n") + "\n"
-	if err := os.WriteFile(jPath, []byte(data), 0644); err != nil {
-		t.Fatal(err)
+	_, _ = marker, planHash
+	got := map[string]supervisor.DAGTerminal{}
+	for _, raw := range entries {
+		var e struct {
+			Task    string `json:"task"`
+			Attempt string `json:"attempt"`
+			Data    struct {
+				Outcome struct {
+					State            string `json:"state"`
+					Reason           string `json:"reason"`
+					CheckpointDigest string `json:"checkpoint_digest"`
+				} `json:"outcome"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(raw), &e); err != nil {
+			t.Fatal(err)
+		}
+		got[e.Task] = supervisor.DAGTerminal{Attempt: e.Attempt, State: e.Data.Outcome.State,
+			Outcome: supervisor.Outcome{Reason: e.Data.Outcome.Reason, CheckpointDigest: e.Data.Outcome.CheckpointDigest}}
 	}
+	previous := readDAGTerminals
+	readDAGTerminals = func(context.Context, supervisor.Plan, string) (map[string]supervisor.DAGTerminal, error) {
+		return got, nil
+	}
+	t.Cleanup(func() { readDAGTerminals = previous })
 }
 
 func TestDagCmdIntegrateClean(t *testing.T) {

@@ -145,3 +145,34 @@ func TestDAGCalibrationWorkerRefusedOverCap(t *testing.T) {
 		t.Fatalf("refused calibration left holds %+v %v", holds, err)
 	}
 }
+
+// The real supervisor journal (finalize results) feeds rein dag integrate.
+func TestDagIntegrateAfterRealSupervisorRun(t *testing.T) {
+	e, path, _, _ := localDAGWorkerFixture(t)
+	// A fresh machine: no git identity anywhere.
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"} {
+		t.Setenv(k, "")
+		os.Unsetenv(k)
+	}
+	if out, code := captureBoth(t, func() int { return cmdDag([]string{"integrate", "--plan", path, "--branch", "too-early"}) }); code != 1 || !strings.Contains(out, "journal") {
+		t.Fatalf("integrate before any run: %d %s", code, out)
+	}
+	if out, code := capture(t, func() int { return cmdSupervisor([]string{"run", "--plan", path}) }); code != 0 || !strings.Contains(out, `"verified"`) {
+		t.Fatalf("supervisor run %d %s", code, out)
+	}
+	target := filepath.Join(t.TempDir(), "integrated")
+	out, code := captureBoth(t, func() int {
+		return cmdDag([]string{"integrate", "--plan", path, "--branch", "dag/integrated", "--worktree", target})
+	})
+	if code != 0 || !strings.Contains(out, "goal verification passed") {
+		t.Fatalf("integrate %d %s", code, out)
+	}
+	if got := dagGitOut(t, target, "show", "HEAD:src/a.go"); got != "fixed" {
+		t.Fatalf("integrated src/a.go = %q", got)
+	}
+	if got := dagGitOut(t, e.wt, "log", "-1", "--format=%an|%cn", "dag/integrated"); got != "rein-supervisor|rein-supervisor" {
+		t.Fatalf("integrated branch head author|committer = %q", got)
+	}
+}

@@ -73,6 +73,59 @@ func ReadDAGStatus(ctx context.Context, p Plan, hash string) (DAGStatus, error) 
 	return readDAGStatus(ctx, p, hash, time.Now)
 }
 
+// DAGTerminal is one task's validated terminal result in a schema-3 journal.
+type DAGTerminal struct {
+	Attempt string
+	State   string // the projected node state: done, wait, failed, blocked, cancelled, ...
+	Outcome Outcome
+}
+
+// ReadDAGTerminals replays the plan's schema-3 journal with the same envelope
+// and transition checks as status and returns each task's terminal result. A
+// journal that is changing, still owned by an invocation, or failed closed is
+// refused rather than partially trusted.
+func ReadDAGTerminals(ctx context.Context, p Plan, hash string) (map[string]DAGTerminal, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	authorized, h, err := Decode(p.raw)
+	if err != nil {
+		return nil, err
+	}
+	if p.Schema != 3 || h != hash || !bytes.Equal(mustJSON(p), mustJSON(authorized)) {
+		return nil, errors.New("terminal read requires unchanged schema 3 plan")
+	}
+	loc, err := run.Locate(p.Repo)
+	if err != nil {
+		return nil, err
+	}
+	// One immutable snapshot: status projection and terminals come from the same bytes.
+	raw, err := readDAGStatusFile(dagJournalPath(loc.Marker, hash), 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) == 0 || raw[len(raw)-1] != '\n' {
+		return nil, errors.New("DAG journal is still being written; wait for the supervisor to return")
+	}
+	snapshot, err := parseDAGStatus(p, hash, raw)
+	if err != nil {
+		return nil, err
+	}
+	view := projectDAGStatus(p, hash, snapshot)
+	if view.InvocationActive {
+		return nil, errors.New("DAG journal is still being written; wait for the supervisor to return")
+	}
+	if view.Status == "reconciliation" {
+		return nil, errors.New("DAG run needs reconciliation; inspect rein supervisor status before integrating")
+	}
+	out := map[string]DAGTerminal{}
+	for _, n := range view.Nodes {
+		s := snapshot.states[n.Task]
+		out[n.Task] = DAGTerminal{Attempt: s.Prepared.Attempt, State: n.State, Outcome: s.Terminal.Outcome}
+	}
+	return out, nil
+}
+
 func readDAGStatus(ctx context.Context, p Plan, hash string, now func() time.Time) (DAGStatus, error) {
 	var empty DAGStatus
 	authorized, h, err := Decode(p.raw)
