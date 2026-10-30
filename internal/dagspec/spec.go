@@ -51,6 +51,17 @@ type Node struct {
 	RequiredCapabilities  []string         `json:"required_capabilities,omitempty"`
 	ExpectedContextTokens int              `json:"expected_context_tokens,omitempty"`
 	Rationale             []RationaleEntry `json:"rationale,omitempty"`
+
+	// Calibration runs a worker that has no qualifying ledger evidence through
+	// the owner-authorized calibration lane. It needs exactly one provider; the
+	// owner profile's selection.calibration caps bound the amount.
+	Calibration *Calibration `json:"calibration,omitempty"`
+}
+
+// Calibration is the declared worst case of the worker's single call, in the
+// provider's billing unit.
+type Calibration struct {
+	Amount float64 `json:"amount"`
 }
 
 // RationaleEntry describes why a path is planned for modification.
@@ -111,10 +122,12 @@ var specShape = func() *shape {
 	input := obj(map[string]*shape{"producer": nil, "name": nil, "as": nil})
 	output := obj(map[string]*shape{"name": nil, "path": nil, "max_bytes": nil})
 	rationale := obj(map[string]*shape{"path": nil, "reason": nil})
+	calibration := obj(map[string]*shape{"amount": nil})
 	node := obj(map[string]*shape{
 		"id": nil, "kind": nil, "title": nil, "write": nil, "depends_on": nil, "prompt": prompt,
 		"verify": nil, "providers": nil, "inputs": arr(input), "outputs": arr(output), "action": action,
 		"kind_profile": nil, "required_capabilities": nil, "expected_context_tokens": nil, "rationale": arr(rationale),
+		"calibration": calibration,
 	})
 	return obj(map[string]*shape{
 		"schema": nil, "run": nil, "repo": nil, "base": nil, "goal": nil, "max_parallel": nil, "nodes": arr(node),

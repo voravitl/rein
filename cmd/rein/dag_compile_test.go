@@ -372,3 +372,83 @@ func TestDagCmdCompileRefusals(t *testing.T) {
 		})
 	}
 }
+
+// calibrationProfile is an owner profile with a valid selection policy and the
+// calibration authorization and caps the calibration lane needs.
+func calibrationProfile(t *testing.T, dir string, poolCap float64) string {
+	t.Helper()
+	zero, fp := 0, 0.2
+	cash := 0.0
+	prof := contract.Profile{SensitivePaths: []string{".env"}, Selection: &contract.Selection{Objective: "balanced", AcceptFreshness: []string{"client_catalog"}, InventoryMaxAgeMinutes: 60, Suite: "s1",
+		Worker:      contract.WorkerPolicy{QualityFloor: contract.QualityFloor{MinApprovalRate: 0.5, MaxFalseClaims: &zero}, MinCompleteAttempts: 1, MaxEvidenceAgeDays: 30},
+		Reviewer:    contract.ReviewerPolicy{MinDefectFixtures: 1, MinCleanFixtures: 1, MinRecall: 0.5, MinSpecificity: 0.5, MaxFalsePositiveRate: &fp, MaxEvidenceAgeDays: 30},
+		Calibration: &contract.Calibration{Authorization: "L8 pilot", MaxCalls: 3, PoolCaps: map[string]float64{"claude": poolCap}, MaxCashUSD: &cash}}}
+	p := filepath.Join(dir, "calibration-profile.json")
+	b, _ := json.Marshal(prof)
+	if err := os.WriteFile(p, b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestDagCmdCompileCalibrationWorker(t *testing.T) {
+	tmp := t.TempDir()
+	repo, base := setupTestGitRepo(t)
+	spec := strings.Replace(validCompileSpec(repo, base), `"kind_profile": "backend",`, `"kind_profile": "backend", "calibration": {"amount": 2},`, 1)
+	cfgPath := writeTestProvidersConfig(t, tmp)
+	outDir := filepath.Join(tmp, "out-cal")
+	args := []string{"compile", "--spec", writeDagSpec(t, spec), "--config", cfgPath, "--profile", calibrationProfile(t, tmp, 5), "--out", outDir}
+	if out, code := captureBoth(t, func() int { return cmdDag(args) }); code != 0 {
+		t.Fatalf("exit %d: %s", code, out)
+	}
+	b, err := os.ReadFile(filepath.Join(outDir, "plan.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p supervisor.Plan
+	if err := json.Unmarshal(b, &p); err != nil {
+		t.Fatal(err)
+	}
+	if c := p.Tasks[0].Calibration; c == nil || c.Amount != 2 || len(p.Tasks[0].Launches) != 1 {
+		t.Fatalf("calibration not carried into plan: %+v", p.Tasks[0])
+	}
+	if md, _ := os.ReadFile(filepath.Join(outDir, "plan.md")); !strings.Contains(string(md), "calibration, unscored, worst case 2") {
+		t.Fatalf("plan.md does not show the calibration worker:\n%s", md)
+	}
+	for name, tc := range map[string]struct{ prof, want string }{
+		"no caps":      {writeTestProfile(t, t.TempDir(), []string{".env"}), "no selection.calibration authorization"},
+		"over the cap": {calibrationProfile(t, t.TempDir(), 1), "exceeds the owner's calibration cap"},
+	} {
+		args := []string{"compile", "--spec", writeDagSpec(t, spec), "--config", cfgPath, "--profile", tc.prof, "--out", filepath.Join(t.TempDir(), "o")}
+		if out, code := captureBoth(t, func() int { return cmdDag(args) }); code != 1 || !strings.Contains(out, tc.want) {
+			t.Fatalf("%s: exit %d %q", name, code, out)
+		}
+	}
+
+	// Two calibration workers: each fits the pool cap alone, together they do not.
+	second := `{
+      "id": "worker2", "kind": "worker", "title": "worker 2", "write": ["docs/**"], "depends_on": [],
+      "kind_profile": "backend", "required_capabilities": ["repository-edit"], "expected_context_tokens": 5000,
+      "rationale": [{"path": "docs/a.md", "reason": "doc"}], "calibration": {"amount": 2},
+      "prompt": {"task": "t2", "deliverable": "d2", "scope": "s2", "verify": "v2", "stop_when": "w2"},
+      "verify": [["/bin/true"]], "providers": ["claude"], "inputs": [], "outputs": []
+    },
+    {
+      "id": "action1",`
+	two := strings.Replace(spec, `{
+      "id": "action1",`, second, 1)
+	two = strings.Replace(two, `"depends_on": ["worker1"],`, `"depends_on": ["worker1", "worker2"],`, 1)
+	for name, tc := range map[string]struct {
+		prof string
+		code int
+		want string
+	}{
+		"pool total over cap": {calibrationProfile(t, t.TempDir(), 3), 1, `together need 4 in pool "claude"`},
+		"pool total fits":     {calibrationProfile(t, t.TempDir(), 4), 0, ""},
+	} {
+		args := []string{"compile", "--spec", writeDagSpec(t, two), "--config", cfgPath, "--profile", tc.prof, "--out", filepath.Join(t.TempDir(), "o")}
+		if out, code := captureBoth(t, func() int { return cmdDag(args) }); code != tc.code || !strings.Contains(out, tc.want) {
+			t.Fatalf("%s: exit %d %q", name, code, out)
+		}
+	}
+}

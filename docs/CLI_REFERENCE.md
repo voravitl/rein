@@ -777,6 +777,7 @@ rein dag compile --spec /path/to/spec.json --config /path/to/providers.json --pr
   3. Installs vendor hooks (`rein hooks install`) for worker harnesses (`claude`, `codex`, `agy`, `opencode`, `hermes`).
   4. Generates and binds `TaskProfile` with task routing fields and post-hook contract hash.
   5. Validates the resulting plan with `validateLocalDAGPlan` in-process before exiting.
+- **Workers without evidence (calibration).** A worker is normally chosen by scored automatic selection, which needs ledger evidence; on a fresh install no worker qualifies and the task parks with `no_eligible_candidate`. A worker node may instead declare `"calibration": {"amount": N}` with exactly one provider. Compile carries it into the plan task (schema 3 only) and refuses it unless the owner profile has `selection.calibration` (authorization, `max_calls`, `pool_caps`, `max_cash_usd`) whose pool cap covers `N`, and refuses a plan whose calibration workers together exceed `max_calls`, a pool cap or `max_cash_usd` (caps are per run; spend already in the ledger is checked at reservation). At run time the supervisor prepares that worker with `route calibrate --prepare` semantics: no probe and no ranking, one call reserved against the calibration caps, a single-use receipt with `selection_mode: calibration_unscored`, then the normal lease, hook, checkpoint and settlement. Unmeasured usage is charged at `N`. The result is unscored evidence: it does not qualify the model or waive review. `plan.md` marks such workers `(calibration, unscored, worst case N)`.
 - `plan.md` prints the owner commands against `<out>/plan.json`: `rein supervisor validate`, `rein run start --supervisor-plan`, one `rein run allow --task` per task, `rein supervisor run`, single-shot `rein supervisor status --json`, and `rein dag integrate`. The owner runs them in an interactive terminal; `run start --supervisor-plan` and `run allow` refuse agent sessions.
 
 ### `rein dag integrate`
@@ -800,8 +801,9 @@ rein dag integrate --plan /path/to/plan.json --branch feature-ready --worktree /
 - Performs topological cherry-pick across worker task commits.
 - Refuses a `--branch` that already exists or fails `git check-ref-format --branch`; integration always creates a new branch at the plan base in a separate worktree (default under the system temp directory).
 - **Fail-safe on conflict**: stops at the first cherry-pick conflict (exit code `1`). The new branch and its integration worktree are left in the conflicted state for inspection; nothing is pushed and no existing branch is modified.
-- After all cherry-picks, runs every task's `verify` commands in the integration worktree; any failure exits `1`.
-- **Goal verification**: executes the verification node's `verify` command(s) inside the integration worktree before completion.
+- After all cherry-picks, runs every worker task's `verify` commands in the integration worktree; any failure exits `1`.
+- An `action` node's `verify` checks that action's own output directory (`/out`), which is not part of git. The supervisor already ran it in the action sandbox and journaled the node `done`, so integrate does not run it again.
+- Task states come from replaying the supervisor journal with the same checks as `rein supervisor status`; a journal that is still being written or needs reconciliation is refused.
 
 ---
 

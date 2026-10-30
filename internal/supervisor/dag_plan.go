@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"strings"
 
@@ -66,14 +67,18 @@ func validateDAG(p Plan) error {
 			if t.Action != nil || t.ProcessPolicy != "non_detaching" {
 				return errors.New("worker requires non_detaching policy and no action")
 			}
+			if c := t.Calibration; c != nil && (len(t.Launches) != 1 || !(c.Amount > 0) || math.IsInf(c.Amount, 0)) {
+				return errors.New("calibration worker requires exactly one launch provider and a finite amount > 0")
+			}
 			legacy := p
 			legacy.Tasks = []Task{t}
 			legacy.Tasks[0].DependsOn = nil
+			legacy.Tasks[0].Calibration = nil
 			if err := validateGraph(legacy); err != nil {
 				return err
 			}
 		case "action":
-			if t.Action == nil || len(t.Profile) != 0 || t.ConfigPath != "" || t.ConfigDigest != "" || len(t.Launches) != 0 || t.ProcessPolicy != "" || len(t.AllowedUntracked) != 0 {
+			if t.Action == nil || len(t.Profile) != 0 || t.ConfigPath != "" || t.ConfigDigest != "" || len(t.Launches) != 0 || t.ProcessPolicy != "" || len(t.AllowedUntracked) != 0 || t.Calibration != nil {
 				return errors.New("action forbids worker routing fields")
 			}
 			a := t.Action

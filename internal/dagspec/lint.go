@@ -3,6 +3,7 @@ package dagspec
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -160,11 +161,19 @@ func lintSpec(s *Spec) (errs, warns []Finding) {
 					add(CodeInvalidSpec, n.ID, "rationale entry must have non-empty path and reason")
 				}
 			}
+			if c := n.Calibration; c != nil {
+				if len(n.Providers) != 1 {
+					add(CodeInvalidSpec, n.ID, "calibration worker must name exactly one provider")
+				}
+				if !(c.Amount > 0) || math.IsInf(c.Amount, 0) {
+					add(CodeInvalidSpec, n.ID, "calibration.amount must be a finite number > 0")
+				}
+			}
 		case "action":
 			if n.Action == nil || !validImage(n.Action.Image) {
 				add(CodeActionMissingImage, n.ID, "action node requires action.image as sha256:<64 lowercase hex>")
 			}
-			if n.KindProfile != "" || len(n.RequiredCapabilities) > 0 || n.ExpectedContextTokens > 0 || len(n.Rationale) > 0 {
+			if n.KindProfile != "" || len(n.RequiredCapabilities) > 0 || n.ExpectedContextTokens > 0 || len(n.Rationale) > 0 || n.Calibration != nil {
 				add(CodeInvalidKind, n.ID, "action node must not carry worker routing fields")
 			}
 		default:

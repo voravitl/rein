@@ -35,6 +35,7 @@ Draft a JSON specification (`rein dag lint` reads JSON only, 8 MiB cap) adhering
   - Disjoint write scopes: no two workers may have overlapping write globs.
   - Acyclic graph: `depends_on` must reference valid node IDs without cycles.
   - Each node declares its own prompt, verify commands, inputs and outputs; workers name allowed providers.
+  - A worker with no ledger evidence yet (fresh install) can only run if it names exactly one provider and declares `"calibration": {"amount": N}`, and the owner profile authorizes calibration caps covering `N`. Otherwise scored selection parks it with `no_eligible_candidate`. Never invent ledger evidence to get past selection.
   - Owner-only fields (`launches`, `profile`, `config_path`, `config_digest`, `process_policy`, `contract_hash`) are refused anywhere in the spec: argv and config come only from the owner's files.
 
 Validate the spec format:

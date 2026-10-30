@@ -8,9 +8,21 @@
   compile it into an owner-approved schema-3 supervisor plan (worktrees, contracts, hooks), and after the run merge
   the finished worker commits into one new branch with checkpoint, clean-worktree and ancestry checks.
 - Crux `dag` skill (56 skills); Crux supervisor scripts accept schema-3 plans.
+- DAG calibration lane: a worker node may declare `"calibration": {"amount": N}` with exactly one provider, so a fresh
+  install with no ledger evidence can still run DAG workers. Compile refuses it unless the owner profile's
+  `selection.calibration` caps cover each node and the plan's total calls, per-pool amount and cash. The supervisor
+  prepares such a worker without probe or ranking, reserves one call against the calibration caps and issues a
+  single-use `calibration_unscored` receipt; the result is unscored evidence and does not qualify the model.
 
 ### Fixed
 
+- `rein dag integrate` looked for an `operation: "terminal"` journal entry that the supervisor never writes, so it
+  refused every real run as not completed. It now replays the supervisor journal with the same checks as
+  `rein supervisor status` and refuses a journal that is still being written or needs reconciliation. Its cherry-picks
+  commit as `rein-supervisor`, so integration works on a machine with no git identity.
+- `rein dag integrate` ran an action node's `verify` (which reads the action's `/out`, not in git) in the integration
+  worktree, so a DAG whose verification node is an action could never integrate. Only worker verify commands are
+  re-run on the combined tree; action verify already ran in the action sandbox.
 - `rein dag compile` launched print-mode workers with no edit permission, so with no one to answer a prompt
   Claude Code could not edit and Codex fell back to its read-only sandbox. Compiled launches now carry the
   worktree-scoped edit mode (`claude --permission-mode acceptEdits`, `codex exec --sandbox workspace-write`,

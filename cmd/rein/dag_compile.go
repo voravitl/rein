@@ -8,9 +8,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -292,6 +294,12 @@ func compileDAG(spec *dagspec.Spec, cfg *providers.Config, cfgPath, cfgDigest st
 			t.ConfigPath = cfgPath
 			t.ConfigDigest = cfgDigest
 			t.Launches = launches
+			if n.Calibration != nil {
+				if err := checkDAGCalibration(n, cfg, ownerProf); err != nil {
+					return nil, err
+				}
+				t.Calibration = &supervisor.TaskCalibration{Amount: n.Calibration.Amount}
+			}
 
 			// Initial TaskProfile (contract_hash will be bound after hooks)
 			tp := &routing.TaskProfile{
@@ -384,6 +392,9 @@ func compileDAG(spec *dagspec.Spec, cfg *providers.Config, cfgPath, cfgDigest st
 	planJSON, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("cannot encode plan: %w", err)
+	}
+	if err := checkDAGCalibrationTotals(spec, cfg, ownerProf); err != nil {
+		return nil, err
 	}
 
 	planMD := renderPlanMD(plan, spec, outDir)
@@ -566,6 +577,64 @@ func buildDAGLaunchArgv(prov providers.Provider, promptText string) ([]string, e
 	}
 }
 
+// checkDAGCalibration refuses at compile time a calibration worker the owner's
+// profile could never fund, so the failure is visible before approval. Runtime
+// (routing.PrepareCalibration) re-checks every gate against current state.
+func checkDAGCalibration(n dagspec.Node, cfg *providers.Config, owner *contract.Profile) error {
+	sel := owner.EffectiveSelection()
+	if sel == nil || sel.Calibration == nil {
+		return fmt.Errorf("worker node %q uses calibration but the owner profile has no selection.calibration authorization and caps", n.ID)
+	}
+	if problems := sel.Problems(); len(problems) > 0 {
+		return fmt.Errorf("worker node %q uses calibration but the owner selection policy is invalid: %s", n.ID, problems[0])
+	}
+	prov := cfg.Providers[n.Providers[0]]
+	if prov.Billing == nil {
+		return fmt.Errorf("worker node %q calibration provider %q declares no billing", n.ID, n.Providers[0])
+	}
+	limit, ok := sel.Calibration.PoolCaps[prov.Billing.Pool]
+	if !ok || n.Calibration.Amount > limit {
+		return fmt.Errorf("worker node %q calibration amount %g exceeds the owner's calibration cap for pool %q", n.ID, n.Calibration.Amount, prov.Billing.Pool)
+	}
+	return nil
+}
+
+// checkDAGCalibrationTotals refuses a plan whose calibration workers together
+// exceed the owner's per-run calibration caps (calls, per pool, cash). Each
+// node fitting alone is not enough: the run would stop partway, after the
+// first workers had already spent. Usage already in the ledger is checked at
+// runtime by the reservation.
+func checkDAGCalibrationTotals(spec *dagspec.Spec, cfg *providers.Config, owner *contract.Profile) error {
+	calls, cash, pools := 0, 0.0, map[string]float64{}
+	for _, n := range spec.Nodes {
+		if n.Calibration == nil {
+			continue
+		}
+		b := cfg.Providers[n.Providers[0]].Billing
+		calls++
+		pools[b.Pool] += n.Calibration.Amount
+		if b.Unit == "usd" {
+			cash += n.Calibration.Amount
+		}
+	}
+	if calls == 0 {
+		return nil
+	}
+	cal := owner.EffectiveSelection().Calibration
+	if calls > cal.MaxCalls {
+		return fmt.Errorf("plan has %d calibration workers but the owner's calibration cap allows %d calls per run", calls, cal.MaxCalls)
+	}
+	for _, pool := range slices.Sorted(maps.Keys(pools)) {
+		if pools[pool] > cal.PoolCaps[pool] {
+			return fmt.Errorf("calibration workers together need %g in pool %q, over the owner's calibration cap %g", pools[pool], pool, cal.PoolCaps[pool])
+		}
+	}
+	if cal.MaxCashUSD != nil && cash > *cal.MaxCashUSD {
+		return fmt.Errorf("calibration workers together need %g USD, over the owner's calibration cash cap %g", cash, *cal.MaxCashUSD)
+	}
+	return nil
+}
+
 func harnessVendor(agent string) string {
 	switch agent {
 	case "claude":
@@ -619,6 +688,9 @@ func renderPlanMD(p supervisor.Plan, s *dagspec.Spec, outDir string) []byte {
 			}
 			sort.Strings(provs)
 			details = "Providers: " + strings.Join(provs, ", ")
+			if t.Calibration != nil {
+				details += fmt.Sprintf(" (calibration, unscored, worst case %g)", t.Calibration.Amount)
+			}
 		} else if t.Kind == "action" && t.Action != nil {
 			details = fmt.Sprintf("Image: `%s`", t.Action.Sandbox.Image)
 		}
