@@ -541,14 +541,17 @@ func buildDAGLaunchArgv(prov providers.Provider, promptText string) ([]string, e
 		argv = append(argv, "--", promptText)
 		return argv, nil
 	case "agy", "antigravity":
-		argv := []string{"agy", "-p", "--mode", "accept-edits"}
+		// agy's -p/--print takes the NEXT argument as the prompt (unlike
+		// claude -p, a bare mode flag). The prompt therefore follows --print
+		// directly; nothing may sit between them.
+		argv := []string{"agy", "--mode", "accept-edits"}
 		if prov.Model != "" {
 			argv = append(argv, "--model", prov.Model)
 		}
 		if prov.Effort != "" {
 			argv = append(argv, "--effort", prov.Effort)
 		}
-		argv = append(argv, "--", promptText)
+		argv = append(argv, "--print", promptText)
 		return argv, nil
 	case "codex":
 		argv := []string{"codex", "exec", "--sandbox", "workspace-write"}

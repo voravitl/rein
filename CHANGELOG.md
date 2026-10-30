@@ -16,6 +16,10 @@
 
 ### Fixed
 
+- `rein dag compile` launched Antigravity as `agy -p --mode accept-edits ... -- <prompt>`. agy's `-p`/`--print` takes the
+  next argument as the prompt, so agy 1.4.10 read `--mode` as the prompt and exited 2 before any model call (found in
+  the first live L8 run). Compiled agy launches now end with `--print <prompt>`, and the approved-argv parser treats
+  agy `-p`/`--print`/`--prompt` as prompt-taking flags, refusing a bare `-p` followed by a flag or `--`.
 - `rein dag integrate` looked for an `operation: "terminal"` journal entry that the supervisor never writes, so it
   refused every real run as not completed. It now replays the supervisor journal with the same checks as
   `rein supervisor status` and refuses a journal that is still being written or needs reconciliation. Its cherry-picks
