@@ -30,3 +30,20 @@ func TestBuildDAGLaunchArgvGrantsWorktreeEdits(t *testing.T) {
 		}
 	}
 }
+
+// agy 1.4.10 reads the argument right after -p/--print as the prompt, so the
+// compiled argv must end with --print followed by the prompt and carry no "--".
+func TestBuildDAGLaunchArgvAgyPromptFollowsPrint(t *testing.T) {
+	prompt := "-starts with a dash\nTASK: x"
+	argv, err := buildDAGLaunchArgv(providers.Provider{Agent: "antigravity", Model: "m", Effort: "low"}, prompt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(argv)
+	if n < 2 || argv[n-2] != "--print" || argv[n-1] != prompt || slices.Contains(argv, "--") || slices.Contains(argv, "-p") {
+		t.Fatalf("agy argv = %q", argv)
+	}
+	if slot, err := graphPromptSlot(argv); err != nil || slot != n-1 {
+		t.Fatalf("graphPromptSlot(%q) = %d, %v", argv, slot, err)
+	}
+}

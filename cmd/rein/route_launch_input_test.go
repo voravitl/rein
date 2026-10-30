@@ -27,7 +27,8 @@ func TestGraphPromptSlotCanonicalAndRejectAmbiguity(t *testing.T) {
 		// The worktree-scoped edit mode compile emits for print-mode workers.
 		{"claude", "-p", "--permission-mode", "acceptEdits", "--model", "m", "--", prompt},
 		{"codex", "exec", "--sandbox", "workspace-write", "-m", "m", prompt},
-		{"agy", "-p", "--mode", "accept-edits", "--model", "m", "--", prompt},
+		{"agy", "--mode", "accept-edits", "--model", "m", "--print", prompt},
+		{"agy", "-p", prompt, "--mode", "accept-edits"},
 	} {
 		i, err := graphPromptSlot(argv)
 		if err != nil || argv[i] != prompt {
@@ -41,6 +42,12 @@ func TestGraphPromptSlotCanonicalAndRejectAmbiguity(t *testing.T) {
 		{"codex", "exec", "--model", "m", "-"},
 		{"agy", "--print", "--input-format", "stream-json", "task"},
 		{"agy", "--print", "--resume", "session", "task"},
+		// agy -p takes the next argument as the prompt: a flag there would be
+		// sent as the prompt and the real prompt dropped (live agy 1.4.10).
+		{"agy", "-p", "--mode", "accept-edits", "--model", "m", "--", "task"},
+		{"agy", "-p", "--", "task"},
+		{"agy", "--print", "task", "--", "other"},
+		{"agy", "--print", "a", "--prompt", "b"},
 		{"opencode2", "run", "--standalone", "--variant", "high", "task"},
 		{"opencode2", "run", "-m", "m", "task"},
 		{"opencode2", "run", "--standalone", "--session", "s", "task"},

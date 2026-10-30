@@ -57,11 +57,13 @@ func graphPromptSlot(argv []string) (int, error) {
 			slot = i + 1
 			break
 		}
-		if (name == "claude" || name == "agy") && (arg == "-p" || arg == "--print") {
+		if name == "claude" && (arg == "-p" || arg == "--print") {
 			printMode = true
 			continue
 		}
-		if name == "agy" && arg == "--prompt" {
+		// agy's -p, --print and --prompt all take the NEXT argument as the
+		// prompt; a flag after a bare -p would be read as the prompt itself.
+		if name == "agy" && (arg == "-p" || arg == "--print" || arg == "--prompt") {
 			if i+1 >= len(argv) || slot != -1 {
 				return 0, fmt.Errorf("graph requires one explicit prompt")
 			}
