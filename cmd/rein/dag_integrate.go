@@ -206,10 +206,16 @@ func runDagIntegrate(opts integrateOpts) error {
 		}
 	}
 
-	// 8. Run goal verification command(s)
-	// Find the verification node (node depending on all other tasks or final node with Verify)
+	// 8. Run goal verification command(s) on the combined tree.
+	// Worker verify commands check files in the worktree, so they are re-run
+	// against the integrated result. An action node's verify checks that
+	// action's own output directory, which is not in git; the supervisor
+	// already ran it in the action sandbox and the journal records it done.
 	verificationRan := false
 	for _, t := range sortedTasks {
+		if t.Kind == "action" {
+			continue
+		}
 		if len(t.Verify) > 0 {
 			for _, vcmd := range t.Verify {
 				if len(vcmd) == 0 {

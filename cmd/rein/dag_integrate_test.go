@@ -104,7 +104,7 @@ func setupIntegrateFixture(t *testing.T) integrateFixture {
         "verify": "true",
         "stop_when": "done"
       },
-      "verify": [["/bin/true"]],
+      "verify": [["/bin/sh", "-c", "test \"$(cat /out/report.txt)\" = ok"]],
       "inputs": [],
       "outputs": [{"name": "report", "path": "report.json", "max_bytes": 1024}],
       "action": {

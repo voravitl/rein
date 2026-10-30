@@ -230,7 +230,8 @@ the run executes, an agent observes it with single-shot
 `rein supervisor status --plan /absolute/out/plan.json --json`. When every task is
 `done`, `rein dag integrate --plan /absolute/out/plan.json --branch NAME` creates a
 new branch and cherry-picks the worker commits in dependency order after checking
-checkpoints, clean worktrees and base ancestry, then runs the verify commands.
+checkpoints, clean worktrees and base ancestry, then runs the worker verify commands
+on the combined tree. Action verify commands already ran in the action sandbox.
 Workers are chosen by scored selection, which needs ledger evidence. On a fresh
 install, a worker node can declare `"calibration": {"amount": N}` with one
 provider to run through the owner's capped calibration lane instead (unscored,

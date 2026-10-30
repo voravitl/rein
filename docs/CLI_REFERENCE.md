@@ -801,8 +801,9 @@ rein dag integrate --plan /path/to/plan.json --branch feature-ready --worktree /
 - Performs topological cherry-pick across worker task commits.
 - Refuses a `--branch` that already exists or fails `git check-ref-format --branch`; integration always creates a new branch at the plan base in a separate worktree (default under the system temp directory).
 - **Fail-safe on conflict**: stops at the first cherry-pick conflict (exit code `1`). The new branch and its integration worktree are left in the conflicted state for inspection; nothing is pushed and no existing branch is modified.
-- After all cherry-picks, runs every task's `verify` commands in the integration worktree; any failure exits `1`.
-- **Goal verification**: executes the verification node's `verify` command(s) inside the integration worktree before completion.
+- After all cherry-picks, runs every worker task's `verify` commands in the integration worktree; any failure exits `1`.
+- An `action` node's `verify` checks that action's own output directory (`/out`), which is not part of git. The supervisor already ran it in the action sandbox and journaled the node `done`, so integrate does not run it again.
+- Task states come from replaying the supervisor journal with the same checks as `rein supervisor status`; a journal that is still being written or needs reconciliation is refused.
 
 ---
 
