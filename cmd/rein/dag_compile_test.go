@@ -208,8 +208,49 @@ func TestDagCmdCompileDryRun(t *testing.T) {
 	}
 
 	planMDPath := filepath.Join(outDir, "plan.md")
-	if _, err := os.Stat(planMDPath); err != nil {
+	md, err := os.ReadFile(planMDPath)
+	if err != nil {
 		t.Fatalf("missing plan.md: %v", err)
+	}
+	// Owner commands must point at the compiled plan in --out, never at <repo>/plan.json,
+	// and must authorize every task before the supervisor can launch it.
+	wantPlan := filepath.Join(outDir, "plan.json")
+	if strings.Contains(string(md), filepath.Join(p.Repo, "plan.json")) {
+		t.Fatalf("plan.md points owner commands at repo/plan.json:\n%s", md)
+	}
+	for _, want := range []string{
+		"rein supervisor validate --plan " + wantPlan,
+		"--supervisor-plan " + wantPlan,
+		"rein supervisor run --plan " + wantPlan,
+		"rein dag integrate --plan " + wantPlan,
+	} {
+		if !strings.Contains(string(md), want) {
+			t.Fatalf("plan.md missing %q:\n%s", want, md)
+		}
+	}
+	// A literal <placeholder> pasted into a shell is a redirection.
+	block := string(md)[strings.Index(string(md), "```sh"):]
+	if strings.ContainsAny(block, "<>") {
+		t.Fatalf("plan.md owner commands contain < or >, which a shell parses as redirection:\n%s", block)
+	}
+	for _, task := range p.Tasks {
+		if !strings.Contains(string(md), "rein run allow "+p.Repo+" --task "+task.Task+" ") {
+			t.Fatalf("plan.md missing run allow for %s:\n%s", task.Task, md)
+		}
+	}
+}
+
+func TestPlanShellQuote(t *testing.T) {
+	for in, want := range map[string]string{
+		"/tmp/out/plan.json": "/tmp/out/plan.json",
+		"/tmp/my out/p.json": "'/tmp/my out/p.json'",
+		"it's":               `'it'\''s'`,
+		"$(touch x)":         "'$(touch x)'",
+		"":                   "''",
+	} {
+		if got := planShellQuote(in); got != want {
+			t.Errorf("planShellQuote(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 

@@ -210,6 +210,29 @@ reconciliation, and 2 for invalid arguments or preflight refusal. Optional fresh
 `rein supervisor invocation --plan FILE --invocation ID` interface as schema 2.
 Invocation return telemetry does not itself prove cleanup or authorize recovery.
 
+## Compiling a plan from a spec and integrating the results
+
+Hand-binding a template as above is the low-level path. Agents normally write a
+`rein_dag_spec/v1` spec instead, which cannot carry argv, config, profile or
+contract hashes, and the owner's files supply those:
+
+```sh
+rein dag lint --spec spec.json
+rein dag compile --spec spec.json --config providers.json --profile profile.json \
+  --out /absolute/out --apply
+```
+
+`--apply` creates one worktree per node under `/absolute/out/worktrees/`, saves
+the contracts, installs hooks and writes `/absolute/out/plan.json` and
+`plan.md`. `plan.md` lists the owner commands (`supervisor validate`,
+`run start --supervisor-plan`, one `run allow` per task, `supervisor run`). While
+the run executes, an agent observes it with single-shot
+`rein supervisor status --plan /absolute/out/plan.json --json`. When every task is
+`done`, `rein dag integrate --plan /absolute/out/plan.json --branch NAME` creates a
+new branch and cherry-picks the worker commits in dependency order after checking
+checkpoints, clean worktrees and base ancestry, then runs the verify commands.
+See [CLI reference §17](CLI_REFERENCE.md#17-rein-dag--dag-spec-lint-compile-and-integrate).
+
 ## Verification boundary
 
 This implementation's acceptance requires container receipts: full tests, vet,

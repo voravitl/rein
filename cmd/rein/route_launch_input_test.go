@@ -24,6 +24,10 @@ func TestGraphPromptSlotCanonicalAndRejectAmbiguity(t *testing.T) {
 		{"agy", "--model", "m", "--effort", "high", "--print", prompt},
 		{"agy", "--prompt", prompt, "--model", "m"},
 		{"opencode2", "run", "--standalone", "-m", "m", prompt},
+		// The worktree-scoped edit mode compile emits for print-mode workers.
+		{"claude", "-p", "--permission-mode", "acceptEdits", "--model", "m", "--", prompt},
+		{"codex", "exec", "--sandbox", "workspace-write", "-m", "m", prompt},
+		{"agy", "-p", "--mode", "accept-edits", "--model", "m", "--", prompt},
 	} {
 		i, err := graphPromptSlot(argv)
 		if err != nil || argv[i] != prompt {
@@ -71,6 +75,21 @@ func TestGraphPromptSlotNativeCruxSelection(t *testing.T) {
 		{"codex", "exec", "--agent", "crux-agent", prompt},
 		{"opencode2", "run", "--standalone", "--agent", "crux", prompt},
 		{"claude", "--plugin-dir", "/crux", "--permission-mode", "bypassPermissions", "-p", prompt},
+		// Only the worktree-scoped edit mode is allowed; every escalation stays refused.
+		{"claude", "--permission-mode", "auto", "-p", prompt},
+		{"claude", "--permission-mode", "dontAsk", "-p", prompt},
+		{"claude", "--permission-mode", "acceptEdits", "--permission-mode", "acceptEdits", "-p", prompt},
+		{"claude", "--permission-mode", "-p", prompt},
+		{"claude", "--dangerously-skip-permissions", "-p", prompt},
+		{"codex", "exec", "--sandbox", "danger-full-access", prompt},
+		{"codex", "exec", "--sandbox", "read-only", "--sandbox", "workspace-write", prompt},
+		{"codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt},
+		{"codex", "exec", "-s", "danger-full-access", prompt},
+		{"agy", "--mode", "auto", "--print", prompt},
+		{"agy", "--dangerously-skip-permissions", "--print", prompt},
+		{"agy", "--permission-mode", "acceptEdits", "--print", prompt},
+		{"claude", "--mode", "accept-edits", "-p", prompt},
+		{"codex", "exec", "--permission-mode", "acceptEdits", prompt},
 	} {
 		if _, err := graphPromptSlot(argv); err == nil {
 			t.Fatalf("accepted ambiguous or unsupported native selection: %v", argv)

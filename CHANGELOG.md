@@ -2,8 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- `rein dag lint`, `rein dag compile` and `rein dag integrate`: validate an agent-written `rein_dag_spec/v1` graph,
+  compile it into an owner-approved schema-3 supervisor plan (worktrees, contracts, hooks), and after the run merge
+  the finished worker commits into one new branch with checkpoint, clean-worktree and ancestry checks.
+- Crux `dag` skill (56 skills); Crux supervisor scripts accept schema-3 plans.
+
 ### Fixed
 
+- `rein dag compile` launched print-mode workers with no edit permission, so with no one to answer a prompt
+  Claude Code could not edit and Codex fell back to its read-only sandbox. Compiled launches now carry the
+  worktree-scoped edit mode (`claude --permission-mode acceptEdits`, `codex exec --sandbox workspace-write`,
+  `agy --mode accept-edits`); the Rein hook still judges every tool call. The approved-argv parser accepts exactly
+  that one flag and value per harness and keeps refusing bypass, auto, dontAsk and full-access modes.
+- A schema-3 DAG worker that edited files without committing left a dirty worktree, so `rein dag integrate`
+  refused it. After a successful worker exits, the supervisor now commits its edits itself (fixed author, repository
+  hooks bypassed, literal pathspecs) before the checkpoint, so every agent leaves the same integrable shape. Any changed
+  path outside the contract's allow globs or inside its deny globs refuses the commit, leaves the tree untouched and
+  ends the attempt for a human with the exact path. A worker that committed its own work and left the tree clean is
+  not committed again.
+- `plan.md` from `rein dag compile` pointed the owner commands at `<repo>/plan.json`, which compile never writes, and
+  omitted the per-task `rein run allow` the supervisor needs. It now prints commands against `<out>/plan.json`,
+  shell-quoted, with one `run allow` per task and the `dag integrate` step.
 - The guard refuses a command name that expands at run time (`$ORCA`, `$(which rm)`). Such a name could be any
   command, so the rules keyed by name (worker spawn, route admission, write targets) no longer apply to it, and a
   worker could write or launch outside the contract. A literal basename with a dynamic directory is still judged by
