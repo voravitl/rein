@@ -741,9 +741,9 @@ Orca structured launch uses exact `worker-show --dispatch` identity (task/run/as
 
 ---
 
-## 17. `rein dag` — DAG Spec Lint and Compile
+## 17. `rein dag` — DAG Spec Lint, Compile and Integrate
 
-Validates an agent-written `rein_dag_spec/v1` graph and compiles it into an executable schema-3 supervisor plan (`plan.json`) and human-readable plan summary (`plan.md`).
+Validates an agent-written `rein_dag_spec/v1` graph, compiles it into an executable schema-3 supervisor plan (`plan.json`) with a human-readable summary (`plan.md`), and after the supervised run integrates the finished worker commits into one new branch.
 
 ### `rein dag lint`
 Checks an agent-written `rein_dag_spec/v1` graph before anyone turns it into a supervisor plan. It reads the file only; it creates no worktree, contract or plan.
@@ -772,11 +772,12 @@ rein dag compile --spec /path/to/spec.json --config /path/to/providers.json --pr
 - Exit `0` compiled/applied, `1` validation or compilation refusal, `2` usage error.
 - `--out DIR` must be an absolute, clean path outside the contract index directory.
 - With `--apply`, the compiler:
-  1. Materializes dedicated git worktrees for each task at `spec.base`.
-  2. Saves task contracts (`~/.rein/contracts/<task>.json`) with exact task scope, allow/deny lists, and owner sensitive paths.
+  1. Materializes dedicated git worktrees for each task at `spec.base`, under `<out>/worktrees/<run>-<id>`.
+  2. Saves task contracts (`<task>.json` in the contract index: `$PIPELINE_CONTRACTS`, default `~/.cache/worktree-pipeline/contracts`) with exact task scope, allow/deny lists, and owner sensitive paths.
   3. Installs vendor hooks (`rein hooks install`) for worker harnesses (`claude`, `codex`, `agy`, `opencode`, `hermes`).
   4. Generates and binds `TaskProfile` with task routing fields and post-hook contract hash.
   5. Validates the resulting plan with `validateLocalDAGPlan` in-process before exiting.
+- `plan.md` prints the owner commands against `<out>/plan.json`: `rein supervisor validate`, `rein run start --supervisor-plan`, one `rein run allow --task` per task, `rein supervisor run`, single-shot `rein supervisor status --json`, and `rein dag integrate`. The owner runs them in an interactive terminal; `run start --supervisor-plan` and `run allow` refuse agent sessions.
 
 ### `rein dag integrate`
 Integrates completed DAG node commits from their individual task worktrees into a single integration branch in topological order, verifies checkpoints and clean states, and executes the goal verification command.
@@ -797,7 +798,9 @@ rein dag integrate --plan /path/to/plan.json --branch feature-ready --worktree /
   4. **Clean worktrees**: verifies each task worktree has no uncommitted changes (`git status --porcelain` is empty).
   5. **Base ancestry**: verifies each task's HEAD descends from `base`.
 - Performs topological cherry-pick across worker task commits.
-- **Fail-safe on conflict**: stops immediately upon encountering any cherry-pick conflict (exit code `1`), leaves the integration worktree intact for inspection, and never commits or pushes conflicting changes.
+- Refuses a `--branch` that already exists or fails `git check-ref-format --branch`; integration always creates a new branch at the plan base in a separate worktree (default under the system temp directory).
+- **Fail-safe on conflict**: stops at the first cherry-pick conflict (exit code `1`). The new branch and its integration worktree are left in the conflicted state for inspection; nothing is pushed and no existing branch is modified.
+- After all cherry-picks, runs every task's `verify` commands in the integration worktree; any failure exits `1`.
 - **Goal verification**: executes the verification node's `verify` command(s) inside the integration worktree before completion.
 
 ---

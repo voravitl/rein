@@ -11,6 +11,18 @@ import (
 
 func dedicatedLeaseGroup(pid int) error {
 	group, err := syscall.Getpgid(pid)
+	if errors.Is(err, syscall.ESRCH) {
+		// A provider that exits before the launcher records it is an unreaped
+		// zombie. macOS getpgid reports ESRCH for a zombie while Linux still
+		// returns its group, so probe the group itself. The pid cannot be reused
+		// until the launcher reaps it, so a live group with id == pid is the
+		// child's own group: kill(-pid, 0) answers nil or EPERM for it and
+		// ESRCH when the child stayed in the launcher's group.
+		if kerr := syscall.Kill(-pid, 0); kerr == nil || errors.Is(kerr, syscall.EPERM) {
+			return nil
+		}
+		return err
+	}
 	if err != nil {
 		return err
 	}

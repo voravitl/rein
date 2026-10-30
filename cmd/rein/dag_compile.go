@@ -386,7 +386,7 @@ func compileDAG(spec *dagspec.Spec, cfg *providers.Config, cfgPath, cfgDigest st
 		return nil, fmt.Errorf("cannot encode plan: %w", err)
 	}
 
-	planMD := renderPlanMD(plan, spec)
+	planMD := renderPlanMD(plan, spec, outDir)
 
 	return &compiledPlan{
 		Spec:         spec,
@@ -489,7 +489,7 @@ func applyCompiledDAG(c *compiledPlan) error {
 		return err
 	}
 	c.PlanJSON = planJSON
-	c.PlanMD = renderPlanMD(c.Plan, c.Spec)
+	c.PlanMD = renderPlanMD(c.Plan, c.Spec, c.OutDir)
 
 	planPath := filepath.Join(c.OutDir, "plan.json")
 	if err := os.WriteFile(planPath, c.PlanJSON, 0644); err != nil {
@@ -583,7 +583,18 @@ func harnessVendor(agent string) string {
 	}
 }
 
-func renderPlanMD(p supervisor.Plan, s *dagspec.Spec) []byte {
+// planShellQuote quotes s for a POSIX shell so the owner commands in plan.md
+// stay correct for paths and names containing spaces or quotes.
+func planShellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789/._-+=:,@") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// renderPlanMD writes the human summary and the exact owner commands. The plan
+// path is the compiled --out directory: plan.json is never written into the repo.
+func renderPlanMD(p supervisor.Plan, s *dagspec.Spec, outDir string) []byte {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# DAG Execution Plan: %s\n\n", p.Run)
 	fmt.Fprintf(&b, "- **Repository**: `%s`\n", p.Repo)
@@ -614,12 +625,20 @@ func renderPlanMD(p supervisor.Plan, s *dagspec.Spec) []byte {
 		fmt.Fprintf(&b, "| `%s` | %s | %s | %s |\n", t.Task, t.Kind, deps, details)
 	}
 
+	plan := planShellQuote(filepath.Join(outDir, "plan.json"))
+	repo := planShellQuote(p.Repo)
 	fmt.Fprintln(&b, "\n## Human Approval & Supervisor Execution")
+	fmt.Fprintln(&b, "Run these in your own interactive terminal, not from an agent session: `run start --supervisor-plan` and `run allow` refuse agent sessions and non-TTY input.")
 	fmt.Fprintln(&b, "```sh")
-	fmt.Fprintf(&b, "# 1. Validate the compiled plan\nrein supervisor validate --plan %s/plan.json\n\n", p.Repo)
-	fmt.Fprintf(&b, "# 2. Start the supervised run (owner gate)\nrein run start %s --run %s --supervisor-plan %s/plan.json\n\n", p.Repo, p.Run, p.Repo)
-	fmt.Fprintf(&b, "# 3. Execute the DAG under supervision\nrein supervisor run --plan %s/plan.json\n\n", p.Repo)
-	fmt.Fprintf(&b, "# 4. Observe live progress\nrein supervisor status --plan %s/plan.json --watch\n", p.Repo)
+	fmt.Fprintf(&b, "# 1. Validate the compiled plan\nrein supervisor validate --plan %s\n\n", plan)
+	fmt.Fprintf(&b, "# 2. Start the supervised run (owner gate); outside Claude Code pass your own session id and shell pid\nrein run start %s --run %s --session <owner-session> --pid $$ --supervisor-plan %s\n\n", repo, planShellQuote(p.Run), plan)
+	fmt.Fprintln(&b, "# 3. Authorize each task of this plan")
+	for _, t := range p.Tasks {
+		fmt.Fprintf(&b, "rein run allow %s --task %s --reason %s\n", repo, planShellQuote(t.Task), planShellQuote("approved DAG plan "+p.Run))
+	}
+	fmt.Fprintf(&b, "\n# 4. Execute the DAG under supervision\nrein supervisor run --plan %s\n\n", plan)
+	fmt.Fprintf(&b, "# 5. Observe progress (single-shot JSON for agents; add --watch in a terminal)\nrein supervisor status --plan %s --json\n\n", plan)
+	fmt.Fprintf(&b, "# 6. After every task is done, integrate into a new branch\nrein dag integrate --plan %s --branch <new-branch>\n", plan)
 	fmt.Fprintln(&b, "```")
 
 	return b.Bytes()

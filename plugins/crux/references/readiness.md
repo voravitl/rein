@@ -14,6 +14,8 @@ Status: **NOT COMPLETE / not 100% verified**. Evaluation: 18 October 2026, base 
 
 ตรวจซ้ำจาก source ปัจจุบันได้ด้วย `python3 -B plugins/crux/scripts/harness-acceptance.py` รายงานไทยแยก adapter ทั้งสี่ตัวกับแพ็กเกจร่วม รันเฉพาะ Node tests ในเครื่อง ไม่มี provider/model dispatch ผลรอบรวมล่าสุดผ่าน 5 suites (18 Node tests) และ Python ทั้งหมด 55 tests ผ่าน `--format json --require-live` คืน exit 2 ตามที่ตั้งใจ เพราะ local PASS ยังไม่ใช่ live acceptance รายการ native/ภาษาไทยจากโมเดล/guard/delegate/stop/handoff ในรายงานนี้เป็น NOT_VERIFIED ไม่ลบล้างหลักฐานเฉพาะกรณีที่บันทึกไว้ใน runtime docs และไม่แอบรับรองโดยใช้ผลของ harness อื่น
 
+หมายเหตุจำนวน skill: ตัวเลข 55 skills ในตารางและหัวข้อด้านล่างเป็นผลวัดจาก native validator/initialize ณ วันที่ 18 ตุลาคม 2026 ปัจจุบัน source มี 56 skills หลังเพิ่ม `dag` (PR #41, 30 ตุลาคม 2026) แต่ยังไม่ได้รัน native discovery ของแต่ละ harness ซ้ำ จึงยังไม่ยืนยันว่า harness จริงโหลดครบ 56
+
 | Capability | Evidence | Limit |
 | --- | --- | --- |
 | Shared Crux package and four harness adapters | Codex hook and package tests; Claude native strict manifest validator; Antigravity native strict validator (55 skills, 3 agents); OpenCode2 adapter tests | Package/schema and deterministic behavior, not all live model behavior |
