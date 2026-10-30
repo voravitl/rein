@@ -8,9 +8,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -391,6 +393,9 @@ func compileDAG(spec *dagspec.Spec, cfg *providers.Config, cfgPath, cfgDigest st
 	if err != nil {
 		return nil, fmt.Errorf("cannot encode plan: %w", err)
 	}
+	if err := checkDAGCalibrationTotals(spec, cfg, ownerProf); err != nil {
+		return nil, err
+	}
 
 	planMD := renderPlanMD(plan, spec, outDir)
 
@@ -590,6 +595,42 @@ func checkDAGCalibration(n dagspec.Node, cfg *providers.Config, owner *contract.
 	limit, ok := sel.Calibration.PoolCaps[prov.Billing.Pool]
 	if !ok || n.Calibration.Amount > limit {
 		return fmt.Errorf("worker node %q calibration amount %g exceeds the owner's calibration cap for pool %q", n.ID, n.Calibration.Amount, prov.Billing.Pool)
+	}
+	return nil
+}
+
+// checkDAGCalibrationTotals refuses a plan whose calibration workers together
+// exceed the owner's per-run calibration caps (calls, per pool, cash). Each
+// node fitting alone is not enough: the run would stop partway, after the
+// first workers had already spent. Usage already in the ledger is checked at
+// runtime by the reservation.
+func checkDAGCalibrationTotals(spec *dagspec.Spec, cfg *providers.Config, owner *contract.Profile) error {
+	calls, cash, pools := 0, 0.0, map[string]float64{}
+	for _, n := range spec.Nodes {
+		if n.Calibration == nil {
+			continue
+		}
+		b := cfg.Providers[n.Providers[0]].Billing
+		calls++
+		pools[b.Pool] += n.Calibration.Amount
+		if b.Unit == "usd" {
+			cash += n.Calibration.Amount
+		}
+	}
+	if calls == 0 {
+		return nil
+	}
+	cal := owner.EffectiveSelection().Calibration
+	if calls > cal.MaxCalls {
+		return fmt.Errorf("plan has %d calibration workers but the owner's calibration cap allows %d calls per run", calls, cal.MaxCalls)
+	}
+	for _, pool := range slices.Sorted(maps.Keys(pools)) {
+		if pools[pool] > cal.PoolCaps[pool] {
+			return fmt.Errorf("calibration workers together need %g in pool %q, over the owner's calibration cap %g", pools[pool], pool, cal.PoolCaps[pool])
+		}
+	}
+	if cal.MaxCashUSD != nil && cash > *cal.MaxCashUSD {
+		return fmt.Errorf("calibration workers together need %g USD, over the owner's calibration cash cap %g", cash, *cal.MaxCashUSD)
 	}
 	return nil
 }

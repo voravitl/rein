@@ -424,4 +424,31 @@ func TestDagCmdCompileCalibrationWorker(t *testing.T) {
 			t.Fatalf("%s: exit %d %q", name, code, out)
 		}
 	}
+
+	// Two calibration workers: each fits the pool cap alone, together they do not.
+	second := `{
+      "id": "worker2", "kind": "worker", "title": "worker 2", "write": ["docs/**"], "depends_on": [],
+      "kind_profile": "backend", "required_capabilities": ["repository-edit"], "expected_context_tokens": 5000,
+      "rationale": [{"path": "docs/a.md", "reason": "doc"}], "calibration": {"amount": 2},
+      "prompt": {"task": "t2", "deliverable": "d2", "scope": "s2", "verify": "v2", "stop_when": "w2"},
+      "verify": [["/bin/true"]], "providers": ["claude"], "inputs": [], "outputs": []
+    },
+    {
+      "id": "action1",`
+	two := strings.Replace(spec, `{
+      "id": "action1",`, second, 1)
+	two = strings.Replace(two, `"depends_on": ["worker1"],`, `"depends_on": ["worker1", "worker2"],`, 1)
+	for name, tc := range map[string]struct {
+		prof string
+		code int
+		want string
+	}{
+		"pool total over cap": {calibrationProfile(t, t.TempDir(), 3), 1, `together need 4 in pool "claude"`},
+		"pool total fits":     {calibrationProfile(t, t.TempDir(), 4), 0, ""},
+	} {
+		args := []string{"compile", "--spec", writeDagSpec(t, two), "--config", cfgPath, "--profile", tc.prof, "--out", filepath.Join(t.TempDir(), "o")}
+		if out, code := captureBoth(t, func() int { return cmdDag(args) }); code != tc.code || !strings.Contains(out, tc.want) {
+			t.Fatalf("%s: exit %d %q", name, code, out)
+		}
+	}
 }
