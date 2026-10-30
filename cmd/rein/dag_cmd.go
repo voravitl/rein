@@ -12,13 +12,15 @@ import (
 
 // dagSubcommands maps `rein dag <sub>` to its handler.
 var dagSubcommands = map[string]func([]string) int{
-	"lint":    cmdDagLint,
-	"compile": cmdDagCompile,
+	"lint":      cmdDagLint,
+	"compile":   cmdDagCompile,
+	"integrate": cmdDagIntegrate,
 }
 
 const dagUsage = `usage:
   rein dag lint --spec FILE [--json]
-  rein dag compile --spec FILE --out DIR --config PATH --profile PATH [--apply]`
+  rein dag compile --spec FILE --out DIR --config PATH --profile PATH [--apply]
+  rein dag integrate --plan FILE --branch NAME [--worktree DIR]`
 
 func cmdDag(args []string) int {
 	if len(args) == 0 {

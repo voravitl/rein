@@ -98,8 +98,8 @@ def execute(args):
     if digest(raw) != args.plan_hash:
         raise ValueError("plan hash changed")
     parsed = json.loads(raw, object_pairs_hook=unique_object)
-    if not isinstance(parsed, dict) or type(parsed.get("schema")) is not int or parsed["schema"] != 2:
-        raise ValueError("requires a schema-2 plan")
+    if not isinstance(parsed, dict) or type(parsed.get("schema")) is not int or parsed["schema"] not in (2, 3):
+        raise ValueError("requires a schema-2 or schema-3 plan")
     repo = canonical(parsed.get("repo"), "plan repo")
     if not repo.is_dir():
         raise ValueError("plan repo is not a directory")

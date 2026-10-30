@@ -29,7 +29,7 @@ Complete, deterministic command manual for AI agents (coordinators, workers, rev
 | `rein checkpoint` | Controller | Finalize, verify or restore a snapshot | Safe recovery boundary | `0` = success, `1` = refused/error, `2` = bad arguments |
 | `rein hunter` | Investigator / Reviewer / Owner | Report, reproduce, verify, review and approve findings | Evidence-based bug workflow | `0` = recorded, `1` = refused/error, `2` = bad arguments |
 | `rein supervisor` | Controller / read-only observer | Validate, execute, or observe bounded plans | Explicit supervised runs; schema-3 status | `0` = result/status, `1` = blocked/error, `2` = bad arguments, `130` = interrupted status |
-| `rein dag` | Coordinator / Crux | Validate and compile a `rein_dag_spec/v1` graph into schema-3 plan | Pre-execution DAG compilation and validation | `0` = valid/compiled, `1` = refused, `2` = usage |
+| `rein dag` | Coordinator / Crux | Validate, compile, and integrate a `rein_dag_spec/v1` graph | Pre-execution DAG lifecycle and post-run integration | `0` = success, `1` = refused/failed, `2` = usage |
 | `rein version` | Anyone | Print binary version | Verification / diagnostics | `0` = ok |
 
 ---
@@ -777,6 +777,28 @@ rein dag compile --spec /path/to/spec.json --config /path/to/providers.json --pr
   3. Installs vendor hooks (`rein hooks install`) for worker harnesses (`claude`, `codex`, `agy`, `opencode`, `hermes`).
   4. Generates and binds `TaskProfile` with task routing fields and post-hook contract hash.
   5. Validates the resulting plan with `validateLocalDAGPlan` in-process before exiting.
+
+### `rein dag integrate`
+Integrates completed DAG node commits from their individual task worktrees into a single integration branch in topological order, verifies checkpoints and clean states, and executes the goal verification command.
+
+```sh
+# Integrate all completed nodes into target branch 'feature-ready'
+rein dag integrate --plan /path/to/plan.json --branch feature-ready
+
+# Integrate using an explicit integration worktree directory
+rein dag integrate --plan /path/to/plan.json --branch feature-ready --worktree /path/to/worktree
+```
+
+- Exit `0` successfully integrated and goal verified, `1` refusal or verification failure, `2` usage error.
+- Enforces strict safety gates before merging:
+  1. **All nodes completed**: verifies every task has terminal state `done` in the supervisor journal.
+  2. **Checkpoint digest match**: verifies the durable checkpoint digest matches the journal's terminal outcome.
+  3. **Live checkpoint verification**: verifies HEAD, base, and clean untracked set match the checkpoint snapshot via `routing.VerifyCheckpoint`.
+  4. **Clean worktrees**: verifies each task worktree has no uncommitted changes (`git status --porcelain` is empty).
+  5. **Base ancestry**: verifies each task's HEAD descends from `base`.
+- Performs topological cherry-pick across worker task commits.
+- **Fail-safe on conflict**: stops immediately upon encountering any cherry-pick conflict (exit code `1`), leaves the integration worktree intact for inspection, and never commits or pushes conflicting changes.
+- **Goal verification**: executes the verification node's `verify` command(s) inside the integration worktree before completion.
 
 ---
 

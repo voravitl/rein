@@ -25,8 +25,10 @@ contains the maintained command contract.
 3. **Choose the supported runtime.** Schema 1 supervisor plans monitor already
    evidenced Orca dispatches; they do not launch workers or release remote
    leases. Schema 2 task graphs execute explicitly approved local,
-   non-detaching shell providers only. Prepare a bounded plan against the
-   actual schema, then run `rein supervisor validate --plan <plan.json>`.
+   non-detaching shell providers only. Schema 3 graphs extend this with
+   lightweight action nodes, explicit execution bounds, and dependency-guided
+   worker integration via `rein dag compile` and `rein dag integrate`. Prepare
+   a bounded plan against the actual schema, then run `rein supervisor validate --plan <plan.json>`.
    Only with existing authorization, bind that exact plan through
    `rein run start <repo> --run <run> --session <session> --pid <owner-pid> --supervisor-plan <plan.json>`
    and execute `rein supervisor run --plan <plan.json>`. Existing runs cannot

@@ -153,8 +153,8 @@ class Transport:
             raise ValueError("plan exceeds 1 MiB")
         parsed = json.loads(raw)
         repo = absolute(parsed.get("repo", ""), "plan repo")
-        if parsed.get("schema") != 2:
-            raise ValueError("local graph requires a schema-2 plan")
+        if parsed.get("schema") not in (2, 3):
+            raise ValueError("local graph requires a schema-2 or schema-3 plan")
         if self.receipt.is_relative_to(repo):
             raise ValueError("transport receipt must be outside the contracted checkout")
         settings = {key: os.environ.get(key) for key in PATH_SETTINGS}
